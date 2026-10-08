@@ -19,10 +19,10 @@ Source installs report `0.0.0`. Running the command without arguments prints hel
 
 ## From a release
 
-After the initial release has been published:
+Install the BSD-3-Clause licensed placeholder (`0.0.2` or later):
 
 ```bash
-uv tool install a13n-claw==0.0.1
+uv tool install a13n-claw==0.0.2
 a13n-claw --version
 ```
 
@@ -30,10 +30,10 @@ The module entry point is also available with `python -m a13n_claw --version` in
 
 ## Container
 
-After the image has been published:
+Run the matching release image:
 
 ```bash
-docker run --rm ghcr.io/wh1isper/a13n-claw:0.0.1 --version
+docker run --rm ghcr.io/wh1isper/a13n-claw:0.0.2 --version
 ```
 
 The non-root image runs the informational CLI and exits. It has no HTTP port, volumes, API token, or service health endpoint. Do not deploy it as a long-running service.
