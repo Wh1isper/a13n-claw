@@ -1,10 +1,14 @@
 # Repository and Product Boundary
 
-## Current product
+## Product and Implementation Boundary
 
-A13n Claw is an independent, public project targeting a13n Harness. Its initial `0.0.1` distribution is a placeholder: it provides installed version metadata and an informational `a13n-claw` command. No agent execution, server, configuration loader, persistence, or authentication surface exists. Unknown CLI arguments fail rather than silently pretending to perform runtime work.
+[The specification index](README.md) defines the target runtime and the owners of its high-level contracts. The target includes persistent execution, an API-driven console, environment management, bridges, automation, and memory. These contracts guide runtime development; their presence does not make those features available in the current package.
 
-No YA Claw configuration, API, or persisted state compatibility is promised. The placeholder does not depend on Harness yet; future integration consumes its published public APIs and declares bounded version requirements.
+### Current Distribution
+
+A13n Claw is an independent, public project targeting a13n Harness. The current distribution is a placeholder: it provides installed version metadata and an informational `a13n-claw` command. No agent execution, server, configuration loader, persistence, or authentication surface exists. Unknown CLI arguments fail rather than silently pretending to perform runtime work.
+
+Configuration, API, and persisted state compatibility require explicit contracts in this repository. The placeholder does not depend on Harness yet; future integration consumes its published public APIs and declares bounded version requirements.
 
 ## Content ownership
 
@@ -22,7 +26,7 @@ No YA Claw configuration, API, or persisted state compatibility is promised. The
 | `DEVELOPMENT.md`  | Engineering standards                          |
 | `AGENTS.md`       | Concise coding-agent guidance                  |
 
-The repository is independent from agent-foundation workspaces and validation. A checkout inside that repository's ignored `local-reference/` remains an ordinary standalone Git repository, not a submodule or package workspace member.
+This repository owns its dependency resolution, validation, and release lifecycle. Its build and checks do not require a neighboring source checkout. A local checkout's placement does not make it part of another repository's workspace.
 
 ## Distribution
 
