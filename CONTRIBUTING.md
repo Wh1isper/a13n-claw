@@ -39,6 +39,21 @@ Use GitHub Issues for unresolved product, architecture, security, and scope deci
 
 Use English, scoped Conventional Commit titles, for example `feat(cli): report installed package version`. Explain the user-visible outcome and material limitations in the PR body. Add regression coverage for changed behavior; do not add tests that only mirror incidental wording or layout. Reviewers follow [MAINTAINERS.md](MAINTAINERS.md).
 
+## Repository protection
+
+The GitHub `default` ruleset protects `main`: changes go through a pull request, review conversations must be resolved, and the branch must be up to date before merging. These GitHub Actions checks are required:
+
+- `Python (ubuntu-latest)`
+- `Python (windows-latest)`
+- `Workflows and container`
+- `Build documentation`
+
+Only squash merges are enabled, with the PR title as the commit title. Auto-merge and branch-update controls are available, and merged head branches are deleted automatically. No approval count is required for this single-maintainer repository; this does not waive the PR or CI requirements. No ruleset bypass actors are configured. Default-branch deletion and force pushes are blocked.
+
+Releases use tags, not a long-lived release branch. The `release` ruleset makes `release/a13n-claw-v*` tags immutable: updates, force pushes, and deletion are blocked, with no bypass actors. The `pypi` environment accepts only those tags; the `docs` environment accepts only the `main` branch. Release automation additionally requires the tagged commit to belong to `main` and have successful CI and Site runs.
+
+Workflow tokens default to read-only and cannot approve pull requests. Publication jobs grant their own narrowly scoped write permissions. Secret scanning, push protection, dependency alerts, and Dependabot security updates are enabled. Do not disable protections to work around a failing check; correct the cause or discuss a deliberate policy change.
+
 ## Documentation
 
 Edit the Markdown files under `docs/content/` and keep `meta.json` navigation aligned. Use relative Markdown links between source pages; the site converts them to documentation routes. Run `make docs-build` and formatting for content or site changes. Documentation must distinguish available behavior from future direction.
