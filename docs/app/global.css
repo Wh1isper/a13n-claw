@@ -1,0 +1,108 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+.landing {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 36px 28px 64px;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  font-size: 14px;
+}
+.brand {
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  font-size: 22px;
+}
+.hero {
+  padding: 110px 0 72px;
+  max-width: 850px;
+}
+.eyebrow {
+  font-family: ui-monospace, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 12px;
+  color: #777;
+}
+.hero h1 {
+  font-size: clamp(42px, 7vw, 78px);
+  line-height: 1.04;
+  letter-spacing: -0.055em;
+  font-weight: 600;
+  margin: 24px 0;
+}
+.lede {
+  font-size: 20px;
+  line-height: 1.7;
+  color: #777;
+  max-width: 640px;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 32px 0;
+}
+.actions a {
+  padding: 12px 18px;
+  border: 1px solid #8885;
+  border-radius: 8px;
+  font-size: 14px;
+}
+.actions .primary {
+  background: var(--color-fd-foreground);
+  color: var(--color-fd-background);
+  border-color: transparent;
+}
+.notice {
+  border-left: 2px solid #bd9148;
+  padding: 8px 0 8px 18px;
+  max-width: 650px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: #777;
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid #8884;
+  padding-top: 32px;
+  gap: 32px;
+}
+.cards h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.cards p {
+  font-size: 14px;
+  color: #777;
+  line-height: 1.7;
+}
+footer {
+  margin-top: 64px;
+  font-size: 12px;
+  color: #777;
+}
+a:focus-visible {
+  outline: 2px solid #bd9148;
+  outline-offset: 5px;
+}
+@media (max-width: 640px) {
+  .hero {
+    padding-top: 70px;
+  }
+  .cards {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,11 @@
+name: Bug report
+description: Report a reproducible defect
+title: "bug: "
+body:
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include version, platform, steps, expected behavior, and actual behavior. Remove secrets.
+    validations:
+      required: true

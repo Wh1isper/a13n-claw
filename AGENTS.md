@@ -1,0 +1,27 @@
+# Repository Guide
+
+A13n Claw is an independent project targeting a13n Harness. The initial release is a placeholder, not an implemented runtime.
+
+## Sources of truth
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) owns setup, validation, and release procedures.
+- [DEVELOPMENT.md](DEVELOPMENT.md) owns engineering standards.
+- [spec/README.md](spec/README.md) indexes accepted contracts.
+- `docs/content/` owns English user-facing Markdown and `meta.json` navigation. `docs/` owns the Fumadocs site, package tooling, and Cloudflare Worker configuration.
+- [MAINTAINERS.md](MAINTAINERS.md) owns reviewer routing.
+
+Read the relevant implementation, tests, and contracts before changing behavior. Keep proposals and open decisions in GitHub Issues, not `spec/`. Keep implementation, tests, documentation, and automation aligned. Do not describe planned features as available.
+
+## Scope and safety
+
+Preserve unrelated work and secrets. An implementation request does not automatically authorize publication, deployment, deletion, or history rewrites. Follow the user's authorization for GitHub operations. Do not introduce YA configuration compatibility. Do not copy YA runtime code merely to create the appearance of functionality.
+
+## Package and release boundaries
+
+Use Python 3.13, uv, `a13n-claw` distribution names, and `a13n_claw` Python imports. Keep the source version at `0.0.0`; release preparation injects the canonical tag version into an ephemeral checkout. Future Harness dependencies use bounded published requirements, not paths into a neighboring agent-foundation checkout.
+
+The documentation frontend is private build tooling, not an npm package. Generated Python artifacts, static exports, caches, and credentials are not committed. Cloudflare hosts documentation only; it does not host an agent runtime. RC releases must never advance a container `latest` tag.
+
+## Validation
+
+Select checks proportionately from [CONTRIBUTING.md](CONTRIBUTING.md#validation). Add function-style regression tests for changed behavior. Reuse valid passing results. Report exact checks and material limitations without claiming external deployments were tested locally. Keep all canonical code, documentation, and commit messages in English.

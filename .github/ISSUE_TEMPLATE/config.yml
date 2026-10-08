@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security report
+    url: https://github.com/Wh1isper/a13n-claw/security/advisories/new
+    about: Report vulnerabilities privately; never include sensitive details in public issues.

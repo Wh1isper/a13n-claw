@@ -1,0 +1,11 @@
+name: Feature request
+description: Discuss a problem or design decision
+title: "feat: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and proposed outcome
+      description: Explain the use case, constraints, alternatives, and unresolved decisions.
+    validations:
+      required: true

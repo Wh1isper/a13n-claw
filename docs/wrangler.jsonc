@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "a13n-claw-docs",
+  "compatibility_date": "2026-10-08",
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "a13n-claw.wh1isper.top",
+      "custom_domain": true,
+    },
+  ],
+  "assets": {
+    "directory": "./out",
+    "not_found_handling": "404-page",
+  },
+}
