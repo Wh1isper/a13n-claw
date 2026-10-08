@@ -16,7 +16,7 @@ uv run a13n-claw --version
 uv run a13n-claw --help
 ```
 
-Source builds report `0.0.0`. Release builds derive their version from `release/a13n-claw-vX.Y.Z` tags. Once `0.0.1` has been published, install the package with `uv tool install a13n-claw==0.0.1`.
+Source builds report `0.0.0`. Release builds derive their version from `release/a13n-claw-vX.Y.Z` tags. Install the BSD-licensed placeholder with `uv tool install a13n-claw==0.0.2`.
 
 ## Develop
 
@@ -41,4 +41,4 @@ The documentation is a static Fumadocs site deployed through **Cloudflare Worker
 
 ## Compatibility and license
 
-This is an independent project, not a configuration-compatible fork of YA Claw. No legacy configuration or persistence format is supported. Licensed under [Apache-2.0](LICENSE).
+This is an independent project, not a configuration-compatible fork of YA Claw. No legacy configuration or persistence format is supported. Licensed under [BSD-3-Clause](LICENSE), matching YA Claw / ya-mono. The license correction starts with `0.0.2`; previously published `0.0.1` artifacts remain unchanged.

@@ -56,7 +56,7 @@ export default function Home() {
           </p>
         </article>
       </section>
-      <footer>Apache-2.0 · Maintained by Wh1isper</footer>
+      <footer>BSD-3-Clause · Maintained by Wh1isper</footer>
     </main>
   );
 }

@@ -3,7 +3,7 @@ name = "a13n-claw"
 version = "0.0.0"
 description = "Placeholder for a local-first agent runtime built on a13n Harness"
 readme = "README.md"
-license = "Apache-2.0"
+license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 authors = [{name = "Wh1isper"}]
 requires-python = ">=3.13"
