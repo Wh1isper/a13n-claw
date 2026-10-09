@@ -6,13 +6,29 @@ Claw owns work acceptance and durable outcomes. Harness owns process-local agent
 
 ## Admission and Ordering
 
-All work sources use the same admission rules. Before acknowledging acceptance, Claw retains the input, origin, destination Thread, captured composition, and identity needed to reconcile retries. Required input attachments must be retained or explicitly unavailable; a short-lived external download link alone does not satisfy acceptance.
+All work sources use the same admission authority. Before acknowledging an input, Claw retains its content, origin, destination Thread, routing disposition, and identity needed to reconcile retries. When admission creates a Run, it also captures that Run's composition; an input joining existing work uses the existing composition. Required input attachments must be retained or explicitly unavailable; a short-lived external download link alone does not satisfy acceptance.
 
-A repeat of the same identified request returns the original accepted work. Reusing that identity with different content or scope is a conflict. A timeout does not establish rejection: the caller first checks whether the original work exists.
+A repeat of the same identified request returns the same input receipt with its current disposition and Run association. Reusing that identity with different content or scope is a conflict. A timeout does not establish rejection: the caller first checks whether the original work exists.
 
-Only one Run owns advancement of a Thread at a time. Other accepted Runs remain queued in an observable order. A waiting Run retains its position; later prompts do not bypass an unanswered decision. Independent Threads can execute concurrently, subject to their declared access to shared resources.
+Only one Run owns advancement of a Thread at a time. Ordinary conversation messages follow the always-steer path below rather than creating a Run for every message. Separately requested work, such as an automation occurrence, can create a queued Run in an observable order. A waiting Run retains its position; later prompts do not bypass an unanswered decision. Independent Threads can execute concurrently, subject to their declared access to shared resources.
 
 At execution start, Claw selects the Thread's current complete checkpoint under exclusive advancement ownership. It uses the composition fixed at admission, verifies current authority, and prepares the required environment. This allows queued work to follow committed conversation progress without changing its accepted behavior.
+
+## Conversation Message Admission
+
+Always-steer is the conversation message behavior for both console and bridge ingress, not a per-platform execution mode. The caller need not inspect liveness or choose between submit and steer. Claw serializes the routing decision with Thread ownership:
+
+| Thread condition                                       | Disposition of a new eligible message                                                  |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| No active or queued Run                                | Create a Run and capture its composition                                               |
+| Next Run is queued or preparing, with no running owner | Append the message to that Run's pending input in receipt order                        |
+| A Run is running                                       | Retain the message for steering into that Run at a supported Harness input boundary    |
+| A Run is waiting on a decision                         | Retain the message as held input for that Run; do not resume it or answer the decision |
+| Execution or prior input consumption is unresolved     | Keep the input blocked until reconciliation; do not create a competing execution       |
+
+Joining work preserves each message's identity, sender, attachments, and disposition even when several messages are presented together. A later message cannot overwrite an earlier pending prompt. Accepted messages do not replace the Run's captured model, tools, workspace, memory selection, or permissions. A caller lacking permission to contribute to the selected Run is rejected rather than creating parallel work.
+
+Held input becomes eligible for steering only after the exact decision response allows the waiting Run to continue. If that Run is cancelled, fails, or is interrupted, remaining input stays inspectable as unapplied or uncertain; it is not automatically used to restart work past the decision.
 
 ## Work Lifecycle
 
@@ -49,9 +65,9 @@ sequenceDiagram
     participant Claw
     participant State as Durable state
     participant Harness
-    Source->>Claw: Submit work
-    Claw->>State: Retain accepted input and composition
-    Claw-->>Source: Accepted Run
+    Source->>Claw: Submit message to idle Thread
+    Claw->>State: Retain input and new Run composition
+    Claw-->>Source: Input receipt and associated Run
     Claw->>State: Select current Thread continuation
     Claw->>Harness: Execute with fresh authority
     Harness-->>Claw: Live observations
@@ -72,7 +88,11 @@ Console and bridge clients may answer the same decision only when their permissi
 
 ## Steering and Cancellation
 
-Steering is an explicit request targeting active work, not an implicit interpretation of every later message. Claw distinguishes durable receipt, delivery to an active execution, and incorporation into a saved continuation. If delivery races with completion, it records that the input was not applied or remains uncertain; it does not silently turn the input into new work.
+Ordinary accepted messages steer the current Run without a separate steering command. Claw distinguishes durable receipt, delivery to the executor, and incorporation into a saved continuation. Always-steer does not mean interrupting a tool call, approving an action, or immediately changing the model's current request.
+
+Routing and completion must not lose or double-apply a message. Before committing successful completion, the owner checks pending input. If an ordinary message is confirmed not delivered and execution has already closed, Claw transfers that same input once to the next pending Run, or creates a successor Run using current composition if none exists. The receipt exposes the resulting association; retrying the message cannot repeat the transfer. Confirmed incorporated input is never submitted again. If delivery or consumption is uncertain, Claw retains that uncertainty for reconciliation rather than guessing that another Run is safe.
+
+An explicit Run-targeted control request remains different from ordinary message submission: a stale steer is rejected or reported unapplied, never retargeted to another Run. Cancellation, decision responses, and separately scheduled work keep their own semantics.
 
 Cancellation records intent before reporting a final outcome. Queued work can be cancelled without execution. Active work is cancelled only after the executor has stopped or its loss has been reconciled. If completion wins the race, the completed outcome remains authoritative. Cancellation does not undo external actions already performed.
 
@@ -89,3 +109,4 @@ A parent that waits for a child can continue only from the child's saved outcome
 3. A waiting decision cannot be bypassed by another client, later prompt, or duplicate callback.
 4. Saved terminal outcomes are not rewritten by notification failures or stale executors.
 5. Unknown effects remain explicit until reconciled; retry is not a promise of exactly-once external execution.
+6. Every accepted message remains identifiable across pending input, steering, completion races, and recovery; receipt is not proof of incorporation.

@@ -8,7 +8,7 @@ Mutable defaults and fixed Run compositions have separate lifecycles. Accepted a
 
 ## Definition Boundaries
 
-A Profile expresses intended agent behavior and selections for models, instructions, capabilities, tools, skills, memory, delegation, and execution environments. Shared resources retain their own identity and lifecycle. Claw uses Harness public concepts where they already own execution semantics rather than inventing parallel model, tool, or capability types.
+A Profile expresses intended agent behavior and selections for models, instructions, capabilities, tools, skills, delegation, and execution environments. Shared resources retain their own identity and lifecycle. Claw uses Harness public concepts where they already own execution semantics rather than inventing parallel model, tool, or capability types.
 
 Definition, availability, authorization, and readiness are separate:
 
@@ -21,7 +21,9 @@ Provider credentials and privileged integration configuration remain protected b
 
 ## Defaults and Effective Behavior
 
-Instance and Profile defaults initialize Session and Thread selections. Changing a default affects newly resolved work; it does not silently reset an existing Thread's explicit selections. Applying changed defaults to an existing Thread is an explicit operation.
+Instance and Profile defaults initialize Thread selections. Changing a default affects newly resolved work; it does not silently reset an existing Thread's explicit selections. Applying changed defaults to an existing Thread is an explicit operation.
+
+The Instance owns its one workspace root and the memory/automatic-organization settings. Thread or Profile selections cannot introduce another workspace root or another Thread's private memory. A memory-enabled ordinary Run captures Global and its own private scope according to [memory](09-memory.md); environment selection exposes the [shared workspace](05-workspaces-and-environments.md), not a Project selection.
 
 Claw distinguishes editing a shared resource from selecting a different resource. Work that resolves that shared resource after an accepted edit can use the new content; work already accepted retains its captured content. Historical Runs remain explainable even if a resource is renamed or retired.
 
@@ -42,7 +44,7 @@ sequenceDiagram
     Claw-->>Caller: Accepted work reference
 ```
 
-A Run's captured composition is fixed when work is durably accepted, before queueing or environment preparation. Waiting in a queue does not silently adopt later Profile edits. Selecting the latest permitted Thread checkpoint at execution start is a separate operation owned by [execution](03-execution-lifecycle.md); configuration capture must not freeze a stale history for queued work.
+A Run's captured composition is fixed when that Run is durably admitted, before queueing or environment preparation. Ordinary messages that join or steer an existing Run use its captured composition; they do not capture a second configuration or apply edited defaults to active work. A request combining input with a different composition must explicitly request a separate Run or be rejected, never disguised as a configuration-changing steer. Waiting in a queue does not silently adopt later Profile edits. Selecting the latest permitted Thread checkpoint at execution start is a separate operation owned by [execution](03-execution-lifecycle.md); configuration capture must not freeze a stale history for queued work.
 
 Current permission and credential validity are checked again when work uses them. A captured definition is not a permanent authorization grant. If its required component becomes unavailable or disallowed, Claw reports the blockage or failure instead of substituting a different model, tool, or environment.
 

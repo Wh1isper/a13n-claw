@@ -8,16 +8,17 @@ Accepted work and pending delivery are durable application facts. External clien
 
 ## Durable Truth
 
-| State                           | Durability responsibility                                                                                          |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Definitions and selection heads | Preserve accepted resource content, current defaults, and versions needed to detect conflicting edits              |
-| Sessions and Threads            | Preserve scope, relationships, configuration selections, and the selected complete continuation                    |
-| Accepted work                   | Preserve input, origin, ordering, composition, decisions, outcome, and known input-consumption state               |
-| Immutable values                | Retain captured compositions, complete Harness continuation, and referenced input/output artifacts                 |
-| Environment associations        | Retain intended selection and last confirmed provider state without treating cached liveness as current truth      |
-| Bridge and automation state     | Retain conversation mappings, accepted event identities, occurrences, result destinations, and unresolved delivery |
-| Working files and memory        | Preserve data according to their explicitly selected owner and retention scope                                     |
-| Live observations               | May be lost; do not decide acceptance, completion, permission, or recoverability                                   |
+| State                           | Durability responsibility                                                                                                                     |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Definitions and selection heads | Preserve accepted resource content, current defaults, and versions needed to detect conflicting edits                                         |
+| Threads                         | Preserve identity, relationships, configuration selections, and the selected complete continuation                                            |
+| Accepted work                   | Preserve each input's identity, origin, ordering, Run association and consumption disposition, plus Run composition, decisions, and outcome   |
+| Immutable values                | Retain captured compositions, complete Harness continuation, and referenced input/output artifacts                                            |
+| Environment associations        | Retain intended selection and last confirmed provider state without treating cached liveness as current truth                                 |
+| Bridge and automation state     | Retain conversation mappings, accepted event identities, occurrences, result destinations, and unresolved delivery                            |
+| Working files                   | Preserve the Instance's shared workspace independently of Thread and container removal                                                        |
+| File memory                     | Preserve Global and Thread-private files, scope-keyed cursors, and organization state independently of workspace and conversation checkpoints |
+| Live observations               | May be lost; do not decide acceptance, completion, permission, or recoverability                                                              |
 
 Native runtime objects, live credentials, connection handles, process-local locks, stream subscribers, and shell observation handles are not restorable execution authority. Saved references must be validated before use.
 
@@ -49,6 +50,8 @@ flowchart TD
 
 Dispatch resumes only after Claw has excluded an old writer from publishing or continuing conflicting work. A saved running marker is not proof of liveness, and an empty in-memory registry is not proof that an external process stopped. If ownership cannot be established, affected work remains blocked and visible.
 
+Pending, held, steered, incorporated, unapplied, and uncertain input dispositions survive restart independently of live Harness handles. A known-undelivered input remains available for the routing rules in [execution](03-execution-lifecycle.md); a message that may already have been consumed is not automatically replayed. Reconnecting adapters reconcile saved event dispositions before admission resumes, including events ignored by the group filter.
+
 Already accepted work that demonstrably never started can proceed after current authority and readiness checks. Work that may have executed is not automatically replayed from its initial input. Complete waiting checkpoints can restore their decision without inventing a new question or reusing a stale answer.
 
 ## Failure Semantics
@@ -70,7 +73,7 @@ Archiving affects visibility and new-work admission; it does not delete history 
 
 Retention cannot silently remove content referenced by retained continuations, waiting decisions, accepted work, or unresolved delivery. Shared data remains until its owning scope permits removal. Explicit deletion reports the data and dependencies affected and cannot leave active work with a valid-looking but broken continuation.
 
-A recoverable backup must cover a coherent set of application heads and the values they reference. Workspace data and external service state may require separate retention; copying only application records does not promise restoration of those resources or reverse external effects.
+A recoverable backup must cover a coherent set of application heads and the values they reference. Memory files are part of the recoverable application data set; ordinary conversation checkpoints alone do not include them. Workspace data and external service state may require separate retention; copying only application records does not promise restoration of those resources or reverse external effects.
 
 ## Invariants
 

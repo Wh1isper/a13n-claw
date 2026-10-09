@@ -8,7 +8,9 @@ These specifications define the target product and its high-level contracts. The
 
 Claw owns application state, admission, execution ownership, recovery, environment management, and client delivery. Harness owns agent execution and portable continuation. The console and bridges are clients of the same application authority, not alternative agent runtimes.
 
-The design is single-node and operator-controlled. It does not introduce a hosted multi-tenant platform or a distributed worker scheduler. Configuration, APIs, and saved state follow this project's own contracts.
+The design is single-node and operator-controlled, with one server hosting the API, console, embedded bridges, automation, and environment manager. Accepted conversation messages use always-steer admission; group-message filtering belongs to bridge ingress, not a second execution policy. It does not introduce a hosted multi-tenant platform or a distributed worker scheduler. Configuration, APIs, and saved state follow this project's own contracts.
+
+Channels route directly to Threads, without Session or Project entities. The Instance shares one startup or configured workspace directory across all Threads. Memory uses Global and Thread-private plain-file scopes with optional background organization; neither workspace nor memory requires a Project catalog.
 
 These documents specify responsibilities, relationships, observable lifecycles, and key flows. Database products, tables, physical file layouts, class hierarchies, endpoint schemas, transport choices, and deployment recipes are outside this design level.
 
@@ -25,7 +27,7 @@ These documents specify responsibilities, relationships, observable lifecycles, 
 | [06 — API, console, and access](06-api-console-and-access.md)                   | Application command/query boundary, console behavior, and caller authority        |
 | [07 — Bridges and clients](07-bridges-and-clients.md)                           | Platform-neutral ingress, conversation bindings, interaction, and delivery        |
 | [08 — Automation](08-automation.md)                                             | Schedules, heartbeat, workflows, and bounded autonomous follow-up                 |
-| [09 — Memory](09-memory.md)                                                     | Durable reusable knowledge and its relationship to conversation state             |
+| [09 — Memory](09-memory.md)                                                     | Global and Thread-private file memory, projection, organization, and retention    |
 | [Repository boundaries](repository-model.md)                                    | Source surfaces, distribution, compatibility, and current implementation boundary |
 
 Start with 00 and 01. For the main user path, continue through 02–04, then 06–07. For unattended work, read 05 and 08–09 with the execution and recovery contracts. A concept's owning document takes precedence over summaries elsewhere.
