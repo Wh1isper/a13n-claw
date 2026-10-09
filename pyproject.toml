@@ -7,7 +7,7 @@ license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 authors = [{name = "Wh1isper"}]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1"]
 classifiers = [
   "Development Status :: 1 - Planning",
   "Intended Audience :: Developers",
@@ -28,15 +28,19 @@ a13n-claw = "a13n_claw.cli:main"
 requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/a13n_claw"]
+packages = ["a13n_claw"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "scripts", "pyproject.toml", "README.md", "LICENSE"]
+include = ["/a13n_claw", "/tests", "/scripts", "/pyproject.toml", "/hatch_build.py", "/console", "/README.md", "/LICENSE"]
 
 [dependency-groups]
 dev = [
   "deptry>=0.24,<1",
+  "httpx>=0.28,<1",
   "mdformat>=0.7,<1",
   "mdformat-frontmatter>=2,<3",
   "mdformat-gfm>=0.4,<1",
@@ -54,7 +58,7 @@ line-length = 100
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.pyright]
-include = ["src", "scripts"]
+include = ["a13n_claw", "scripts"]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"
 

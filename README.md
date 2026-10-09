@@ -4,7 +4,7 @@
 
 A fresh, local-first agent runtime project targeting [a13n Harness](https://github.com/converge-ai-labs/agent-foundation), inspired by [YA Claw](https://github.com/Wh1isper/ya-mono/tree/main/packages/ya-claw).
 
-**Current scope: placeholder package.** The initial `0.0.1` release establishes the package identity, repository conventions, documentation, and release automation. It does **not** execute agents or provide a server, Web UI, persistent sessions, scheduling, or bridges. Harness integration will be implemented separately; the placeholder intentionally has no runtime dependencies.
+**Current scope: console placeholder, not an agent runtime.** Source builds include a responsive React console and a Python static server. Threads, environments, and settings explain planned capabilities; they do not execute agents, save state, or load credentials. Application APIs, authentication, scheduling, bridges, and Harness integration are not implemented.
 
 ## Try the placeholder
 
@@ -14,9 +14,13 @@ From a source checkout:
 uv sync --locked
 uv run a13n-claw --version
 uv run a13n-claw --help
+make console-build
+make serve
 ```
 
-Source builds report `0.0.0`. Release builds derive their version from `release/a13n-claw-vX.Y.Z` tags. Install the BSD-licensed placeholder with `uv tool install a13n-claw==0.0.2`.
+Open `http://127.0.0.1:8080`. `a13n-claw serve --host 127.0.0.1 --port 8080` provides explicit bind options; no arguments still print help. This preview has no authentication, so keep it on a trusted interface.
+
+Source builds report `0.0.0`. Release builds derive their version from `release/a13n-claw-vX.Y.Z` tags. The published `0.0.2` package is the earlier informational CLI placeholder and does not include the console.
 
 ## Develop
 
@@ -30,6 +34,8 @@ make build
 make artifact-check
 make docs-build
 ```
+
+`console/` is the private runtime frontend; `a13n_claw/` is the Python package; `docs/` remains the independent documentation site. `make console-dev` provides frontend hot reload on port 5173. `make build` compiles console assets into the wheel and sdist; installed serving and wheel rebuilds from the sdist require no Node.js. Docker installs the same wheel.
 
 - [Contributing](CONTRIBUTING.md): setup, validation, and releases.
 - [Development standards](DEVELOPMENT.md): code and test conventions.

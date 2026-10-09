@@ -15,3 +15,10 @@ updates:
     groups:
       docs:
         patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /console
+    schedule:
+      interval: weekly
+    groups:
+      console:
+        patterns: ["*"]

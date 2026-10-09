@@ -19,3 +19,5 @@ out/
 *.log
 .DS_Store
 .idea/
+/.worktrees/
+/a13n_claw/static/console/

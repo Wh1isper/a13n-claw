@@ -10,28 +10,34 @@ cd a13n-claw
 make install
 ```
 
-The independent `uv.lock` and `docs/pnpm-lock.yaml` own dependency resolution. No neighboring repository is required. `make install` installs the Git hooks; commits must not bypass them.
+The independent `uv.lock`, `console/pnpm-lock.yaml`, and `docs/pnpm-lock.yaml` own dependency resolution. No neighboring repository is required. `make install` installs the Git hooks; commits must not bypass them.
 
 ## Validation
 
-| Command               | Purpose                                      |
-| --------------------- | -------------------------------------------- |
-| `make format`         | Apply pre-commit formatting and file hygiene |
-| `make lint`           | Check Python and Markdown formatting         |
-| `make typecheck`      | Run Pyright                                  |
-| `make deps-check`     | Check Python dependency declarations         |
-| `make test`           | Run offline tests                            |
-| `make docs-check`     | Check documentation formatting and types     |
-| `make docs-serve`     | Preview the documentation                    |
-| `make docs-build`     | Export the static site and check links       |
-| `make build`          | Build a wheel and source distribution        |
-| `make artifact-check` | Install the wheel and rebuild the sdist      |
-| `make workflow-check` | Run actionlint in Docker                     |
-| `make image-check`    | Build and run the non-root placeholder image |
-| `make check`          | Run static checks                            |
-| `make check-all`      | Run the full CI-equivalent gates             |
+| Command               | Purpose                                       |
+| --------------------- | --------------------------------------------- |
+| `make format`         | Apply pre-commit formatting and file hygiene  |
+| `make lint`           | Check Python and Markdown formatting          |
+| `make typecheck`      | Run Pyright                                   |
+| `make deps-check`     | Check Python dependency declarations          |
+| `make test`           | Run offline tests                             |
+| `make console-check`  | Check console types and formatting            |
+| `make console-build`  | Install and build packaged console assets     |
+| `make console-dev`    | Preview the console with hot reload           |
+| `make serve`          | Serve built console assets on port 8080       |
+| `make docs-check`     | Check documentation formatting and types      |
+| `make docs-serve`     | Preview the documentation                     |
+| `make docs-build`     | Export the static site and check links        |
+| `make build`          | Build console, wheel, and source distribution |
+| `make artifact-check` | Install and HTTP-test wheel and rebuilt sdist |
+| `make workflow-check` | Run actionlint in Docker                      |
+| `make image-check`    | Build and run the non-root placeholder image  |
+| `make check`          | Run static checks                             |
+| `make check-all`      | Run the full CI-equivalent gates              |
 
 Choose local checks by the changed surface and risk. Do not repeat unaffected checks. CI runs the complete applicable gates for ready pull requests and pushes to `main`. Python checks also run on Windows; package artifacts must be installable without the source checkout. Report unavailable checks honestly.
+
+`make build` owns the source-to-distribution pipeline. A direct `uv build` requires a prior `make console-build`; missing assets fail explicitly. The sdist includes frontend source and prebuilt assets, so rebuilding its wheel requires only Python tooling. Run `make console-install` after console lockfile changes before `make console-dev` or `make console-check`. `make serve` uses the last built assets, not Vite hot reload.
 
 ## Changes and reviews
 

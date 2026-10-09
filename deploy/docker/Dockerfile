@@ -10,5 +10,6 @@ RUN pip install --no-cache-dir /tmp/wheels/*.whl \
     && useradd --create-home --uid 10001 claw
 USER 10001:10001
 WORKDIR /home/claw
+EXPOSE 8080
 ENTRYPOINT ["a13n-claw"]
 CMD ["--help"]
