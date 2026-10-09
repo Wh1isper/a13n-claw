@@ -11,13 +11,13 @@ format: ## Format tracked source files
 lint: ## Check Python and Markdown formatting
 	uv run --locked ruff check .
 	uv run --locked ruff format --check .
-	uv run --locked mdformat --check --number README.md AGENTS.md CONTRIBUTING.md DEVELOPMENT.md MAINTAINERS.md SECURITY.md docs/content spec .github
+	uv run --locked mdformat --check --number README.md AGENTS.md CONTRIBUTING.md DEVELOPMENT.md MAINTAINERS.md SECURITY.md docs/content spec .github .agents
 
 typecheck: ## Type-check Python sources
 	uv run --locked pyright
 
 deps-check: ## Check Python dependency declarations
-	uv run --locked deptry src
+	uv run --locked deptry a13n_claw
 
 test: ## Run offline tests
 	uv run --locked pytest

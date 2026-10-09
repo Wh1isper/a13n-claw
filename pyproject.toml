@@ -29,10 +29,10 @@ requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/a13n_claw"]
+packages = ["a13n_claw"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "scripts", "pyproject.toml", "README.md", "LICENSE"]
+include = ["/a13n_claw", "/tests", "/scripts", "/pyproject.toml", "/README.md", "/LICENSE"]
 
 [dependency-groups]
 dev = [
@@ -54,7 +54,7 @@ line-length = 100
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.pyright]
-include = ["src", "scripts"]
+include = ["a13n_claw", "scripts"]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"
 

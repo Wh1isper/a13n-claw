@@ -12,19 +12,22 @@ Configuration, API, and persisted state compatibility require explicit contracts
 
 ## Content ownership
 
-| Surface           | Owner                                          |
-| ----------------- | ---------------------------------------------- |
-| `src/a13n_claw`   | Python package and CLI                         |
-| `tests`           | Offline behavioral and release-tooling tests   |
-| `scripts`         | Release preparation and artifact validation    |
-| `docs/content`    | User documentation and navigation              |
-| `docs`            | Private Fumadocs static site and Worker config |
-| `spec`            | Accepted product and architecture contracts    |
-| GitHub Issues     | Proposals and open decisions                   |
-| `deploy/docker`   | Non-root distribution image                    |
-| `CONTRIBUTING.md` | Setup, validation, and release procedure       |
-| `DEVELOPMENT.md`  | Engineering standards                          |
-| `AGENTS.md`       | Concise coding-agent guidance                  |
+| Surface           | Owner                                           |
+| ----------------- | ----------------------------------------------- |
+| `a13n_claw`       | Python package and CLI                          |
+| `tests`           | Offline behavioral and release-tooling tests    |
+| `scripts`         | Release preparation and artifact validation     |
+| `docs/content`    | User documentation and navigation               |
+| `docs`            | Private Fumadocs static site and Worker config  |
+| `spec`            | Accepted product and architecture contracts     |
+| GitHub Issues     | Proposals and open decisions                    |
+| `deploy/docker`   | Non-root distribution image                     |
+| `CONTRIBUTING.md` | Setup, validation, and release procedure        |
+| `DEVELOPMENT.md`  | Engineering standards                           |
+| `AGENTS.md`       | Concise coding-agent guidance                   |
+| `.agents/skills`  | Repository-local agent workflows and references |
+
+This is a single-package repository: `a13n_claw/` lives at the repository root, with no `src/` wrapper. Repository skills are contributor tooling, not runtime package data.
 
 This repository owns its dependency resolution, validation, and release lifecycle. Its build and checks do not require a neighboring source checkout. A local checkout's placement does not make it part of another repository's workspace.
 
