@@ -1,9 +1,21 @@
-import { StrictMode, useState } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import {
+  Api,
+  allowed,
+  message,
+  useRemote,
+  type Instance,
+  type Resource,
+  type Thread,
+} from "./api";
+import { Action, Empty, ErrorNotice, Status } from "./components";
+import { Conversation, blankDraft, type Draft } from "./conversation";
+import { Environments } from "./environments";
+import { Settings } from "./settings";
 import "./styles.css";
 
 type Page = "Overview" | "Threads" | "Environments" | "Settings";
-const pages: Page[] = ["Overview", "Threads", "Environments", "Settings"];
 const paths: Record<Page, string> = {
   Overview: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
   Threads:
@@ -11,42 +23,6 @@ const paths: Record<Page, string> = {
   Environments: "M3 5h18v14H3z M7 9l3 3-3 3 M13 15h4",
   Settings: "M3 6h18 M3 12h18 M3 18h18 M8 3v6 M16 9v6 M10 15v6",
 };
-const details: Record<
-  Exclude<Page, "Overview">,
-  { title: string; description: string; planned: string[] }
-> = {
-  Threads: {
-    title: "A place for work that continues.",
-    description:
-      "Conversations, execution history, and decisions will live here. Thread creation and agent execution are not available in this preview.",
-    planned: [
-      "Persistent conversations",
-      "Run history and pending decisions",
-      "Continuation and recovery",
-    ],
-  },
-  Environments: {
-    title: "Your work. In its own environment.",
-    description:
-      "Working contexts and managed execution environments will live here. This preview does not inspect your filesystem or connect to Docker.",
-    planned: [
-      "Workspace selection",
-      "Managed execution environments",
-      "Scoped files and outputs",
-    ],
-  },
-  Settings: {
-    title: "An explicit home for configuration.",
-    description:
-      "Models, agents, and instance configuration will live here. This preview does not read credentials, save settings, or configure a runtime.",
-    planned: [
-      "Model and agent definitions",
-      "Instance access controls",
-      "Bridge and automation configuration",
-    ],
-  },
-};
-
 function Icon({ page }: { page: Page }) {
   return (
     <svg
@@ -62,34 +38,159 @@ function Icon({ page }: { page: Page }) {
     </svg>
   );
 }
-
+function Brand() {
+  return (
+    <div className="brand">
+      <span className="brand-mark" aria-hidden="true">
+        a<span>13</span>n
+      </span>
+      <span>
+        Claw<small>CONSOLE</small>
+      </span>
+    </div>
+  );
+}
 function App() {
+  const [session, setSession] = useState<{
+    api: Api;
+    instance: Instance;
+  } | null>(null);
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (session)
+    return (
+      <Console
+        api={session.api}
+        initial={session.instance}
+        logout={() => {
+          setSession(null);
+          setToken("");
+        }}
+      />
+    );
+  return (
+    <main className="login">
+      <Brand />
+      <section className="login-card">
+        <p className="eyebrow">YOUR INSTANCE. YOUR WORK.</p>
+        <h1>Continue where you left off.</h1>
+        <p>
+          Connect to this self-hosted Claw instance to manage conversations,
+          decisions and working environments.
+        </p>
+        <form
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setBusy(true);
+            setError("");
+            try {
+              const api = new Api(token.trim());
+              const instance = await api.get<Instance>("/instance");
+              setSession({ api, instance });
+              setToken("");
+            } catch (reason) {
+              setError(message(reason));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <label>
+            Access token
+            <input
+              type="password"
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              autoComplete="off"
+              autoFocus
+              required
+            />
+          </label>
+          <ErrorNotice>{error}</ErrorNotice>
+          <button className="primary" disabled={busy || !token.trim()}>
+            {busy ? "Connecting…" : "Connect to Claw"}
+          </button>
+        </form>
+        <details>
+          <summary>First time here?</summary>
+          <p>
+            The server writes an operator token to <code>operator.token</code>{" "}
+            inside its application data directory (by default{" "}
+            <code>~/.a13n-claw</code>). Read it locally; never put it in a URL.
+          </p>
+          <p>
+            Tokens are held only in this tab's memory. Use HTTPS when accessing
+            an instance remotely.
+          </p>
+        </details>
+      </section>
+      <footer>Built on a13n Harness · self-hosted by design</footer>
+    </main>
+  );
+}
+function Console({
+  api,
+  initial,
+  logout,
+}: {
+  api: Api;
+  initial: Instance;
+  logout: () => void;
+}) {
+  const instance = useRemote<Instance>(api, "/instance", 5000);
+  const info = instance.data ?? initial;
+  const threads = useRemote<Thread[]>(api, "/threads", 2000);
+  const profiles = useRemote<Resource[]>(api, "/profiles", 5000);
   const [page, setPage] = useState<Page>("Overview");
+  const [selected, setSelected] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+  const [search, setSearch] = useState("");
+  const [newThread, setNewThread] = useState(false);
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const thread = threads.data?.find((item) => item.id === selected);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [page, selected, newThread]);
+  const hasDraft = Object.values(drafts).some(
+    (item) => item.text || item.files.length || item.pending,
+  );
+  useEffect(() => {
+    if (!hasDraft) return;
+    const guard = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", guard);
+    return () => window.removeEventListener("beforeunload", guard);
+  }, [hasDraft]);
+  const navigate = (id: string) => {
+    setSelected(id);
+    setPage("Threads");
+    setNewThread(false);
+    threads.reload();
+  };
+  const refresh = () => {
+    threads.reload();
+    profiles.reload();
+    instance.reload();
+  };
   return (
     <div className="shell">
       <a className="skip-link" href="#main">
         Skip to content
       </a>
       <aside className="sidebar">
-        <a
-          className="brand"
-          href="#"
-          onClick={(event) => {
-            event.preventDefault();
-            setPage("Overview");
-          }}
-          aria-label="a13n Claw overview"
-        >
-          <span className="brand-mark" aria-hidden="true">
-            a<span>13</span>n
-          </span>
-          <span>
-            Claw <small>CONSOLE</small>
-          </span>
-        </a>
-        <div className="nav-label">WORKSPACE</div>
+        <Brand />
+        <div className="nav-label">INSTANCE</div>
         <nav aria-label="Console">
-          {pages.map((item) => (
+          {(
+            [
+              "Overview",
+              "Threads",
+              "Environments",
+              ...(info.principal.admin ? ["Settings"] : []),
+            ] as Page[]
+          ).map((item) => (
             <button
               key={item}
               aria-current={page === item ? "page" : undefined}
@@ -97,9 +198,6 @@ function App() {
             >
               <Icon page={item} />
               <span>{item}</span>
-              {item !== "Overview" && (
-                <span className="nav-preview">Preview</span>
-              )}
             </button>
           ))}
         </nav>
@@ -111,152 +209,312 @@ function App() {
           >
             Documentation <span aria-hidden="true">↗</span>
           </a>
-          <a
-            href="https://github.com/Wh1isper/a13n-claw"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Source code <span aria-hidden="true">↗</span>
-          </a>
-          <div className="foundation">
-            Built on <strong>a13n Harness</strong>
-          </div>
+          <small>
+            {info.principal.id} ·{" "}
+            {info.principal.admin ? "Operator" : "Participant"}
+          </small>
         </div>
       </aside>
       <div className="workspace">
         <header className="topbar">
           <span>
-            Console <span className="breadcrumb-divider">/</span>{" "}
+            Console <span className="breadcrumb-divider">/</span>
             <strong>{page}</strong>
           </span>
-          <span className="preview-badge">Interface preview</span>
+          <span className="toolbar">
+            <Status value={instance.error ? "disconnected" : info.dispatcher} />
+            <small className="version">v{info.version}</small>
+            <button
+              onClick={() => {
+                if (
+                  hasDraft &&
+                  !confirm(
+                    "Disconnect and discard unsent drafts? Accepted work continues.",
+                  )
+                )
+                  return;
+                logout();
+              }}
+            >
+              Disconnect
+            </button>
+          </span>
         </header>
         <main id="main" tabIndex={-1}>
-          <div className="page-heading">
-            <div>
-              <p className="eyebrow">A13N CLAW</p>
-              <h1>{page}</h1>
-            </div>
-            <span className="stage-label">EARLY DEVELOPMENT</span>
-          </div>
-          <div className="notice">
-            <span className="notice-mark" aria-hidden="true">
-              i
-            </span>
-            <p>
-              <strong>A console, not a running agent.</strong> This is an
-              interface placeholder. Execution, persistence, and authentication
-              are not implemented.
-            </p>
-          </div>
-          {page === "Overview" ? (
-            <>
-              <section className="welcome">
-                <div className="welcome-copy">
-                  <p className="eyebrow">LOCAL-FIRST · SELF-HOSTED</p>
-                  <h2>
-                    A home for your
-                    <br />
-                    agent work.
-                  </h2>
-                  <p>
-                    Persistent conversations, explicit control, and work that
-                    can continue. A small starting point for a runtime built on
-                    a13n Harness.
-                  </p>
-                  <a
-                    className="primary-link"
-                    href="https://a13n-claw.wh1isper.top/docs/"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Explore the documentation <span aria-hidden="true">↗</span>
-                  </a>
-                </div>
-                <div className="blueprint" aria-hidden="true">
-                  <div className="blueprint-orbit">
-                    <div className="blueprint-core">
-                      a13n<span>Claw</span>
-                    </div>
-                  </div>
-                  <span className="blueprint-label label-one">CONTEXT</span>
-                  <span className="blueprint-label label-two">CONTINUITY</span>
-                  <span className="blueprint-caption">
-                    A foundation for what comes next
-                  </span>
-                </div>
-              </section>
-              <section aria-labelledby="planned-heading">
-                <div className="section-heading">
-                  <h2 id="planned-heading">A look ahead</h2>
-                  <span>Planned capabilities</span>
-                </div>
-                <div className="feature-grid">
-                  {(["Threads", "Environments", "Settings"] as const).map(
-                    (item) => (
-                      <button
-                        className="feature-card"
-                        key={item}
-                        onClick={() => setPage(item)}
-                      >
-                        <span className="feature-icon">
-                          <Icon page={item} />
-                        </span>
-                        <h3>
-                          {item}
-                          <span aria-hidden="true">→</span>
-                        </h3>
-                        <p>
-                          {details[item].planned[0]}. {details[item].planned[1]}
-                          .
-                        </p>
-                        <span className="card-status">Not implemented</span>
-                      </button>
-                    ),
-                  )}
-                </div>
-              </section>
-              <section className="boundary">
-                <div>
-                  <h2>Small surface. Clear boundaries.</h2>
-                  <p>
-                    This build serves static console assets only. There is no
-                    agent backend connected to this interface.
-                  </p>
-                </div>
-                <code>a13n-claw serve</code>
-              </section>
-            </>
-          ) : (
-            <section className="empty-state" aria-labelledby="empty-heading">
-              <span className="empty-icon">
-                <Icon page={page} />
-              </span>
-              <span className="card-status">Not implemented</span>
-              <h2 id="empty-heading">{details[page].title}</h2>
-              <p>{details[page].description}</p>
-              <ul>
-                {details[page].planned.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
+          <ErrorNotice>
+            {instance.error || threads.error || profiles.error}
+          </ErrorNotice>
+          <div hidden={page !== "Overview"}>
+            <header className="page-heading">
+              <div>
+                <p className="eyebrow">LOCAL-FIRST · DURABLE WORK</p>
+                <h1>Your work, with continuity.</h1>
+                <p>Start a conversation. Keep control of what happens next.</p>
+              </div>
               <button
-                className="secondary-button"
-                onClick={() => setPage("Overview")}
+                className="primary"
+                disabled={!allowed(info.principal, "create")}
+                onClick={() => {
+                  setPage("Threads");
+                  setNewThread(true);
+                }}
               >
-                Back to overview <span aria-hidden="true">→</span>
+                New Thread
               </button>
+            </header>
+            <section className="welcome">
+              <div>
+                <p className="eyebrow">INSTANCE WORKSPACE</p>
+                <h2>
+                  One place for working files.
+                  <br />
+                  Independent histories.
+                </h2>
+                <p>
+                  Threads share working data. Runs retain their own captured
+                  definitions, decisions and saved outcomes.
+                </p>
+                {info.workspace && <code>{info.workspace}</code>}
+              </div>
+              <div className="overview-stats">
+                <span>
+                  <strong>
+                    {threads.data?.filter((item) => !item.archived).length ??
+                      "—"}
+                  </strong>
+                  Active Threads
+                </span>
+                <span>
+                  <strong>{profiles.data?.length ?? "—"}</strong>Available
+                  profiles
+                </span>
+              </div>
             </section>
+            {!profiles.data?.length && info.principal.admin && (
+              <section className="panel setup">
+                <h2>Set up your first agent</h2>
+                <p>
+                  Create a model with a credential reference, choose a Local or
+                  Docker environment, then connect them in a profile. Save
+                  credentials separately. Finally select the default profile or
+                  choose one when creating a Thread.
+                </p>
+                <button onClick={() => setPage("Settings")}>
+                  Open settings
+                </button>
+              </section>
+            )}
+            <section className="panel">
+              <div className="section-heading">
+                <h2>Recent conversations</h2>
+                <button onClick={() => setPage("Threads")}>All Threads</button>
+              </div>
+              {threads.data?.slice(0, 5).map((item) => (
+                <button
+                  key={item.id}
+                  className="recent-thread"
+                  onClick={() => navigate(item.id)}
+                >
+                  <span>
+                    <strong>{item.title}</strong>
+                    <small>
+                      {item.profile_id} ·{" "}
+                      {new Date(item.created_at).toLocaleDateString()}
+                    </small>
+                  </span>
+                  <span aria-hidden="true">→</span>
+                </button>
+              ))}
+              {threads.data?.length === 0 && (
+                <p className="subtle">No saved conversations yet.</p>
+              )}
+            </section>
+            <section className="panel">
+              <h2>Readiness is specific.</h2>
+              <p>
+                Dispatcher: <strong>{info.dispatcher}</strong>. Provider
+                connectivity:{" "}
+                <strong>{info.connectivity.replaceAll("_", " ")}</strong>. A
+                saved credential or a configured profile is not proof of a
+                reachable model or MCP server.
+              </p>
+              {info.error && <ErrorNotice>{info.error}</ErrorNotice>}
+            </section>
+          </div>
+          <div
+            hidden={page !== "Threads" && page !== "Environments"}
+            className="thread-layout"
+          >
+            <aside className="thread-picker">
+              <div className="section-heading">
+                <h2>Threads</h2>
+                {allowed(info.principal, "create") && (
+                  <button
+                    aria-label="New Thread"
+                    onClick={() => {
+                      setNewThread(true);
+                      setPage("Threads");
+                    }}
+                  >
+                    +
+                  </button>
+                )}
+              </div>
+              <label className="sr-only" htmlFor="thread-search">
+                Search Threads
+              </label>
+              <input
+                id="thread-search"
+                placeholder="Find a conversation"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={showArchived}
+                  onChange={(event) => setShowArchived(event.target.checked)}
+                />
+                Show archived
+              </label>
+              <div className="thread-list">
+                {threads.data
+                  ?.filter(
+                    (item) =>
+                      (showArchived || !item.archived) &&
+                      item.title.toLowerCase().includes(search.toLowerCase()),
+                  )
+                  .map((item) => (
+                    <button
+                      key={item.id}
+                      className={selected === item.id ? "selected" : ""}
+                      onClick={() => {
+                        setSelected(item.id);
+                        setNewThread(false);
+                      }}
+                    >
+                      <strong>{item.title}</strong>
+                      <small>
+                        {item.profile_id}
+                        {item.archived ? " · archived" : ""}
+                      </small>
+                    </button>
+                  ))}
+              </div>
+            </aside>
+            <div className="thread-content">
+              <div hidden={page !== "Threads"}>
+                {newThread ? (
+                  <NewThread
+                    api={api}
+                    profiles={profiles.data ?? []}
+                    done={navigate}
+                    cancel={() => setNewThread(false)}
+                  />
+                ) : thread ? (
+                  <Conversation
+                    key={thread.id}
+                    api={api}
+                    actor={info.principal}
+                    thread={thread}
+                    profiles={profiles.data ?? []}
+                    draft={drafts[thread.id] ?? blankDraft()}
+                    setDraft={(value) =>
+                      setDrafts((previous) => ({
+                        ...previous,
+                        [thread.id]: value,
+                      }))
+                    }
+                    changed={refresh}
+                    navigate={navigate}
+                  />
+                ) : (
+                  <Empty title="Choose a conversation.">
+                    Select a Thread on the left or start a new one. Accepted
+                    work continues even when you navigate away.
+                  </Empty>
+                )}
+              </div>
+              <div hidden={page !== "Environments"}>
+                <Environments
+                  key={thread?.id ?? "none"}
+                  api={api}
+                  actor={info.principal}
+                  thread={thread}
+                />
+              </div>
+            </div>
+          </div>
+          {info.principal.admin && (
+            <div hidden={page !== "Settings"}>
+              <Settings api={api} changed={refresh} />
+            </div>
           )}
-          <footer>
-            Self-hosted by design.<span>Preview only · No runtime state</span>
-          </footer>
         </main>
       </div>
     </div>
   );
 }
-
+function NewThread({
+  api,
+  profiles,
+  done,
+  cancel,
+}: {
+  api: Api;
+  profiles: Resource[];
+  done: (id: string) => void;
+  cancel: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [profile, setProfile] = useState("");
+  return (
+    <section className="panel form-panel">
+      <p className="eyebrow">INDEPENDENT HISTORY · SHARED WORKSPACE</p>
+      <h1>New conversation</h1>
+      <label>
+        Title
+        <input
+          value={title}
+          placeholder="What are you working on?"
+          onChange={(event) => setTitle(event.target.value)}
+          autoFocus
+        />
+      </label>
+      <label>
+        Profile
+        <select
+          value={profile}
+          onChange={(event) => setProfile(event.target.value)}
+        >
+          <option value="">Instance default</option>
+          {profiles.map((item) => (
+            <option key={item.id}>{item.id}</option>
+          ))}
+        </select>
+      </label>
+      <p className="subtle">
+        Creating a Thread does not start execution. Send its first message when
+        you're ready.
+      </p>
+      <div className="toolbar">
+        <Action
+          disabled={!title.trim() || !profiles.length}
+          run={async () => {
+            const thread = await api.send<Thread>("/threads", {
+              title,
+              profile_id: profile || null,
+            });
+            done(thread.id);
+          }}
+        >
+          Create Thread
+        </Action>
+        <button onClick={cancel}>Cancel</button>
+      </div>
+    </section>
+  );
+}
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <App />

@@ -7,17 +7,6 @@ from a13n_claw import app
 from a13n_claw.cli import main
 
 
-@pytest.fixture
-def console(tmp_path, monkeypatch):
-    directory = tmp_path / "console"
-    directory.mkdir()
-    (directory / "index.html").write_text("<!doctype html><title>Console</title>")
-    (directory / "app.js").write_text("console.log('preview');")
-    (tmp_path / "private.txt").write_text("not public")
-    monkeypatch.setattr(app, "CONSOLE_DIRECTORY", directory)
-    return directory
-
-
 def test_static_console(console):
     with TestClient(app.create_app()) as client:
         response = client.get("/")
@@ -33,7 +22,6 @@ def test_static_console(console):
 @pytest.mark.parametrize(
     "path",
     [
-        "/api/threads",
         "/healthz",
         "/docs",
         "/openapi.json",

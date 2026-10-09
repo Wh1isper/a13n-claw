@@ -12,9 +12,9 @@ def test_distribution_owns_version():
     assert __version__ == version("a13n-claw")
 
 
-def test_placeholder_is_explicit(capsys):
+def test_runtime_command_is_described(capsys):
     main([])
-    assert "Agent execution is not implemented yet" in capsys.readouterr().out
+    assert "durable agent execution" in capsys.readouterr().out
 
 
 def test_version(capsys):

@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://a13n-claw.wh1isper.top"),
   title: { default: "a13n Claw", template: "%s · a13n Claw" },
   description:
-    "A fresh start for a Harness-based local-first agent runtime. Currently a placeholder package.",
+    "A Harness-based local-first agent runtime with durable conversations and a self-hosted Console.",
 };
 export default function Layout({ children }: { children: ReactNode }) {
   return (
