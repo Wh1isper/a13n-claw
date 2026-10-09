@@ -31,7 +31,17 @@ jobs:
       - run: uv run --locked pytest
       - if: runner.os == 'Linux'
         run: make lint typecheck deps-check
-      - run: uv build --clear
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: console/pnpm-lock.yaml
+      - run: pnpm --dir console install --frozen-lockfile
+      - run: pnpm --dir console check
+      - run: make build
       - run: uv run --locked python scripts/check_artifacts.py
   automation:
     name: Workflows and container
@@ -45,4 +55,12 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: console/pnpm-lock.yaml
       - run: make workflow-check image-check

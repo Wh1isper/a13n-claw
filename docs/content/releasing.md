@@ -43,7 +43,7 @@ git tag release/a13n-claw-v0.0.1
 git push origin release/a13n-claw-v0.0.1
 ```
 
-Do not commit a version bump. The workflow injects `0.0.1`, builds the wheel and sdist, publishes PyPI, builds GHCR from that wheel for Linux AMD64 and ARM64, and creates a GitHub Release with generated notes and Python artifacts. A stable image publishes exact version and `latest`; an RC publishes only its exact `X.Y.Z-rc.N` tag.
+Do not commit a version bump. The workflow injects `0.0.1`, builds the console and packages its assets in both wheel and sdist through `make build`, publishes PyPI, builds GHCR from that wheel for Linux AMD64 and ARM64, and creates a GitHub Release with generated notes and Python artifacts. A stable image publishes exact version and `latest`; an RC publishes only its exact `X.Y.Z-rc.N` tag.
 
 ## Verify and recover
 

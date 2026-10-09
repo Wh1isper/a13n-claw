@@ -28,7 +28,7 @@ def test_unknown_commands_are_not_fake_runtime(capsys):
     with pytest.raises(SystemExit) as result:
         main(["start"])
     assert result.value.code == 2
-    assert "unrecognized arguments" in capsys.readouterr().err
+    assert "invalid choice" in capsys.readouterr().err
 
 
 def test_module_entrypoint():

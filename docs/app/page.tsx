@@ -28,9 +28,10 @@ export default function Home() {
           </a>
         </div>
         <p className="notice">
-          <strong>Starting small, deliberately.</strong> The initial 0.0.1
-          release is a placeholder package and delivery pipeline. Agent
-          execution, a server, and a runtime UI are not implemented yet.
+          <strong>Starting small, deliberately.</strong> Source builds include a
+          console preview and static server. Agent execution, persistence, and
+          authentication are not implemented. Published 0.0.2 artifacts remain
+          the earlier CLI-only placeholder.
         </p>
       </section>
       <section className="cards" aria-label="Project principles">

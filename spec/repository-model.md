@@ -6,7 +6,7 @@
 
 ### Current Distribution
 
-A13n Claw is an independent, public project targeting a13n Harness. The current distribution is a placeholder: it provides installed version metadata and an informational `a13n-claw` command. No agent execution, server, configuration loader, persistence, or authentication surface exists. Unknown CLI arguments fail rather than silently pretending to perform runtime work.
+A13n Claw is an independent, public project targeting a13n Harness. The current distribution is a placeholder: it provides installed version metadata, CLI help, and a static console preview through `a13n-claw serve`. The server binds to `127.0.0.1:8080` by default, with explicit host and port options. No agent execution, application API, configuration loader, persistence, or authentication surface exists. Unknown CLI arguments fail rather than silently pretending to perform runtime work.
 
 Configuration, API, and persisted state compatibility require explicit contracts in this repository. The placeholder does not depend on Harness yet; future integration consumes its published public APIs and declares bounded version requirements.
 
@@ -15,6 +15,7 @@ Configuration, API, and persisted state compatibility require explicit contracts
 | Surface           | Owner                                           |
 | ----------------- | ----------------------------------------------- |
 | `a13n_claw`       | Python package and CLI                          |
+| `console`         | Private React console source and build tooling  |
 | `tests`           | Offline behavioral and release-tooling tests    |
 | `scripts`         | Release preparation and artifact validation     |
 | `docs/content`    | User documentation and navigation               |
@@ -27,6 +28,8 @@ Configuration, API, and persisted state compatibility require explicit contracts
 | `AGENTS.md`       | Concise coding-agent guidance                   |
 | `.agents/skills`  | Repository-local agent workflows and references |
 
+The console and documentation are independent frontends. `console/` builds into generated `a13n_claw/static/console/` assets; `docs/` never becomes runtime console content. Navigation in the preview is client-local, not an application command. Unknown paths and missing assets return HTTP 404 rather than falling back to the console HTML. The server exposes only the packaged console directory.
+
 This is a single-package repository: `a13n_claw/` lives at the repository root, with no `src/` wrapper. Repository skills are contributor tooling, not runtime package data.
 
 This repository owns its dependency resolution, validation, and release lifecycle. Its build and checks do not require a neighboring source checkout. A local checkout's placement does not make it part of another repository's workspace.
@@ -35,4 +38,6 @@ This repository owns its dependency resolution, validation, and release lifecycl
 
 The source version remains `0.0.0`. Release tags define the version of Python artifacts and the container image. The runtime reports installed distribution metadata. Frontend tooling has no independent release identity. Generated assets and dependencies are not committed.
 
-Cloudflare Workers Static Assets serves public documentation only. The image runs the placeholder CLI as a non-root user and exits. Neither artifact is an agent runtime deployment.
+The wheel and sdist both contain the built console. Building from a source checkout requires the frontend toolchain and a console build; a missing bundle fails the distributable build explicitly. Editable installs can omit assets until console development begins. Installing a wheel, rebuilding a wheel from its sdist, and serving either require no Node.js. The container installs the same wheel, not a separately built frontend.
+
+Cloudflare Workers Static Assets serves public documentation only. The image runs as a non-root user; its default command prints help and exits. An explicit `serve --host 0.0.0.0` serves the console on container port 8080. This static preview has no access control and is not an agent runtime deployment.
