@@ -6,56 +6,59 @@ This document owns the shared vocabulary. Identities distinguish independent lif
 
 ## Core Concepts
 
-| Concept              | Meaning                                                                                          | Authority                                                   |
-| -------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| Instance             | One operator-controlled Claw application and its durable operational context                     | Claw operator                                               |
-| Session              | One persistent work context grouping related conversation histories, working context, and policy | Claw                                                        |
-| Thread               | One independently advancing agent history and selected continuation                              | Harness identity, Claw persistence and selection            |
-| Run                  | One accepted unit of work advancing exactly one Thread                                           | Claw                                                        |
-| Item                 | A semantic presentation unit within a Run, such as a message, tool activity, decision, or error  | Claw projection of execution observations                   |
-| Profile              | A reusable definition of agent behavior and default resource selections                          | Claw configuration                                          |
-| Captured composition | The effective, fixed configuration selected for an accepted Run                                  | Claw                                                        |
-| Workspace binding    | The declared working locations and permitted operations selected for work                        | Claw policy and selection                                   |
-| Managed target       | An execution environment resource whose lifetime is managed separately from a Run                | Environment management                                      |
-| Checkpoint           | A complete saved continuation and the references needed to load it                               | Harness supplies state; Claw selects the durable checkpoint |
-| Pending decision     | A specific unanswered execution request requiring authorized human or external input             | Claw, constrained by the corresponding Harness continuation |
-| Conversation binding | A mapping from an external conversation scope to a Claw Session and Thread                       | Bridge policy within Claw                                   |
-| Delivery             | A separately tracked attempt to present a saved result or decision to an authorized destination  | Claw delivery policy and platform adapter                   |
+| Concept              | Meaning                                                                                                 | Authority                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Instance             | One operator-controlled Claw application and its durable operational context                            | Claw operator                                               |
+| Channel              | One external conversation scope qualified by platform and connection                                    | Platform identity, Claw routing policy                      |
+| Thread               | One independently advancing agent history, selected continuation, and private memory identity           | Harness history identity, Claw persistence and selection    |
+| Run                  | One execution lifecycle advancing exactly one Thread, possibly incorporating several inputs             | Claw                                                        |
+| Accepted input       | One retained submission with its own origin, identity, routing, and consumption disposition             | Claw                                                        |
+| Item                 | A semantic presentation unit within a Run, such as a message, tool activity, decision, or error         | Claw projection of execution observations                   |
+| Profile              | A reusable definition of agent behavior and default resource selections                                 | Claw configuration                                          |
+| Captured composition | The effective, fixed configuration selected for an accepted Run                                         | Claw                                                        |
+| Workspace binding    | The Instance's shared working directory exposed through a selected environment and permitted operations | Claw policy and selection                                   |
+| Managed target       | An execution environment resource whose lifetime is managed separately from a Run                       | Environment management                                      |
+| Checkpoint           | A complete saved continuation and the references needed to load it                                      | Harness supplies state; Claw selects the durable checkpoint |
+| Pending decision     | A specific unanswered execution request requiring authorized human or external input                    | Claw, constrained by the corresponding Harness continuation |
+| Conversation binding | A direct mapping from a Channel to a Thread, with participant and delivery policy                       | Bridge policy within Claw                                   |
+| Delivery             | A separately tracked attempt to present a saved result or decision to an authorized destination         | Claw delivery policy and platform adapter                   |
 
-[Automation](08-automation.md) owns schedules, heartbeat occurrences, workflows, and autonomous follow-up. [Memory](09-memory.md) owns reusable knowledge. Neither creates a competing conversation or execution model.
+[Automation](08-automation.md) owns schedules, heartbeat occurrences, workflows, and autonomous follow-up. [Memory](09-memory.md) owns Global and Thread-private reusable knowledge. Neither creates a competing conversation or execution model.
 
 ## Conversation Relationships
 
 ```mermaid
 flowchart LR
-    Session --> Root[Root Thread]
-    Session --> Child[Child Thread]
-    Session --> Fork[Forked Thread]
-    Root --> Runs[Runs]
-    Child --> ChildRuns[Child Runs]
-    Fork --> ForkRuns[Fork Runs]
+    Channel -->|Conversation binding| Thread
+    Thread --> Runs[Runs]
     Runs --> Items[Items]
-    Root --> Selected[Selected checkpoint]
-    Session --> Binding[Workspace binding]
+    Thread --> Selected[Selected checkpoint]
+    Thread --> Private[Thread-private memory]
+    Thread -->|Explicit relationship| Child[Child or forked Thread]
+    Thread --> Global[Global memory]
+    Child --> Global
+    Thread --> Workspace[Instance shared workspace]
+    Child --> Workspace
 ```
 
-A new Session starts with a root Thread. Independently advancing children and forks have distinct Thread identities in that Session. A Thread belongs to exactly one Session; a Run belongs to exactly one Thread. A user can create another Session for unrelated work without moving an existing history between scopes.
+Claw has no Session or Project entity. A Channel routes directly to its bound Thread. A room, direct chat, or platform reply thread can define a Channel according to the adapter's routing semantics. A binding maps one Channel to one current Thread; sharing one Thread across several Channels requires an explicit sharing decision. Console, API, and automation work can create Threads without a Channel.
 
-Resuming continues a Thread. Forking creates a new Thread from an identified checkpoint and leaves the source unchanged. Forking history does not clone working files, credentials, pending work, delivery destinations, or backing containers. The new Thread receives explicitly selected current authority.
+An accepted conversation input is not synonymous with a Run. Several messages can join or steer one Run; a receipt identifies the input and its current Run association without claiming that the agent has consumed it. [Execution](03-execution-lifecycle.md) owns routing and reconciliation. A Run belongs to exactly one Thread.
+
+Resuming continues a Thread. Independently advancing children have distinct Thread identities and recorded parent relationships. Forking creates a new Thread from an identified checkpoint and leaves the source unchanged. Forking history does not copy private memory, credentials, pending work, delivery destinations, or backing containers. New Threads start with their own empty private memory and can use current Global memory. They see the same Instance workspace, not a cloned filesystem, under explicitly selected current authority.
 
 Claw keeps its work identity distinct from a process-local Harness execution. A Run can span preparation and a persisted wait before completing; answering that wait can start another Harness execution without creating a different Claw Run. A new request to recover an interrupted Run creates new work with a reference to the interrupted source, not a rewrite of the source outcome.
 
 ## Independent State Boundaries
 
-- Session metadata and defaults can change without changing historical Runs.
 - Thread configuration selects future behavior; the selected checkpoint carries continuation, not configuration authority.
 - The captured composition describes intended behavior for a Run; it is not a snapshot of all external files or remote services.
-- A managed target can stop while its durable working data and Session remain retained.
+- A managed target can stop while its durable working data and owning Thread remain retained.
 - A Run can finish while its result delivery is pending or failed.
-- A channel can disconnect without ending a Session or cancelling work.
+- A Channel can disconnect without ending a Thread or cancelling work.
 - A saved Item is a view of execution, not a resumable agent state.
 
-There is no organization or project hierarchy required above Session. A workspace names a working context, not a tenant or a duplicate conversation catalog. Shared files and shared memory require explicit selection; separate Threads do not imply filesystem isolation.
+The Instance uses one shared workspace rooted at its startup directory or configured folder. Threads do not select Projects or independent workspace roots. Separate histories and private memory do not imply filesystem isolation: working files and Global memory are deliberately shared, while Thread-private memory is bound only to its owner. [Environment management](05-workspaces-and-environments.md) and [memory](09-memory.md) own those distinct data boundaries.
 
 ## Sources and Authority
 
@@ -65,8 +68,8 @@ A conversation binding routes work; it does not itself authorize every participa
 
 ## Invariants
 
-1. Session, Thread, Run, and external conversation identities are not interchangeable.
+1. Channel, Thread, Run, and managed target identities are not interchangeable.
 2. Exactly one execution owner can advance a given Thread at a time, including across persisted waits.
-3. History, execution configuration, workspace lifecycle, and output delivery have separate authorities.
+3. History, execution configuration, workspace lifecycle, memory ownership, and output delivery have separate authorities.
 4. A child or fork cannot overwrite its parent's continuation or inherit authority merely by copying history.
 5. All ingress paths retain enough origin information to explain accepted work and to reconcile repeated submission.

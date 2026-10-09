@@ -44,7 +44,13 @@ Automation can target an existing Thread or create separate work according to it
 
 An occurrence directed to an existing Thread follows ordinary ordering. Explicit steering remains subject to the [active-input contract](03-execution-lifecycle.md#steering-and-cancellation). Work that requires independent progress uses another Thread instead of a second writer on the same history.
 
-Heartbeat uses a declared operational purpose, selected knowledge, and bounded authority. Its periodic origin does not make workspace instructions trusted policy or grant new tools. Output is retained even when no human is watching; external notification is a separate delivery choice.
+Automation uses the Instance's shared workspace, not a separate Project context. Memory-enabled work receives Global and the target Thread's private memory; creating a new Thread does not inherit the initiating Thread's private store.
+
+Heartbeat uses a declared operational purpose and bounded authority. Its periodic origin does not make workspace instructions trusted policy or grant new tools. Output is retained even when no human is watching; external notification is a separate delivery choice.
+
+## Memory Maintenance
+
+[Background organization](09-memory.md#background-organization) is scoped maintenance over existing memory files, not a heartbeat, transcript extraction, or periodic sweep. It uses ordinary execution and observation infrastructure with a restricted composition and internal maintenance Thread. Its admission opportunities, retry gates, and fresh-context rule are owned by the memory contract; general automation cannot bypass those restrictions.
 
 ## Workflow Progress
 

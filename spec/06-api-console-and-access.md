@@ -2,21 +2,21 @@
 
 ## Design Position
 
-Claw exposes one application boundary for management, conversation, observation, and execution control. The console is an API frontend over that boundary. It owns navigation, forms, local drafts, and presentation; the backend owns validation, authorization, accepted work, and saved outcomes.
+Claw exposes one application boundary for management, conversation, observation, and execution control. API handlers and embedded bridges invoke that authority within the same server; only external clients need a network API. The console is an API frontend over that boundary. It owns navigation, forms, local drafts, and presentation; the backend owns validation, authorization, accepted work, and saved outcomes.
 
 This document defines operation semantics and trust boundaries, not endpoint paths, authentication protocols, frontend components, or generated client types.
 
 ## Application Surfaces
 
-| Surface               | Observable responsibility                                                                       |
-| --------------------- | ----------------------------------------------------------------------------------------------- |
-| Definitions           | Inspect and change reusable resources, defaults, and current availability                       |
-| Sessions and Threads  | Create and navigate work, inspect history and relationships, continue or fork, and archive      |
-| Runs and decisions    | Submit, inspect, cancel, explicitly steer, and answer authorized pending requests               |
-| Environments          | Inspect selected working contexts and perform authorized management operations                  |
-| Automation and memory | Manage background intent, inspect its resulting work, and access explicitly scoped knowledge    |
-| Bridges               | Manage connections and bindings; inspect event admission, delivery, and readiness independently |
-| Operations            | Show Instance readiness, blocked work, recovery needs, and retained diagnostic evidence         |
+| Surface               | Observable responsibility                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Definitions           | Inspect and change reusable resources, defaults, and current availability                                                 |
+| Threads               | Create and navigate work, inspect history and relationships, continue or fork, and archive                                |
+| Runs and decisions    | Submit messages with always-steer routing, inspect input disposition, cancel work, and answer authorized pending requests |
+| Environments          | Inspect selected working contexts and perform authorized management operations                                            |
+| Automation and memory | Manage background intent, inspect its resulting work, and access explicitly scoped knowledge                              |
+| Bridges               | Manage connections and bindings; inspect event admission, delivery, and readiness independently                           |
+| Operations            | Show Instance readiness, blocked work, recovery needs, and retained diagnostic evidence                                   |
 
 Commands produce application outcomes or accepted-work references. Queries return authoritative saved views plus clearly identified live observations. A client must be able to distinguish accepted, running, waiting, interrupted, and completed work without inferring state from a transport connection.
 
@@ -24,7 +24,9 @@ Commands produce application outcomes or accepted-work references. Queries retur
 
 The Instance is a trusted operator's application, not an organization tenancy system. Administration and participation are nevertheless different authorities. The operator controls reusable configuration, credentials, environment management, integrations, and grants. A delegated API client or external participant receives only the actions and scopes explicitly permitted for it.
 
-Every application operation checks caller identity, target scope, action, and current policy. Being connected to a bridge or allowed to submit a prompt does not grant access to arbitrary Sessions, stored artifacts, other users' conversations, resource editing, or Docker lifecycle operations. Tool approvals cannot exceed the authority of the approving caller or captured work.
+Every application operation checks caller identity, target scope, action, and current policy. Being connected to a bridge or allowed to submit a prompt does not grant access to arbitrary Threads, stored artifacts, other users' conversations, resource editing, or Docker lifecycle operations. Tool approvals cannot exceed the authority of the approving caller or captured work.
+
+Global memory and the Instance workspace are deliberately shared across Threads. Participation grants must account for information available to the agent through those surfaces; private Thread history and memory are not a promise of isolated working files. The [memory contract](09-memory.md) owns private-scope binding and disclosure, including shared-Thread participation.
 
 Bindings and identifiers are routing information, not bearer authority. A configured credential is not proof that an external sender is trusted. Group membership, model-generated instructions, and imported workspace content cannot expand permissions.
 
@@ -51,7 +53,9 @@ Live observations can be incomplete. Clients reconcile with saved Run and Thread
 
 ## Console Behavior
 
-The console presents conversation, configuration, environment, bridge, and automation management as views of the same product. An execution view shows its source, captured composition, working context, pending decisions, outcome, and delivery status where applicable. Historical settings are distinguishable from next-Run defaults.
+The console presents Thread conversations, configuration, environment, bridge, automation, and memory views over the same product, without a Session or Project selector. Its observation-only memory view follows [memory](09-memory.md#completion-and-observation) rather than exposing maintenance Threads as ordinary chats. An execution view shows its source, captured composition, working context, pending decisions, outcome, and delivery status where applicable. Historical settings are distinguishable from next-Run defaults.
+
+The conversation composer submits ordinary messages through [always-steer admission](03-execution-lifecycle.md#conversation-message-admission). It does not have to guess whether to start or steer from a stale liveness indicator. The view distinguishes receipt, held input, steering delivery, and incorporation; it does not label an accepted message as executed. Explicit Run controls remain separately targeted.
 
 Client-side selection does not change backend routing. Switching a page neither cancels work nor redirects a bridge reply. Closing the last page has no effect on accepted work. Unsaved drafts remain drafts; they are not recovered or executed as if submitted.
 
