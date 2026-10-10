@@ -8,17 +8,18 @@ Accepted work and pending delivery are durable application facts. External clien
 
 ## Durable Truth
 
-| State                           | Durability responsibility                                                                                                                     |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Definitions and selection heads | Preserve accepted resource content, current defaults, and versions needed to detect conflicting edits                                         |
-| Threads                         | Preserve identity, relationships, configuration selections, and the selected complete continuation                                            |
-| Accepted work                   | Preserve each input's identity, origin, ordering, Run association and consumption disposition, plus Run composition, decisions, and outcome   |
-| Immutable values                | Retain captured compositions, complete Harness continuation, and referenced input/output artifacts                                            |
-| Environment associations        | Retain intended selection and last confirmed provider state without treating cached liveness as current truth                                 |
-| Bridge and automation state     | Retain conversation mappings, accepted event identities, occurrences, result destinations, and unresolved delivery                            |
-| Working files                   | Preserve the Instance's shared workspace independently of Thread and container removal                                                        |
-| File memory                     | Preserve Global and Thread-private files, scope-keyed cursors, and organization state independently of workspace and conversation checkpoints |
-| Live observations               | May be lost; do not decide acceptance, completion, permission, or recoverability                                                              |
+| State                           | Durability responsibility                                                                                                                                            |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Definitions and selection heads | Preserve accepted resource content, current defaults, and versions needed to detect conflicting edits                                                                |
+| Threads                         | Preserve identity, relationships, configuration selections, and the selected complete continuation                                                                   |
+| Accepted work                   | Preserve each input's identity, origin, ordering, Run association and consumption disposition, plus Run composition, decisions, and outcome                          |
+| Immutable values                | Retain captured compositions, complete Harness continuation, and referenced input/output artifacts                                                                   |
+| Environment associations        | Retain intended selection and last confirmed provider state without treating cached liveness as current truth                                                        |
+| Bridge and automation state     | Retain conversation mappings, accepted event identities, occurrences, result destinations, and unresolved delivery                                                   |
+| One Thread coordination         | Retain canonical Main identity, worker ownership, Inbox content and dispositions, attention dependencies, pause/block/backoff state, and unresolved wake obligations |
+| Working files                   | Preserve the Instance's shared workspace independently of Thread and container removal                                                                               |
+| File memory                     | Preserve Global and Thread-private files, scope-keyed cursors, and organization state independently of workspace and conversation checkpoints                        |
+| Live observations               | May be lost; do not decide acceptance, completion, permission, or recoverability                                                                                     |
 
 Native runtime objects, live credentials, connection handles, process-local locks, stream subscribers, and shell observation handles are not restorable execution authority. Saved references must be validated before use.
 
@@ -42,6 +43,8 @@ flowchart TD
     Reconcile --> Wait[Restore valid waiting decisions]
     Reconcile --> Lost[Mark lost active execution interrupted]
     Reconcile --> Deliver[Reconcile pending result delivery]
+    Reconcile --> Inbox[Rediscover One Thread actionable backlog]
+    Inbox --> Drain[Admit eligible Main work or expose barrier]
     Queue --> Admit[Resume dispatch under current policy]
     Wait --> Answer[Await exact authorized response]
     Lost --> Review[Expose saved checkpoint and uncertain effects]
@@ -53,6 +56,8 @@ Dispatch resumes only after Claw has excluded an old writer from publishing or c
 Pending, held, steered, incorporated, unapplied, and uncertain input dispositions survive restart independently of live Harness handles. A known-undelivered input remains available for the routing rules in [execution](03-execution-lifecycle.md); a message that may already have been consumed is not automatically replayed. Reconnecting adapters reconcile saved event dispositions before admission resumes, including events ignored by the group filter.
 
 Already accepted work that demonstrably never started can proceed after current authority and readiness checks. Work that may have executed is not automatically replayed from its initial input. Complete waiting checkpoints can restore their decision without inventing a new question or reusing a stale answer.
+
+One Thread recovery also checks the durable [Inbox and attention condition](10-one-thread-mode.md#wake-and-drain). It must recover the need for Main work after acceptance or Run completion even if no live notification or Run-end hook ran. Notice delivery and reading do not settle processing. Deferred dependencies and automatic retry times remain discoverable; pending work blocked by pause, decisions, or unresolved effects remains visible without bypassing those barriers.
 
 ## Failure Semantics
 

@@ -20,8 +20,10 @@ This document owns the shared vocabulary. Identities distinguish independent lif
 | Managed target       | An execution environment resource whose lifetime is managed separately from a Run                       | Environment management                                      |
 | Checkpoint           | A complete saved continuation and the references needed to load it                                      | Harness supplies state; Claw selects the durable checkpoint |
 | Pending decision     | A specific unanswered execution request requiring authorized human or external input                    | Claw, constrained by the corresponding Harness continuation |
-| Conversation binding | A direct mapping from a Channel to a Thread, with participant and delivery policy                       | Bridge policy within Claw                                   |
+| Conversation binding | A Channel's mode-specific routing association, with participant and delivery policy                     | Bridge policy within Claw                                   |
 | Delivery             | A separately tracked attempt to present a saved result or decision to an authorized destination         | Claw delivery policy and platform adapter                   |
+
+[One Thread mode](10-one-thread-mode.md) owns the canonical Main Thread, persistent owned Worker Threads, durable Inbox processing dispositions, and coordination attention. Main and workers are roles of ordinary Threads, not different history or Run types. An Inbox item is retained external input whose processing lifecycle is independent of notice delivery, Run association, and external delivery.
 
 [Automation](08-automation.md) owns schedules, heartbeat occurrences, workflows, and autonomous follow-up. [Memory](09-memory.md) owns Global and Thread-private reusable knowledge. Neither creates a competing conversation or execution model.
 
@@ -29,7 +31,13 @@ This document owns the shared vocabulary. Identities distinguish independent lif
 
 ```mermaid
 flowchart LR
-    Channel -->|Conversation binding| Thread
+    Channel --> Mode[Instance conversation mode]
+    Mode -->|Per-Channel binding| Thread
+    Mode -->|One Thread ingress| Inbox[Main Inbox]
+    Inbox -->|Durable attention| Main[Main Thread]
+    Main -->|Flat persistent ownership| Workers[Worker Threads]
+    Main -.->|Thread role| Thread
+    Workers -.->|Thread role| Thread
     Thread --> Runs[Runs]
     Runs --> Items[Items]
     Thread --> Selected[Selected checkpoint]
@@ -41,11 +49,11 @@ flowchart LR
     Child --> Workspace
 ```
 
-Claw has no Session or Project entity. A Channel routes directly to its bound Thread. A room, direct chat, or platform reply thread can define a Channel according to the adapter's routing semantics. A binding maps one Channel to one current Thread; sharing one Thread across several Channels requires an explicit sharing decision. Console, API, and automation work can create Threads without a Channel.
+Claw has no Session or Project entity. A room, direct chat, or platform reply thread can define a Channel according to the adapter's routing semantics. In per-Channel mode, a binding routes one Channel directly to one current Thread; sharing that Thread across several Channels requires an explicit sharing decision. One Thread mode deliberately centralizes eligible Channels in the canonical Main Thread's Inbox while preserving their qualified origins and destinations. Console, API, and automation work can use Threads without a Channel; only explicit Main creation establishes worker ownership.
 
 An accepted conversation input is not synonymous with a Run. Several messages can join or steer one Run; a receipt identifies the input and its current Run association without claiming that the agent has consumed it. [Execution](03-execution-lifecycle.md) owns routing and reconciliation. A Run belongs to exactly one Thread.
 
-Resuming continues a Thread. Independently advancing children have distinct Thread identities and recorded parent relationships. Forking creates a new Thread from an identified checkpoint and leaves the source unchanged. Forking history does not copy private memory, credentials, pending work, delivery destinations, or backing containers. New Threads start with their own empty private memory and can use current Global memory. They see the same Instance workspace, not a cloned filesystem, under explicitly selected current authority.
+Resuming continues a Thread. Independently advancing delegated children have distinct Thread identities and recorded parent relationships. Persistent worker ownership is a separate Thread-lifetime relationship, not a dependency on the creating Main Run. Forking creates a new Thread from an identified checkpoint and leaves the source unchanged. Forking history does not copy private memory, credentials, pending work, delivery destinations, or backing containers. New Threads start with their own empty private memory and can use current Global memory. They see the same Instance workspace, not a cloned filesystem, under explicitly selected current authority.
 
 Claw keeps its work identity distinct from a process-local Harness execution. A Run can span preparation and a persisted wait before completing; answering that wait can start another Harness execution without creating a different Claw Run. A new request to recover an interrupted Run creates new work with a reference to the interrupted source, not a rewrite of the source outcome.
 
@@ -55,6 +63,7 @@ Claw keeps its work identity distinct from a process-local Harness execution. A 
 - The captured composition describes intended behavior for a Run; it is not a snapshot of all external files or remote services.
 - A managed target can stop while its durable working data and owning Thread remain retained.
 - A Run can finish while its result delivery is pending or failed.
+- The Main Thread can have actionable Inbox work after a Run finishes; only explicit processing dispositions settle that work.
 - A Channel can disconnect without ending a Thread or cancelling work.
 - A saved Item is a view of execution, not a resumable agent state.
 

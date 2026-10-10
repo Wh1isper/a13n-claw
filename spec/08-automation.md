@@ -66,6 +66,12 @@ An autonomous goal has a declared scope, allowed triggers, stopping conditions, 
 
 Feedback delivery does not recursively authorize unlimited work. Work initiated by another automated action retains that provenance and is subject to the same loop and admission policy as direct events. An agent cannot grant itself more authority by creating a schedule, workflow, or bridge binding.
 
+## Durable Inbox Drain Boundary
+
+[One Thread drain](10-one-thread-mode.md#wake-and-drain) is application processing of already accepted input, not an optional autonomous goal or a heartbeat. It does not require a timer definition, a new platform event, or the model's permission to continue. Startup and Main Run settlement rediscover actionable backlog even when a prior Run claimed completion. General autonomous-follow-up limits cannot silently discard this obligation: required backoff or a safety block retains pending state and exposes why progress stopped. Pause, decisions, recovery, and unknown-effect restrictions still apply.
+
+One Thread automation and worker results do not gain an alternate external publication path. Agent-originated publication remains Main-only under the messaging contract; ordinary saved operational observations are not broadcast replies.
+
 ## Invariants
 
 1. Every automated Run has an accountable definition or triggering cause.

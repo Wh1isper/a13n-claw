@@ -50,20 +50,20 @@ The server starts enabled adapters after application recovery is ready for admis
 
 ## Ownership
 
-Claw owns durable acceptance, resource configuration, Channel bindings, Thread and Run lifecycle, checkpoint selection, environment association, authorization, automation intent, and delivery records. Harness owns the agent loop, tool execution primitives, portable Thread continuation, and its native waiting boundaries. Environment providers own operations against their targets. A bridge owns platform transport and representation, not permission to bypass Claw admission.
+Claw owns durable acceptance, resource configuration, Channel bindings, Thread and Run lifecycle, checkpoint selection, environment association, authorization, automation intent, Inbox attention, worker ownership, and delivery records. Harness owns the agent loop, tool execution primitives, portable Thread continuation, and its native waiting boundaries. Environment providers own operations against their targets. A bridge owns platform transport and representation, not permission to bypass Claw admission.
 
-Channels bind directly to Threads; there is no Session or Project layer. All Threads use one Instance workspace, selected from the configured folder or startup working directory. Global memory is shared, while each Thread has its own private file memory. Shared working files are not Thread-private storage.
+The Instance selects either per-Channel routing or [One Thread mode](10-one-thread-mode.md) at startup. Per-Channel bindings route directly to Threads; One Thread mode uses a canonical Main Thread, a durable Inbox, and flat persistent owned Worker Threads. There is no Session or Project layer. All Threads use one Instance workspace, selected from the configured folder or startup working directory. Global memory is shared, while each Thread has its own private file memory. Shared working files are not Thread-private storage.
 
 The console provides management and conversation views over the application API. It does not read storage directly, construct an agent, decide that a Run completed from a disconnected stream, or become necessary for background progress.
 
 ## End-to-End Work Path
 
 1. An authorized source submits work to an existing conversation or requests a new one.
-2. Claw resolves scope and reconciles request identity. Eligible conversation messages join pending work or steer active work; an idle Thread receives a new Run with a captured composition. A bridge applies its group-message filter before submitting to this shared boundary.
+2. Claw resolves scope and reconciles request identity. Direct conversation messages join pending work or steer active work; an idle Thread receives a new Run with a captured composition. A bridge authorizes and filters before admission. In One Thread mode it retains eligible messages in the Inbox and requests Main attention instead of directly steering message bodies.
 3. Execution waits for the right to advance the selected Thread and for its declared environment to be usable.
 4. Harness executes against the selected continuation with fresh execution authority. Claw records pending decisions and observable progress.
 5. Claw publishes a complete continuation and commits the work outcome. Output delivery is tracked independently.
-6. A later client reconnects to saved application state; a later Run continues the saved Thread rather than reconstructing it from rendered messages.
+6. A later client reconnects to saved application state; a later Run continues the saved Thread rather than reconstructing it from rendered messages. In One Thread mode, startup and Main Run settlement also check durable actionable backlog and admit eligible successor work; a lost notification or apparent model completion cannot strand pending Inbox items.
 
 [Execution](03-execution-lifecycle.md), [recovery](04-persistence-and-recovery.md), and [bridges](07-bridges-and-clients.md) own the detailed completion boundaries.
 

@@ -8,15 +8,16 @@ This document defines operation semantics and trust boundaries, not endpoint pat
 
 ## Application Surfaces
 
-| Surface               | Observable responsibility                                                                                                 |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Definitions           | Inspect and change reusable resources, defaults, and current availability                                                 |
-| Threads               | Create and navigate work, inspect history and relationships, continue or fork, and archive                                |
-| Runs and decisions    | Submit messages with always-steer routing, inspect input disposition, cancel work, and answer authorized pending requests |
-| Environments          | Inspect selected working contexts and perform authorized management operations                                            |
-| Automation and memory | Manage background intent, inspect its resulting work, and access explicitly scoped knowledge                              |
-| Bridges               | Manage connections and bindings; inspect event admission, delivery, and readiness independently                           |
-| Operations            | Show Instance readiness, blocked work, recovery needs, and retained diagnostic evidence                                   |
+| Surface                 | Observable responsibility                                                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Definitions             | Inspect and change reusable resources, defaults, and current availability                                                          |
+| Threads                 | Create and navigate work, inspect history and relationships, continue or fork, and archive                                         |
+| Runs and decisions      | Submit messages with always-steer routing, inspect input disposition, cancel work, and answer authorized pending requests          |
+| Environments            | Inspect selected working contexts and perform authorized management operations                                                     |
+| Automation and memory   | Manage background intent, inspect its resulting work, and access explicitly scoped knowledge                                       |
+| Bridges                 | Manage connections and bindings; inspect event admission, delivery, and readiness independently                                    |
+| One Thread coordination | Inspect Main and owned workers, converse directly with workers, inspect Inbox and delivery, and control automatic-processing pause |
+| Operations              | Show Instance readiness, blocked work, recovery needs, and retained diagnostic evidence                                            |
 
 Commands produce application outcomes or accepted-work references. Queries return authoritative saved views plus clearly identified live observations. A client must be able to distinguish accepted, running, waiting, interrupted, and completed work without inferring state from a transport connection.
 
@@ -31,6 +32,8 @@ Global memory and the Instance workspace are deliberately shared across Threads.
 Bindings and identifiers are routing information, not bearer authority. A configured credential is not proof that an external sender is trusted. Group membership, model-generated instructions, and imported workspace content cannot expand permissions.
 
 Secrets remain backend-owned and are excluded from ordinary projections, captured compositions, browser persistence, bridge payloads, and diagnostics. Files and output fetched through a client are subject to the same scope checks as the conversation that exposes them. Retained content is rendered as untrusted content, not executed as console application code.
+
+In [One Thread mode](10-one-thread-mode.md), model-facing collaboration tools are bound to the actual Main or Worker Thread and its persistent ownership. This does not replace human/API grants. Only Main has agent-originated external publication authority; workers cannot gain it by selecting a Channel, changing a Profile, or supplying a different caller identity. Sharing Main context across Channels requires explicit disclosure, not a grant to browse all Inbox or history through a Channel.
 
 ## Command and Reconnect Flow
 
@@ -56,6 +59,8 @@ Live observations can be incomplete. Clients reconcile with saved Run and Thread
 The console presents Thread conversations, configuration, environment, bridge, automation, and memory views over the same product, without a Session or Project selector. Its observation-only memory view follows [memory](09-memory.md#completion-and-observation) rather than exposing maintenance Threads as ordinary chats. An execution view shows its source, captured composition, working context, pending decisions, outcome, and delivery status where applicable. Historical settings are distinguishable from next-Run defaults.
 
 The conversation composer submits ordinary messages through [always-steer admission](03-execution-lifecycle.md#conversation-message-admission). It does not have to guess whether to start or steer from a stale liveness indicator. The view distinguishes receipt, held input, steering delivery, and incorporation; it does not label an accepted message as executed. Explicit Run controls remain separately targeted.
+
+One Thread mode distinguishes Main, its persistent workers, Inbox processing state, external delivery, and automatic-processing controls. Users may inspect and directly chat with authorized workers; accepted human changes also create Main attention without duplicating the worker input. Run completion or an empty live stream cannot label pending Inbox work as processed. Stopping a Main Run and pausing future automatic Inbox processing are distinct controls, with backlog and blocking reasons visible.
 
 Client-side selection does not change backend routing. Switching a page neither cancels work nor redirects a bridge reply. Closing the last page has no effect on accepted work. Unsaved drafts remain drafts; they are not recovered or executed as if submitted.
 
