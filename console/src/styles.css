@@ -848,6 +848,9 @@ footer {
     justify-content: space-between;
     gap: 4px;
   }
+  .sidebar nav {
+    flex-wrap: wrap;
+  }
   nav button {
     padding: 10px 8px;
     gap: 6px;
@@ -957,5 +960,183 @@ footer {
   }
   .breadcrumb-divider {
     padding-inline: 5px;
+  }
+}
+
+/* Coordination keeps operational controls separate from conversation output. */
+.coordination-page {
+  max-width: 1220px;
+  margin: 0 auto;
+}
+.coordination-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 20px;
+  align-items: stretch;
+  margin-bottom: 20px;
+}
+.coordination-summary .panel {
+  margin-bottom: 0;
+}
+.main-control h2 {
+  font-size: 20px;
+}
+.coordination-page p.notice {
+  display: block;
+}
+.attention-counts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.attention-counts button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+  background: #edf3ef;
+  border-color: transparent;
+}
+.attention-counts strong {
+  font-size: 30px;
+  font-weight: 550;
+  line-height: 1;
+}
+.attention-counts span {
+  color: var(--muted);
+  text-transform: capitalize;
+}
+.worker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+.worker-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  text-align: left;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.worker-card strong {
+  font-size: 15px;
+}
+.worker-card span,
+.worker-card small {
+  color: var(--muted);
+  font-weight: 400;
+}
+.coordination-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 24px 0 16px;
+  flex-wrap: wrap;
+}
+.coordination-tabs [aria-current="page"] {
+  background: var(--green);
+  color: #fff;
+}
+.attention-item {
+  padding: 22px 0;
+  border-top: 1px solid var(--border);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.attention-item .prose {
+  padding: 12px 0;
+}
+.attention-item details {
+  margin-top: 14px;
+}
+.attention-item code {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.coordination-editor {
+  padding: 24px;
+  background: #f1f5f2;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin: 20px 0;
+  display: grid;
+  gap: 16px;
+}
+.coordination-editor h3,
+.coordination-editor p {
+  margin: 0;
+}
+.coordination-editor label {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.coordination-editor label.check-label {
+  display: flex;
+}
+.coordination-editor .code-editor {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+}
+.coordination-page .section-heading {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.coordination-page .section-heading > select {
+  width: auto;
+  min-width: 150px;
+}
+.status-pending,
+.status-deferred,
+.status-unknown,
+.status-no_progress_backoff,
+.status-delivery_reconciliation_required {
+  background: #fbefd9;
+  color: #775217;
+}
+.status-handled,
+.status-sent {
+  background: #e2efe5;
+  color: #286340;
+}
+.status-ignored,
+.status-inactive,
+.status-disabled,
+.status-not_sent {
+  background: #ecefee;
+  color: #586c62;
+}
+@media (max-width: 900px) {
+  .coordination-summary {
+    grid-template-columns: 1fr;
+  }
+  .attention-counts {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .attention-counts button {
+    padding: 16px;
+  }
+}
+@media (max-width: 480px) {
+  .attention-counts {
+    gap: 6px;
+  }
+  .attention-counts button {
+    padding: 14px 10px;
+  }
+  .attention-counts strong {
+    font-size: 25px;
+  }
+  .attention-counts span {
+    font-size: 11px;
+  }
+  .coordination-editor {
+    padding: 16px;
+  }
+  .worker-grid {
+    grid-template-columns: 1fr;
   }
 }

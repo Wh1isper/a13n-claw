@@ -29,6 +29,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     serve.add_argument(
         "--concurrency", type=int, default=4, help="Maximum concurrent independent Runs"
     )
+    serve.add_argument(
+        "--mode",
+        choices=["per_channel", "one_thread"],
+        help="Instance conversation mode (default: CLAW_CONVERSATION_MODE or per_channel)",
+    )
     reset = commands.add_parser(
         "reset-operator", help="Rotate operator access while the server is stopped"
     )
@@ -42,7 +47,10 @@ def main(argv: Sequence[str] | None = None) -> None:
 
         try:
             app = create_app(
-                data_root=args.data_root, workspace=args.workspace, concurrency=args.concurrency
+                data_root=args.data_root,
+                workspace=args.workspace,
+                concurrency=args.concurrency,
+                mode=args.mode,
             )
         except (RuntimeError, ClawError) as error:
             parser.error(str(error))

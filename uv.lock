@@ -14,6 +14,7 @@ source = { editable = "." }
 dependencies = [
     { name = "a13n-harness", extra = ["docker"] },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pydantic" },
     { name = "pydantic-ai" },
     { name = "uvicorn" },
@@ -22,7 +23,6 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "deptry" },
-    { name = "httpx" },
     { name = "mcp" },
     { name = "mdformat" },
     { name = "mdformat-frontmatter" },
@@ -37,6 +37,7 @@ dev = [
 requires-dist = [
     { name = "a13n-harness", extras = ["docker"], specifier = ">=0.8.0,<0.9.0" },
     { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "pydantic", specifier = ">=2.12,<3" },
     { name = "pydantic-ai", specifier = ">=2.54.0,<3" },
     { name = "uvicorn", specifier = ">=0.34,<1" },
@@ -45,7 +46,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "deptry", specifier = ">=0.24,<1" },
-    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "mcp", specifier = ">=2,<3" },
     { name = "mdformat", specifier = ">=0.7,<1" },
     { name = "mdformat-frontmatter", specifier = ">=2,<3" },

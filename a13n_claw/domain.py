@@ -354,6 +354,8 @@ class InputReceipt(Value):
 
 
 class ThreadRecord(Value):
+    active: bool = True
+    owner_main_id: str | None = None
     id: str
     title: str
     profile_id: str
@@ -375,6 +377,7 @@ class DelegationRecord(Value):
     cancel_policy: Literal["keep", "cancel"]
     notify: bool
     delivery_input_id: str | None
+    delivery_attention_id: str | None = None
     delivery_error: str | None
     status: RunStatus
     output: str | None

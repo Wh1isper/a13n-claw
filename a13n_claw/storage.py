@@ -18,6 +18,8 @@ from pathlib import Path
 from a13n_harness import DeferredToolResume, HarnessState
 from pydantic import JsonValue, TypeAdapter
 
+from a13n_claw.coordination import SCHEMA as COORDINATION_SCHEMA
+from a13n_claw.coordination import Coordination
 from a13n_claw.decisions import REQUESTS, RESULTS, validate_answer, validate_wait
 from a13n_claw.domain import (
     MAX_ASSET_BYTES,
@@ -168,10 +170,15 @@ class Store:
                 db.executescript(
                     "BEGIN IMMEDIATE;\n" + _THREAD_CREATIONS + "\nPRAGMA user_version = 2;\nCOMMIT;"
                 )
-            elif version != 2:
+            elif version not in {2, 3}:
                 raise ClawError(
                     "schema_incompatible", "This database requires another Claw version"
                 )
+            if version < 3:
+                db.executescript(
+                    "BEGIN IMMEDIATE;\n" + COORDINATION_SCHEMA + "\nPRAGMA user_version=3;\nCOMMIT;"
+                )
+        self.coordination = Coordination(self)
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -608,6 +615,10 @@ class Store:
             if profile.retired:
                 raise ClawError("resource_retired", "Profile is retired")
             thread = self._thread(db, thread_id)
+            if archived and thread_id == self.coordination.state(db)["main_id"]:
+                raise ClawError(
+                    "canonical_main", "Pause automatic processing instead of archiving Main"
+                )
             if thread.version != expected_version:
                 raise ClawError(
                     "version_conflict", "Thread selections changed; refresh before saving"
@@ -672,6 +683,7 @@ class Store:
         recovery_of: str | None = None,
     ) -> str:
         captured = composition or self._capture(db, actor, thread.profile_id, workspace)
+        self.coordination.validate_composition(db, thread, captured)
         run_id = new_id("run")
         db.execute(
             "INSERT INTO runs(id,thread_id,actor_id,status,composition,recovery_of,created_at) "
@@ -688,7 +700,9 @@ class Store:
         workspace: str,
     ) -> InputReceipt:
         with self._transaction() as db:
-            return self._admit(db, actor_id, thread_id, request, workspace)
+            receipt = self._admit(db, actor_id, thread_id, request, workspace)
+            self.coordination.human_input(db, receipt)
+            return receipt
 
     def _admit(
         self,
@@ -712,6 +726,8 @@ class Store:
                 )
             return self._receipt(prior)
         thread = self._thread(db, thread_id)
+        if not thread.active:
+            raise ClawError("thread_inactive", "This Thread belongs to an inactive mode")
         if thread.archived:
             raise ClawError("thread_archived", "Unarchive this Thread before submitting work")
         if (
@@ -801,6 +817,7 @@ class Store:
             if run.status != "queued":
                 raise ClawError("run_not_queued", "Run is not available for dispatch")
             self._authorize_run(db, run)
+            self.coordination.authorize_claim(db, run)
             if run.composition.workspace != workspace:
                 raise ClawError(
                     "workspace_changed", "Restore the captured workspace before dispatch"
@@ -869,8 +886,9 @@ class Store:
             return [
                 row[0]
                 for row in db.execute(
-                    "SELECT id FROM runs WHERE status='queued' "
-                    "ORDER BY recovery_of IS NULL, sequence"
+                    "SELECT r.id FROM runs r JOIN threads t ON t.id=r.thread_id "
+                    "WHERE r.status='queued' AND t.active=1 "
+                    "ORDER BY r.recovery_of IS NULL, r.sequence"
                 )
             ]
 
@@ -1074,6 +1092,7 @@ class Store:
                 "UPDATE inputs SET run_id=?,disposition='pending' WHERE id=?",
                 (successor, row["id"]),
             )
+            self.coordination.refresh_automatic_run(db, successor)
             self._audit(db, "input_transferred", row["id"], {"from": run.id, "to": successor})
 
     def finish_without_checkpoint(
@@ -1496,6 +1515,7 @@ class Store:
                 for row in db.execute(
                     "SELECT d.id FROM delegations d JOIN runs r ON r.id=d.child_run_id "
                     "WHERE d.notify=1 AND d.delivery_input_id IS NULL "
+                    "AND d.delivery_attention_id IS NULL "
                     "AND r.status IN ('completed','failed','cancelled','interrupted')"
                 )
             ]
@@ -1521,6 +1541,26 @@ class Store:
                         "output_truncated": bool(child.output and len(child.output) > 64000),
                         "error": child.error,
                     }
+                    state = self.coordination.state(db)
+                    if state["mode"] == "one_thread" and parent.thread_id == state["main_id"]:
+                        item = self.coordination._record(
+                            db,
+                            parent.thread_id,
+                            f"delegation:{child.id}",
+                            "delegation_outcome",
+                            {
+                                "delegation_id": child.id,
+                                "run_id": child.child_run_id,
+                                "status": child.status,
+                            },
+                            source_thread_id=child.child_thread_id,
+                            source_run_id=child.child_run_id,
+                        )
+                        db.execute(
+                            "UPDATE delegations SET delivery_attention_id=? WHERE id=?",
+                            (item["id"], child.id),
+                        )
+                        continue
                     receipt = self._admit(
                         db,
                         actor.id,
@@ -1554,6 +1594,7 @@ class Store:
             return self._owned(db, run_id, owner)
 
     def _authorize_run(self, db: sqlite3.Connection, run: RunRecord) -> None:
+        self.coordination.validate_composition(db, self._thread(db, run.thread_id), run.composition)
         current = run
         while True:
             actor = self._principal(db, current.actor_id)
@@ -1917,12 +1958,13 @@ class Store:
             ).fetchone()[0]
 
     def run_asset(self, run_id: str, owner: str, asset_id: str) -> tuple[AssetRecord, bytes]:
-        with self._connection() as db:
+        with self._transaction() as db:
             run = self._owned(db, run_id, owner)
             self._authorize_run(db, run)
             asset = self._asset(db, asset_id)
             if asset.thread_id != run.thread_id:
                 raise ClawError("asset_scope", "Retained file belongs to a different Thread", 403)
+            self.coordination.authorize_asset(db, asset_id)
             return asset, db.execute(
                 "SELECT content FROM assets WHERE id=?", (asset_id,)
             ).fetchone()[0]

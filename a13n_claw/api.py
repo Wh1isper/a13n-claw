@@ -11,6 +11,13 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import Field, JsonValue
 
 from a13n_claw import __version__
+from a13n_claw.attention import (
+    ChannelPolicy,
+    DeliveryResolution,
+    InboundMessage,
+    ProcessingChange,
+    ProcessingControl,
+)
 from a13n_claw.coordinator import Coordinator
 from a13n_claw.domain import (
     MAX_ASSET_BYTES,
@@ -23,6 +30,7 @@ from a13n_claw.domain import (
     Value,
 )
 from a13n_claw.instance import token_hash
+from a13n_claw.messaging import DeliveryDispatcher, Messaging
 from a13n_claw.runtime import Runtime
 from a13n_claw.storage import Store
 
@@ -33,6 +41,7 @@ class Services:
     runtime: Runtime
     coordinator: Coordinator
     workspace: Path
+    deliveries: DeliveryDispatcher | None = None
 
 
 def services(request: Request) -> Services:
@@ -117,6 +126,8 @@ async def instance(actor: Actor, app: Application):
         "error": app.coordinator.failure,
         "workspace": str(app.workspace) if actor.admin else None,
         "connectivity": "not_probed",
+        "delivery_dispatcher": app.deliveries.failure if app.deliveries else None,
+        "conversation_mode": await asyncio.to_thread(app.store.coordination.mode),
     }
 
 
@@ -385,3 +396,94 @@ async def workspace_content(
 ):
     async with app.runtime.environments.files(actor.id, run_id) as environment:
         return await environment.files.read_text(path, line_offset=line_offset, line_limit=200)
+
+
+class MainSetup(Value):
+    profile_id: ResourceId
+
+
+class ChannelChange(Value):
+    expected_version: int = Field(ge=0)
+    policy: ChannelPolicy
+
+
+@router.get("/coordination")
+async def coordination(actor: Actor, app: Application):
+    return await asyncio.to_thread(app.store.coordination.view, actor.id)
+
+
+@router.post("/coordination/main")
+async def initialize_main(body: MainSetup, actor: Actor, app: Application):
+    return await asyncio.to_thread(
+        app.store.coordination.initialize_main, actor.id, body.profile_id
+    )
+
+
+@router.put("/coordination/control")
+async def processing_control(body: ProcessingControl, actor: Actor, app: Application):
+    result = await asyncio.to_thread(app.store.coordination.control, actor.id, body)
+    app.coordinator.wake()
+    return result
+
+
+@router.get("/inbox")
+async def inbox(
+    actor: Actor,
+    app: Application,
+    disposition: str | None = None,
+    after: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=100),
+    item_id: str | None = None,
+):
+    return await asyncio.to_thread(
+        app.store.coordination.inbox,
+        actor.id,
+        disposition=disposition,
+        after=after,
+        limit=limit,
+        item_id=item_id,
+    )
+
+
+@router.put("/inbox/{item_id}")
+async def update_inbox(item_id: str, body: ProcessingChange, actor: Actor, app: Application):
+    result = await asyncio.to_thread(app.store.coordination.change_item, actor.id, item_id, body)
+    app.coordinator.wake()
+    return result
+
+
+@router.get("/channels")
+async def channels(actor: Actor, app: Application):
+    return await asyncio.to_thread(Messaging(app.store).channels, actor.id)
+
+
+@router.put("/channels/{channel_id}")
+async def save_channel(channel_id: ResourceId, body: ChannelChange, actor: Actor, app: Application):
+    return await asyncio.to_thread(
+        Messaging(app.store).save_channel, actor.id, channel_id, body.policy, body.expected_version
+    )
+
+
+@router.post("/channels/{channel_id}/messages")
+async def receive_message(channel_id: str, body: InboundMessage, actor: Actor, app: Application):
+    result = await asyncio.to_thread(
+        Messaging(app.store).receive, actor.id, channel_id, body, str(app.workspace)
+    )
+    app.coordinator.wake()
+    return result
+
+
+@router.get("/deliveries")
+async def deliveries(actor: Actor, app: Application):
+    return await asyncio.to_thread(Messaging(app.store).deliveries, actor.id)
+
+
+@router.post("/deliveries/{delivery_id}/reconcile")
+async def reconcile_delivery(
+    delivery_id: str, body: DeliveryResolution, actor: Actor, app: Application
+):
+    result = await asyncio.to_thread(
+        Messaging(app.store).resolve_delivery, actor.id, delivery_id, body
+    )
+    app.coordinator.wake()
+    return result

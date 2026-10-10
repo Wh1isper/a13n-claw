@@ -41,7 +41,31 @@ async def fixture_models(definition, credential):
         ]
         if text == "slow":
             await asyncio.sleep(60)
-        if text == "approval" and not returned:
+        if text == "worker" and not any(p.tool_name == "create_worker" for p in returned):
+            yield {
+                0: DeltaToolCall(
+                    name="create_worker",
+                    tool_call_id="browser-worker",
+                    json_args=json.dumps(
+                        {
+                            "title": "Research worker",
+                            "profile_id": "default",
+                            "text": "Review the proposed release and report findings",
+                        }
+                    ),
+                )
+            }
+        elif text == "delivery" and not any(p.tool_name == "send_message" for p in returned):
+            yield {
+                0: DeltaToolCall(
+                    name="send_message",
+                    tool_call_id="browser-delivery",
+                    json_args=json.dumps(
+                        {"channel_id": "release-room", "text": "Release review completed"}
+                    ),
+                )
+            }
+        elif text == "approval" and not returned:
             yield {
                 0: DeltaToolCall(
                     name="retain_artifact",
@@ -65,12 +89,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--mode", choices=("per_channel", "one_thread"), default="per_channel")
     args = parser.parse_args()
     workspace = args.root.resolve() / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "result.txt").write_text("Browser acceptance artifact\n", encoding="utf-8")
     app = create_app(
-        data_root=args.root.resolve() / "data", workspace=workspace, models=fixture_models
+        data_root=args.root.resolve() / "data",
+        workspace=workspace,
+        models=fixture_models,
+        mode=args.mode,
     )
     uvicorn.run(app, host="127.0.0.1", port=args.port, access_log=False)
 

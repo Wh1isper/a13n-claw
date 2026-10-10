@@ -2,7 +2,7 @@
 
 A13n Claw is a local-first, self-hosted agent application built on a13n Harness. It combines persistent conversations and background work with an API-driven console, managed execution environments, and external messaging clients.
 
-These specifications define the accepted target product and its high-level contracts, not a claim that every feature is available. The source implements the authenticated API, durable Thread and Run execution, managed Local/Docker environments, and an API-driven Console. One Thread coordination, file memory, embedded bridges, and automation remain target contracts. [Repository boundaries](repository-model.md) distinguish source implementation from release availability.
+These specifications define the accepted target product and its high-level contracts, not a claim that every feature is available. The source implements the authenticated API, durable Thread and Run execution, managed Local/Docker environments, an API-driven Console, and optional One Thread coordination with persistent workers, durable Inbox processing, and generic HTTP ingress/egress. File memory, vendor-specific embedded bridges, and general automation remain target contracts. [Repository boundaries](repository-model.md) distinguish source implementation from release availability.
 
 ## Design Boundary
 
