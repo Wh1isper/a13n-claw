@@ -15,9 +15,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from a13n_claw.api import Services, router
+from a13n_claw.attention import ConversationMode
 from a13n_claw.coordinator import Coordinator
 from a13n_claw.domain import ClawError
 from a13n_claw.instance import InstanceLease, operator_token, resolve_workspace, token_hash
+from a13n_claw.messaging import DeliveryDispatcher, Messaging
 from a13n_claw.runtime import ModelFactory, Runtime, provider_model
 from a13n_claw.storage import Store
 
@@ -31,6 +33,7 @@ def create_app(
     workspace: Path | None = None,
     concurrency: int = 4,
     models: ModelFactory = provider_model,
+    mode: ConversationMode | None = None,
 ) -> FastAPI:
     if not (CONSOLE_DIRECTORY / "index.html").is_file():
         raise RuntimeError(
@@ -47,26 +50,42 @@ def create_app(
     if not 1 <= concurrency <= 64:
         raise ClawError("concurrency_range", "Concurrency must be between 1 and 64", 422)
 
+    selected_mode = mode or os.environ.get("CLAW_CONVERSATION_MODE", "per_channel")
+    if selected_mode not in {"per_channel", "one_thread"}:
+        raise ClawError("conversation_mode", "Choose per_channel or one_thread", 422)
+
+    conversation_mode: ConversationMode = (
+        "one_thread" if selected_mode == "one_thread" else "per_channel"
+    )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         lease = InstanceLease(root)
         await asyncio.to_thread(lease.acquire)
         coordinator: Coordinator | None = None
+        deliveries: DeliveryDispatcher | None = None
         try:
             token = await asyncio.to_thread(operator_token, root)
             store = await asyncio.to_thread(Store, root / "claw.sqlite3")
             await asyncio.to_thread(store.bootstrap, token_hash(token))
             del token
+            await asyncio.to_thread(store.reconcile_startup)
+            await asyncio.to_thread(store.coordination.reconcile_startup)
+            await asyncio.to_thread(store.coordination.configure_mode, conversation_mode)
             runtime = Runtime(store, root, models=models)
             coordinator = Coordinator(store, str(selected), runtime, concurrency=concurrency)
-            app.state.services = Services(store, runtime, coordinator, selected)
+            deliveries = DeliveryDispatcher(Messaging(store))
+            app.state.services = Services(store, runtime, coordinator, selected, deliveries)
             await coordinator.start()
+            deliveries.start()
             logger.info("Operator access token file: %s", root / "operator.token")
             yield
         finally:
             try:
                 if coordinator is not None:
                     await coordinator.close()
+                if deliveries is not None:
+                    await deliveries.close()
             finally:
                 await asyncio.to_thread(lease.close)
 

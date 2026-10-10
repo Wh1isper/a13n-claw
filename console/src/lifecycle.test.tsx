@@ -40,6 +40,8 @@ const profile: Resource = {
   retired: false,
 };
 const thread: Thread = {
+  active: true,
+  owner_main_id: null,
   id: "thread-one",
   title: "Original",
   version: 1,

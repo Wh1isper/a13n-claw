@@ -10,6 +10,8 @@ export type Principal = {
   actions: string[];
 };
 export type Instance = {
+  conversation_mode: "per_channel" | "one_thread";
+  delivery_dispatcher: string | null;
   version: string;
   principal: Principal;
   dispatcher: string;
@@ -25,6 +27,8 @@ export type Resource = {
   retired: boolean;
 };
 export type Thread = {
+  active: boolean;
+  owner_main_id: string | null;
   id: string;
   title: string;
   profile_id: string;

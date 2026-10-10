@@ -102,6 +102,24 @@ export function Conversation({
           )}
         </div>
       </header>
+      {!thread.active && (
+        <p className="notice">
+          This conversation belongs to an inactive mode. History is retained; it
+          cannot admit new work.
+        </p>
+      )}
+      {thread.owner_main_id && (
+        <p className="notice">
+          Persistent worker. Messages here go directly to this worker once and
+          notify Main to reconcile the change.{" "}
+          <button
+            className="text-button"
+            onClick={() => navigate(thread.owner_main_id!)}
+          >
+            Open owning Main
+          </button>
+        </p>
+      )}
       {thread.parent_thread_id && (
         <p className="subtle">
           Related to{" "}
@@ -280,7 +298,7 @@ export function Conversation({
           </div>
         </details>
       )}
-      {allowed(actor, "submit") && !thread.archived && (
+      {allowed(actor, "submit") && thread.active && !thread.archived && (
         <Composer
           key={thread.id}
           api={api}

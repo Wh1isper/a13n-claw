@@ -34,13 +34,17 @@ In **Settings**:
 
 Definitions are versioned. Editing a definition affects later admissions; accepted Runs retain their captured composition. Missing references and conflicting edits are rejected, not silently repaired. Use **Atomic import / export** for reviewed JSON bundles; exports contain credential reference names, never credential values.
 
+## Choose centralized coordination
+
+The default conversation mode is `per_channel`. For one Main coordinator with persistent workers and a durable external Inbox, start with `--mode one_thread` (or `CLAW_CONVERSATION_MODE=one_thread`) and initialize Main in **Coordination** after configuring its Profile. See [One Thread coordination](./one-thread.md) for Channel bindings, pause controls, and safe delivery reconciliation. Mode changes are startup-only and do not migrate old histories or pending work.
+
 ## Work in a Thread
 
 Create a Thread, select a Profile, and send a message. The receipt is durable acceptance, not completion. Further ordinary messages steer active work or stay held at a pending decision. **Queue a separate Run** requests a distinct execution instead.
 
 The Console polls saved inputs and Run state. It shows the saved final response rather than pretending a live stream is the durable result. **History** exposes saved native messages; **Execution details** shows captured definitions, children, pending recovery, and checkpoint forking. Closing the browser does not cancel work.
 
-An approval requires an explicit choice for every call in the exact pending batch. Profile permission rules use native tool identity selectors, not just visible function names. Claw's built-in IDs are `claw.files.read`, `claw.files.retain`, `claw.work.delegate`, and `claw.work.inspect`. For example:
+An approval requires an explicit choice for every call in the exact pending batch. Profile permission rules use native tool identity selectors, not just visible function names. File/delegation IDs are `claw.files.read`, `claw.files.retain`, `claw.work.delegate`, and `claw.work.inspect`. One Thread tools use `claw.collaboration.create`, `claw.collaboration.inspect`, `claw.collaboration.send`, `claw.attention.read`, `claw.attention.update`, `claw.inbox.read`, `claw.inbox.update`, `claw.messaging.destinations`, `claw.messaging.send`, and `claw.messaging.deliveries`; their actual availability also depends on Main/worker ownership. For example:
 
 ```json
 {

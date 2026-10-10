@@ -6,7 +6,7 @@ A fresh, local-first agent runtime project targeting [a13n Harness](https://gith
 
 **Current source scope: a single-node runtime and real conversation Console.** Run agents through Harness with durable Threads, inputs, checkpoints, decisions, cancellation/recovery, delegated work, and checkpoint forks. Manage versioned Profiles, model credentials, skills, MCP servers, scoped clients, reusable Local/Docker targets, and retained files through authenticated APIs and the Console. All Threads share one explicitly selected workspace.
 
-File-memory organization, embedded bridges, and scheduling/automation are later deliveries. Published `0.0.2` remains an informational CLI placeholder; these runtime capabilities require a source build until a runtime release is published.
+Optional [One Thread mode](docs/content/one-thread.md) adds a persistent Main coordinator, owned workers, a durable Inbox with automatic drain and pause controls, and explicit Main-only delivery. Generic HTTP ingress and egress are available; vendor-specific embedded adapters, file-memory organization, and scheduling/automation are later deliveries. Published `0.0.2` remains an informational CLI placeholder; these runtime capabilities require a source build until a runtime release is published.
 
 ## Start from source
 

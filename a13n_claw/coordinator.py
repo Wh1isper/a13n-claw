@@ -150,6 +150,7 @@ class Coordinator:
     async def start(self) -> None:
         # The application must already own the data-root lease.
         await asyncio.to_thread(self.store.reconcile_startup)
+        await asyncio.to_thread(self.store.coordination.reconcile_startup)
         self.dispatcher = asyncio.create_task(self._dispatch(), name="claw-dispatch")
 
     def wake(self) -> None:
@@ -182,6 +183,7 @@ class Coordinator:
         while not self.stopping:
             self.changed.clear()
             await asyncio.to_thread(self.store.deliver_child_results)
+            await asyncio.to_thread(self.store.coordination.drain, self.workspace)
             for run_id, owner in tuple(self.started.items()):
                 task = self.active.get(run_id)
                 if task is None or task.done() or task.cancelling() or run_id in self.streams:

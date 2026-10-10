@@ -31,6 +31,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import Model
 
 from a13n_claw.assets import asset_capability
+from a13n_claw.collaboration import collaboration_capability, messaging_capability
 from a13n_claw.coordinator import CheckpointCapability, RunRuntime
 from a13n_claw.delegation import delegation_capability
 from a13n_claw.domain import (
@@ -107,6 +108,8 @@ class Runtime:
         run: RunRecord,
         checkpoint: CheckpointCapability,
     ) -> AsyncIterator[RunRuntime]:
+        assert run.owner is not None
+        role = await asyncio.to_thread(self.store.coordination.capability_role, run.id, run.owner)
         profile = ProfileDefinition.model_validate(run.composition.profile.content)
         definition = ModelDefinition.model_validate(run.composition.model.content)
         servers = [
@@ -145,6 +148,10 @@ class Runtime:
                 UserInteractionCapability(),
                 asset_capability(self.store, run),
             ]
+            if role is not None:
+                capabilities.append(collaboration_capability(self.store, run, main=role == "main"))
+            if role == "main":
+                capabilities.append(messaging_capability(self.store, run))
             if run.composition.children:
                 capabilities.append(delegation_capability(self.store, run))
             if run.composition.skills:

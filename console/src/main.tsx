@@ -13,15 +13,18 @@ import { Empty, ErrorNotice, Status } from "./components";
 import { CommandProvider, usePendingCommands } from "./commands";
 import { Conversation, blankDraft, type Draft } from "./conversation";
 import { NewThread } from "./creation";
+import { CoordinationPage } from "./coordination";
 import { Environments } from "./environments";
 import { Settings } from "./settings";
 import "./styles.css";
 
-type Page = "Overview" | "Threads" | "Environments" | "Settings";
+type Page =
+  "Overview" | "Coordination" | "Threads" | "Environments" | "Settings";
 const paths: Record<Page, string> = {
   Overview: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
   Threads:
     "M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5A8.5 8.5 0 0 1 10.5 3H21z M7 9h9 M7 14h6",
+  Coordination: "M9 3h6v6H9z M2 16h6v5H2z M16 16h6v5h-6z M12 9v4 M5 16v-3h14v3",
   Environments: "M3 5h18v14H3z M7 9l3 3-3 3 M13 15h4",
   Settings: "M3 6h18 M3 12h18 M3 18h18 M8 3v6 M16 9v6 M10 15v6",
 };
@@ -191,6 +194,7 @@ function Console({
           {(
             [
               "Overview",
+              "Coordination",
               "Threads",
               "Environments",
               ...(info.principal.admin ? ["Settings"] : []),
@@ -249,12 +253,30 @@ function Console({
           <ErrorNotice>
             {instance.error || threads.error || profiles.error}
           </ErrorNotice>
+          <div hidden={page !== "Coordination"}>
+            <CoordinationPage
+              api={api}
+              actor={info.principal}
+              profiles={profiles.data ?? []}
+              active={page === "Coordination"}
+              navigate={navigate}
+            />
+          </div>
           <div hidden={page !== "Overview"}>
             <header className="page-heading">
               <div>
                 <p className="eyebrow">LOCAL-FIRST · DURABLE WORK</p>
                 <h1>Your work, with continuity.</h1>
-                <p>Start a conversation. Keep control of what happens next.</p>
+                <p>
+                  {info.conversation_mode === "one_thread"
+                    ? "One Main coordinator. Persistent workers. Durable attention."
+                    : "Start a conversation. Keep control of what happens next."}
+                </p>
+                {info.conversation_mode === "one_thread" && (
+                  <button onClick={() => setPage("Coordination")}>
+                    Open Main & attention
+                  </button>
+                )}
               </div>
               <button
                 className="primary"
@@ -284,8 +306,9 @@ function Console({
               <div className="overview-stats">
                 <span>
                   <strong>
-                    {threads.data?.filter((item) => !item.archived).length ??
-                      "—"}
+                    {threads.data?.filter(
+                      (item) => item.active && !item.archived,
+                    ).length ?? "—"}
                   </strong>
                   Active Threads
                 </span>
@@ -380,13 +403,13 @@ function Console({
                   checked={showArchived}
                   onChange={(event) => setShowArchived(event.target.checked)}
                 />
-                Show archived
+                Show archived / inactive
               </label>
               <div className="thread-list">
                 {threads.data
                   ?.filter(
                     (item) =>
-                      (showArchived || !item.archived) &&
+                      (showArchived || (item.active && !item.archived)) &&
                       item.title.toLowerCase().includes(search.toLowerCase()),
                   )
                   .map((item) => (
@@ -402,6 +425,11 @@ function Console({
                       <small>
                         {item.profile_id}
                         {item.archived ? " · archived" : ""}
+                        {!item.active
+                          ? " · inactive mode"
+                          : item.owner_main_id
+                            ? " · worker"
+                            : ""}
                       </small>
                     </button>
                   ))}
