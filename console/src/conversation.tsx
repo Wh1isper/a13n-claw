@@ -1,7 +1,6 @@
 import { useState } from "react";
 import {
   Api,
-  ApiError,
   activeStatuses,
   allowed,
   message,
@@ -19,14 +18,16 @@ import {
   type Thread,
 } from "./api";
 import { Action, Empty, ErrorNotice, JsonDetails, Status } from "./components";
+import { useCommand } from "./commands";
 
 export type Draft = {
   text: string;
   files: string[];
   separate: boolean;
-  pending?: Submission;
+  generation: number;
 };
 export const blankDraft = (): Draft => ({
+  generation: 0,
   text: "",
   files: [],
   separate: false,
@@ -41,21 +42,39 @@ export function Conversation({
   setDraft,
   changed,
   navigate,
+  active,
 }: {
+  active: boolean;
   api: Api;
   actor: Principal;
   thread: Thread;
   profiles: Resource[];
   draft: Draft;
-  setDraft: (value: Draft) => void;
+  setDraft: (update: (value: Draft) => Draft) => void;
   changed: () => void;
   navigate: (id: string) => void;
 }) {
-  const inputs = useRemote<Input[]>(api, `/threads/${thread.id}/inputs`, 1200);
-  const runs = useRemote<Run[]>(api, `/threads/${thread.id}/runs`, 1200);
-  const assets = useRemote<Asset[]>(api, `/threads/${thread.id}/files`, 2000);
+  const inputs = useRemote<Input[]>(
+    api,
+    `/threads/${thread.id}/inputs`,
+    1200,
+    active,
+  );
+  const runs = useRemote<Run[]>(
+    api,
+    `/threads/${thread.id}/runs`,
+    1200,
+    active,
+  );
+  const assets = useRemote<Asset[]>(
+    api,
+    `/threads/${thread.id}/files`,
+    2000,
+    active,
+  );
   const [edit, setEdit] = useState<Thread | null>(null);
   const [history, setHistory] = useState(false);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const refresh = () => {
     inputs.reload();
     runs.reload();
@@ -77,7 +96,9 @@ export function Conversation({
         <div className="toolbar">
           <button onClick={() => setHistory(!history)}>History</button>
           {allowed(actor, "submit") && (
-            <button onClick={() => setEdit(thread)}>Thread settings</button>
+            <button disabled={!!edit} onClick={() => setEdit(thread)}>
+              Thread settings
+            </button>
           )}
         </div>
       </header>
@@ -104,7 +125,7 @@ export function Conversation({
           }}
         />
       )}
-      {history && <SavedHistory api={api} thread={thread} />}
+      {history && <SavedHistory api={api} thread={thread} active={active} />}
       <div className="timeline">
         {runs.data?.length === 0 && (
           <Empty title="Start something worth continuing.">
@@ -132,9 +153,10 @@ export function Conversation({
                       {input.attachment_ids.length} retained attachment(s)
                     </small>
                   )}
-                  {input.disposition === "uncertain" && actor.admin && (
-                    <ReviewInput api={api} input={input} done={refresh} />
-                  )}
+                  {["uncertain", "blocked"].includes(input.disposition) &&
+                    actor.admin && (
+                      <ReviewInput api={api} input={input} done={refresh} />
+                    )}
                 </div>
               ))}
             {run.output !== null && (
@@ -154,9 +176,21 @@ export function Conversation({
               </p>
             )}
             {run.status === "waiting" && (
-              <DecisionPanel api={api} run={run} actor={actor} done={refresh} />
+              <DecisionPanel
+                api={api}
+                run={run}
+                actor={actor}
+                done={refresh}
+                active={active}
+              />
             )}
-            <details className="run-details">
+            <details
+              className="run-details"
+              onToggle={(event) => {
+                const open = event.currentTarget.open;
+                setExpanded((previous) => ({ ...previous, [run.id]: open }));
+              }}
+            >
               <summary>Execution details · {run.id.slice(-8)}</summary>
               <div className="details-body">
                 <p>
@@ -170,7 +204,12 @@ export function Conversation({
                   Checkpoint: {run.checkpoint_id ?? "Not yet published"}
                   {run.recovery_of && ` · Recovery of ${run.recovery_of}`}
                 </p>
-                <ChildRuns api={api} run={run} navigate={navigate} />
+                <ChildRuns
+                  api={api}
+                  run={run}
+                  navigate={navigate}
+                  active={active && !!expanded[run.id]}
+                />
                 {allowed(actor, "cancel") && activeStatuses.has(run.status) && (
                   <Action
                     danger
@@ -271,55 +310,95 @@ function Composer({
   thread: Thread;
   files: Asset[];
   draft: Draft;
-  update: (value: Draft) => void;
+  update: (change: (value: Draft) => Draft) => void;
   done: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
+  const command = useCommand<Submission, Input>(`input:${thread.id}`);
+  const upload = useCommand<
+    { request_id: string; file: File; generation: number },
+    Asset
+  >(`upload:${thread.id}`);
+  const busy = command.busy || upload.busy;
+  const pending = command.payload;
   const [error, setError] = useState("");
   const [receipt, setReceipt] = useState("");
   async function submit() {
-    setBusy(true);
+    if (busy || upload.payload) return;
     setError("");
     setReceipt("");
-    const request = draft.pending ?? {
-      request_id: requestId(),
-      text: draft.text,
-      attachment_ids: draft.files,
-      separate_run: draft.separate,
-    };
-    update({ ...draft, pending: request });
     try {
-      // Reconcile an ambiguous prior attempt before retrying its identical command.
-      const prior = draft.pending
-        ? (await api.get<Input[]>(`/threads/${thread.id}/inputs`)).find(
-            (item) =>
-              item.request_id === request.request_id &&
-              item.actor_id === actor.id,
-          )
-        : undefined;
-      const accepted =
-        prior ??
-        (await api.send<Input>(`/threads/${thread.id}/inputs`, request));
-      update(blankDraft());
+      const accepted = await command.execute(
+        () => ({
+          request_id: requestId(),
+          text: draft.text,
+          attachment_ids: [...draft.files],
+          separate_run: draft.separate,
+        }),
+        async (request, retry) => {
+          const prior = retry
+            ? (await api.get<Input[]>(`/threads/${thread.id}/inputs`)).find(
+                (item) =>
+                  item.request_id === request.request_id &&
+                  item.actor_id === actor.id,
+              )
+            : undefined;
+          return (
+            prior ??
+            (await api.send<Input>(`/threads/${thread.id}/inputs`, request))
+          );
+        },
+      );
+      if (!accepted) return;
+      update((current) =>
+        current.generation === draft.generation
+          ? { ...blankDraft(), generation: current.generation + 1 }
+          : current,
+      );
+      command.clear();
       setReceipt(
         `Input accepted · ${accepted.disposition}. Acceptance is not completion.`,
       );
       done();
     } catch (reason) {
       setError(message(reason));
-      if (
-        reason instanceof ApiError &&
-        reason.status >= 400 &&
-        reason.status < 500
-      )
-        update({ ...draft, pending: undefined });
-    } finally {
-      setBusy(false);
+    }
+  }
+  async function uploadFile(file: File) {
+    setError("");
+    try {
+      if (file.size > 8 * 1024 * 1024)
+        throw new Error("Files are limited to 8 MiB.");
+      const saved = await upload.execute(
+        () => ({ request_id: requestId(), file, generation: draft.generation }),
+        async (request) => {
+          const response = await api.raw(
+            `/threads/${thread.id}/files?request_id=${request.request_id}&name=${encodeURIComponent(request.file.name)}`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": request.file.type || "application/octet-stream",
+              },
+              body: request.file,
+            },
+          );
+          return response.json();
+        },
+      );
+      if (!saved) return;
+      update((current) =>
+        current.generation === draft.generation
+          ? { ...current, files: [...new Set([...current.files, saved.id])] }
+          : current,
+      );
+      upload.clear();
+      done();
+    } catch (reason) {
+      setError(message(reason));
     }
   }
   return (
     <section className="composer" aria-label="Message composer">
-      <ErrorNotice>{error}</ErrorNotice>
+      <ErrorNotice>{error || command.error || upload.error}</ErrorNotice>
       {receipt && (
         <p role="status" className="success">
           {receipt}
@@ -331,8 +410,11 @@ function Composer({
         placeholder="Ask Claw to work on something…"
         rows={4}
         value={draft.text}
-        disabled={busy || !!draft.pending}
-        onChange={(event) => update({ ...draft, text: event.target.value })}
+        disabled={busy || !!pending}
+        onChange={(event) => {
+          const text = event.target.value;
+          update((current) => ({ ...current, text }));
+        }}
         onKeyDown={(event) => {
           if (
             (event.metaKey || event.ctrlKey) &&
@@ -350,10 +432,11 @@ function Composer({
           <input
             type="checkbox"
             checked={draft.separate}
-            disabled={busy || !!draft.pending}
-            onChange={(event) =>
-              update({ ...draft, separate: event.target.checked })
-            }
+            disabled={busy || !!pending}
+            onChange={(event) => {
+              const separate = event.target.checked;
+              update((current) => ({ ...current, separate }));
+            }}
           />
           Queue a separate Run
         </label>
@@ -366,16 +449,17 @@ function Composer({
             <label className="check-label" key={file.id}>
               <input
                 type="checkbox"
-                disabled={busy || !!draft.pending}
+                disabled={busy || !!pending}
                 checked={draft.files.includes(file.id)}
-                onChange={(event) =>
-                  update({
-                    ...draft,
-                    files: event.target.checked
-                      ? [...draft.files, file.id]
-                      : draft.files.filter((id) => id !== file.id),
-                  })
-                }
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  update((current) => ({
+                    ...current,
+                    files: checked
+                      ? [...current.files, file.id]
+                      : current.files.filter((id) => id !== file.id),
+                  }));
+                }}
               />
               {file.name}
             </label>
@@ -384,48 +468,36 @@ function Composer({
             Upload file (8 MiB maximum)
             <input
               type="file"
-              disabled={busy || !!draft.pending}
-              onChange={async (event) => {
+              disabled={busy || !!pending || !!upload.payload}
+              onChange={(event) => {
                 const file = event.target.files?.[0];
-                if (!file) return;
-                setBusy(true);
-                setError("");
-                try {
-                  if (file.size > 8 * 1024 * 1024)
-                    throw new Error("Files are limited to 8 MiB.");
-                  const response = await api.raw(
-                    `/threads/${thread.id}/files?request_id=${requestId()}&name=${encodeURIComponent(file.name)}`,
-                    {
-                      method: "POST",
-                      headers: {
-                        "Content-Type": file.type || "application/octet-stream",
-                      },
-                      body: file,
-                    },
-                  );
-                  const saved: Asset = await response.json();
-                  update({ ...draft, files: [...draft.files, saved.id] });
-                  done();
-                } catch (reason) {
-                  setError(message(reason));
-                } finally {
-                  setBusy(false);
-                }
+                event.target.value = "";
+                if (file) void uploadFile(file);
               }}
             />
           </label>
+          {upload.payload && (
+            <button
+              disabled={busy}
+              onClick={() => void uploadFile(upload.payload!.file)}
+            >
+              {upload.busy
+                ? "Uploading…"
+                : `Retry same upload: ${upload.payload.file.name}`}
+            </button>
+          )}
         </div>
       </details>
       <div className="composer-footer">
         <small>Drafts and access tokens stay in this tab's memory.</small>
         <button
           className="primary"
-          disabled={busy || !draft.text.trim()}
+          disabled={busy || !!upload.payload || !draft.text.trim()}
           onClick={() => void submit()}
         >
           {busy
             ? "Submitting…"
-            : draft.pending
+            : pending
               ? "Reconcile / retry same input"
               : "Send message"}
         </button>
@@ -505,11 +577,20 @@ function ThreadSettings({
     </section>
   );
 }
-function SavedHistory({ api, thread }: { api: Api; thread: Thread }) {
+function SavedHistory({
+  api,
+  thread,
+  active,
+}: {
+  api: Api;
+  thread: Thread;
+  active: boolean;
+}) {
   const history = useRemote<unknown>(
     api,
     `/threads/${thread.id}/history`,
     2000,
+    active,
   );
   return (
     <section className="panel">
@@ -524,6 +605,7 @@ function SavedHistory({ api, thread }: { api: Api; thread: Thread }) {
   );
 }
 function DecisionPanel({
+  active,
   api,
   run,
   actor,
@@ -532,12 +614,14 @@ function DecisionPanel({
   api: Api;
   run: Run;
   actor: Principal;
+  active: boolean;
   done: () => void;
 }) {
   const decisions = useRemote<Decision[]>(
     api,
     `/runs/${run.id}/decisions`,
     1500,
+    active,
   );
   return (
     <section className="decision">
@@ -726,8 +810,9 @@ function ReviewInput({
   return (
     <div className="recovery">
       <p>
-        Delivery was observed, incorporation was not proved. Review it; do not
-        automatically replay.
+        {input.disposition === "blocked"
+          ? "Discard only work you have reviewed as unapplied. This retains its audit record and does not restore revoked authority."
+          : "Delivery was observed, incorporation was not proved. Review it; do not automatically replay."}
       </p>
       <label>
         Review note
@@ -736,11 +821,16 @@ function ReviewInput({
       <Action
         disabled={!note.trim()}
         run={async () => {
-          await api.send(`/inputs/${input.id}/acknowledge`, { note });
+          await api.send(
+            `/inputs/${input.id}/${input.disposition === "blocked" ? "discard" : "acknowledge"}`,
+            { note },
+          );
           done();
         }}
       >
-        Acknowledge as unapplied
+        {input.disposition === "blocked"
+          ? "Discard blocked input"
+          : "Acknowledge as unapplied"}
       </Action>
     </div>
   );
@@ -758,7 +848,15 @@ function Fork({
 }) {
   const [title, setTitle] = useState("Forked conversation");
   const [profile, setProfile] = useState(profiles[0]?.id ?? "");
-  const [id] = useState(requestId);
+  const command = useCommand<
+    {
+      checkpoint_id: string | null;
+      request_id: string;
+      title: string;
+      profile_id: string;
+    },
+    Thread
+  >(`fork:${run.id}`);
   return (
     <details>
       <summary>Fork saved checkpoint</summary>
@@ -769,14 +867,16 @@ function Fork({
       <label>
         New Thread title
         <input
-          value={title}
+          value={command.payload?.title ?? title}
+          disabled={!!command.payload}
           onChange={(event) => setTitle(event.target.value)}
         />
       </label>
       <label>
         Profile
         <select
-          value={profile}
+          value={command.payload?.profile_id ?? profile}
+          disabled={!!command.payload}
           onChange={(event) => setProfile(event.target.value)}
         >
           {profiles.map((item) => (
@@ -784,24 +884,38 @@ function Fork({
           ))}
         </select>
       </label>
+      <ErrorNotice>{command.error}</ErrorNotice>
       <Action
-        disabled={!title.trim() || !profile}
+        disabled={
+          command.busy || (!command.payload && (!title.trim() || !profile))
+        }
         run={async () => {
-          const next = await api.send<Thread>("/threads/fork", {
-            checkpoint_id: run.checkpoint_id,
-            request_id: id,
-            title,
-            profile_id: profile,
-          });
-          done(next.id);
+          const next = await command.execute(
+            () => ({
+              checkpoint_id: run.checkpoint_id,
+              request_id: requestId(),
+              title,
+              profile_id: profile,
+            }),
+            (value) => api.send<Thread>("/threads/fork", value),
+          );
+          if (next) done(next.id);
         }}
       >
-        Create fork
+        {command.result
+          ? "Open created fork"
+          : command.payload
+            ? "Retry same fork"
+            : "Create fork"}
       </Action>
+      {command.result && (
+        <button onClick={command.clear}>Start another fork</button>
+      )}
     </details>
   );
 }
 function ChildRuns({
+  active,
   api,
   run,
   navigate,
@@ -809,8 +923,21 @@ function ChildRuns({
   api: Api;
   run: Run;
   navigate: (id: string) => void;
+  active: boolean;
 }) {
-  const children = useRemote<Child[]>(api, `/runs/${run.id}/children`, 2000);
+  const children = useRemote<Child[]>(
+    api,
+    `/runs/${run.id}/children`,
+    2000,
+    active,
+    (items) =>
+      activeStatuses.has(run.status) ||
+      items.some(
+        (child) =>
+          activeStatuses.has(child.status) ||
+          (child.notify && !child.delivery_input_id && !child.delivery_error),
+      ),
+  );
   return (
     <section>
       <ErrorNotice>{children.error}</ErrorNotice>

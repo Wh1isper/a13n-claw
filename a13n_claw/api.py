@@ -59,6 +59,7 @@ router = APIRouter(prefix="/api")
 
 
 class ThreadCreate(Value):
+    request_id: str = Field(min_length=1, max_length=200)
     title: str = Field(default="New conversation", min_length=1, max_length=500)
     profile_id: ResourceId | None = None
 
@@ -172,7 +173,13 @@ async def threads(actor: Actor, app: Application):
 
 @router.post("/threads", status_code=201)
 async def create_thread(body: ThreadCreate, actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.create_thread, actor.id, body.title, body.profile_id)
+    return await asyncio.to_thread(
+        app.store.create_thread,
+        actor.id,
+        body.title,
+        body.profile_id,
+        request_id=body.request_id,
+    )
 
 
 @router.post("/threads/fork", status_code=201)
@@ -291,6 +298,13 @@ async def recover(run_id: str, body: RecoveryRequest, actor: Actor, app: Applica
 @router.post("/inputs/{input_id}/acknowledge")
 async def acknowledge(input_id: str, body: ReviewRequest, actor: Actor, app: Application):
     return await asyncio.to_thread(app.store.acknowledge_uncertainty, actor.id, input_id, body.note)
+
+
+@router.post("/inputs/{input_id}/discard")
+async def discard(input_id: str, body: ReviewRequest, actor: Actor, app: Application):
+    result = await asyncio.to_thread(app.store.discard_blocked, actor.id, input_id, body.note)
+    app.coordinator.wake()
+    return result
 
 
 @router.post("/threads/{thread_id}/release-inputs", status_code=204)

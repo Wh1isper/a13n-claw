@@ -13,20 +13,24 @@ export function Environments({
   api,
   actor,
   thread,
+  active,
 }: {
   api: Api;
   actor: Principal;
   thread?: Thread;
+  active: boolean;
 }) {
   const targets = useRemote<Target[]>(
     api,
     thread ? `/threads/${thread.id}/targets` : null,
     2500,
+    active,
   );
   const runs = useRemote<Run[]>(
     api,
     thread ? `/threads/${thread.id}/runs` : null,
     2500,
+    active,
   );
   const [selected, setSelected] = useState("");
   const run =
@@ -125,13 +129,21 @@ export function Environments({
             {run.composition.environment.id}. A stopped target must be prepared
             explicitly; no host fallback.
           </p>
-          <FileBrowser key={run.id} api={api} run={run} />
+          <FileBrowser key={run.id} api={api} run={run} active={active} />
         </section>
       )}
     </div>
   );
 }
-function FileBrowser({ api, run }: { api: Api; run: Run }) {
+function FileBrowser({
+  api,
+  run,
+  active,
+}: {
+  api: Api;
+  run: Run;
+  active: boolean;
+}) {
   const [directory, setDirectory] = useState("/workspace");
   const [offset, setOffset] = useState(0);
   const [file, setFile] = useState("");
@@ -143,6 +155,8 @@ function FileBrowser({ api, run }: { api: Api; run: Run }) {
   }>(
     api,
     `/runs/${run.id}/files?path=${encodeURIComponent(directory)}&offset=${offset}`,
+    0,
+    active,
   );
   const text = useRemote<{
     text: string;
@@ -155,6 +169,8 @@ function FileBrowser({ api, run }: { api: Api; run: Run }) {
     file
       ? `/runs/${run.id}/file-content?path=${encodeURIComponent(file)}&line_offset=${line}`
       : null,
+    0,
+    active,
   );
   const openDirectory = (path: string) => {
     setDirectory(path);

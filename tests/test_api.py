@@ -91,7 +91,11 @@ def test_authenticated_http_execution_reconnect_and_fork(console, tmp_path):
         configure(client)
         info = client.get("/api/instance").json()
         assert info["dispatcher"] == "ready" and info["connectivity"] == "not_probed"
-        target = client.post("/api/threads", json={"title": "Conversation"}).json()
+        creation = {"request_id": "create", "title": "Conversation"}
+        target = client.post("/api/threads", json=creation).json()
+        assert client.post("/api/threads", json=creation).json() == target
+        assert client.post("/api/threads", json={**creation, "title": "Changed"}).status_code == 409
+        assert client.post("/api/threads", json={"title": "Missing identity"}).status_code == 422
         request = {"request_id": "once", "text": "First message"}
         accepted = client.post(f"/api/threads/{target['id']}/inputs", json=request)
         assert accepted.status_code == 202, accepted.text
@@ -136,8 +140,10 @@ def test_current_client_grants_and_no_implicit_administration(console, tmp_path)
     with TestClient(create_app(models=models)) as client:
         authorize(client, tmp_path)
         configure(client)
-        first = client.post("/api/threads", json={"title": "Shared"}).json()
-        second = client.post("/api/threads", json={"title": "Private"}).json()
+        first = client.post("/api/threads", json={"request_id": "shared", "title": "Shared"}).json()
+        second = client.post(
+            "/api/threads", json={"request_id": "private", "title": "Private"}
+        ).json()
         actor = {
             "id": "participant",
             "thread_ids": [first["id"]],
@@ -154,7 +160,9 @@ def test_current_client_grants_and_no_implicit_administration(console, tmp_path)
         assert client.get("/api/credentials", headers=participant).status_code == 403
         assert (
             client.post(
-                "/api/threads", headers=participant, json={"title": "Not allowed"}
+                "/api/threads",
+                headers=participant,
+                json={"request_id": "denied", "title": "Not allowed"},
             ).status_code
             == 403
         )
@@ -203,7 +211,7 @@ def test_validation_conflicts_and_origin_protection_do_not_echo_secrets(console,
             client.get("/api/instance", headers={"Origin": "http://testserver"}).status_code == 200
         )
         assert client.get("/api/instance").headers["cache-control"] == "no-store"
-        target = client.post("/api/threads", json={"title": "Draft"}).json()
+        target = client.post("/api/threads", json={"request_id": "draft", "title": "Draft"}).json()
         edit = {
             "title": "Updated",
             "profile_id": "default",

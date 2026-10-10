@@ -12,6 +12,7 @@ from typing import Any
 from a13n_harness import (
     DeferredToolResume,
     ExecutableAgent,
+    HarnessRunResult,
     HarnessRunResultEvent,
     HarnessRunStream,
     HarnessState,
@@ -30,13 +31,12 @@ from pydantic_ai.capabilities.abstract import ValidatedToolArgs
 from pydantic_ai.messages import ModelRequest, ToolCallPart, UserPromptPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import UsageLimits
 
+from a13n_claw.async_utils import settle_on_cancel
 from a13n_claw.decisions import REQUESTS
 from a13n_claw.domain import (
     ClawError,
     InputReceipt,
-    ProfileDefinition,
     RunRecord,
     canonical,
     new_id,
@@ -44,21 +44,6 @@ from a13n_claw.domain import (
 from a13n_claw.storage import Store
 
 logger = logging.getLogger("a13n_claw.coordinator")
-
-
-async def commit[T](work: Awaitable[T]) -> T:
-    """Join in-flight publication before propagating native Task cancellation."""
-    task = asyncio.ensure_future(work)
-    cancelled: asyncio.CancelledError | None = None
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError as exc:
-            cancelled = exc
-    result = task.result()
-    if cancelled is not None:
-        raise cancelled
-    return result
 
 
 class CheckpointCapability(AbstractCapability[AgentContext]):
@@ -100,7 +85,7 @@ class CheckpointCapability(AbstractCapability[AgentContext]):
         if ctx.run_id == self.root_run_id:
             await self.authorize()
             state = await ctx.deps.export_state(ctx.messages)
-            await commit(self.save(state))
+            await settle_on_cancel(self.save(state))
         return request_context
 
     async def before_tool_execute(
@@ -250,6 +235,75 @@ class Coordinator:
 
     async def _execute(self, run: RunRecord, owner: str) -> None:
         published = False
+        live_stream: HarnessRunStream[str] | None = None
+        resume: DeferredToolResume | None = None
+        initial: list[InputReceipt] = []
+        prompt: str | None = None
+        known_inputs: set[str] = set()
+
+        def evidence(state: HarnessState) -> tuple[str, ...]:
+            ids = set(steering_input_ids(state.message_history)) & known_inputs
+            if prompt is not None and any(
+                isinstance(part, UserPromptPart) and part.content == prompt
+                for message in state.message_history
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+            ):
+                ids.update(item.id for item in initial)
+            return tuple(sorted(ids))
+
+        async def authorize() -> None:
+            await asyncio.to_thread(self.store.authorize_execution, run.id, owner)
+
+        def pending(state: HarnessState) -> DeferredToolResume | None:
+            value = live_stream.pending_deferred_input if live_stream is not None else resume
+            return value.remaining(state.message_history) if value is not None else None
+
+        async def save(state: HarnessState) -> None:
+            await authorize()
+            await asyncio.to_thread(
+                self.store.publish,
+                run.id,
+                owner,
+                state,
+                incorporated=evidence(state),
+                pending_deferred=pending(state),
+            )
+
+        async def publish_result(
+            result: HarnessRunResult[str], *, failure: str | None = None
+        ) -> None:
+            state = result.state
+            if state is None:
+                await settle_on_cancel(
+                    asyncio.to_thread(
+                        self.store.finish_without_checkpoint,
+                        run.id,
+                        owner,
+                        status="failed",
+                        error=failure or "missing_continuation",
+                    )
+                )
+                return
+            await settle_on_cancel(
+                asyncio.to_thread(
+                    self.store.publish,
+                    run.id,
+                    owner,
+                    state,
+                    incorporated=evidence(state),
+                    pending_deferred=pending(state),
+                    status="failed"
+                    if failure
+                    else ("waiting" if result.status == "suspended" else result.status),
+                    output=result.output,
+                    error=failure or (result.failure.code if result.failure else None),
+                    requests=REQUESTS.dump_json(result.deferred).decode()
+                    if result.deferred
+                    else None,
+                )
+            )
+
         try:
             previous = (
                 await asyncio.to_thread(self.store.checkpoint, run.checkpoint_id)
@@ -257,46 +311,10 @@ class Coordinator:
                 else HarnessState.new(thread_id=run.thread_id)
             )
             resume = await asyncio.to_thread(self.store.resume_decision, run.id, owner)
-            initial: list[InputReceipt] = []
-            prompt: str | None = None
-            known_inputs: set[str] = set()
-
-            async def evidence(state: HarnessState) -> tuple[str, ...]:
-                ids = set(steering_input_ids(state.message_history)) & known_inputs
-                if prompt is not None and any(
-                    isinstance(part, UserPromptPart) and part.content == prompt
-                    for message in state.message_history
-                    if isinstance(message, ModelRequest)
-                    for part in message.parts
-                ):
-                    ids.update(item.id for item in initial)
-                return tuple(sorted(ids))
-
-            async def authorize() -> None:
-                await asyncio.to_thread(self.store.authorize_execution, run.id, owner)
-
-            live_stream: HarnessRunStream[str] | None = None
-
-            def pending(state: HarnessState) -> DeferredToolResume | None:
-                value = live_stream.pending_deferred_input if live_stream is not None else resume
-                return value.remaining(state.message_history) if value is not None else None
-
-            async def save(state: HarnessState) -> None:
-                await authorize()
-                await asyncio.to_thread(
-                    self.store.publish,
-                    run.id,
-                    owner,
-                    state,
-                    incorporated=await evidence(state),
-                    pending_deferred=pending(state),
-                )
-
             async with self.factory(run, CheckpointCapability(save, authorize)) as runtime:
                 initial = await asyncio.to_thread(self.store.start, run.id, owner)
                 prompt = prompt_for(initial)
                 known_inputs.update(item.id for item in initial)
-                profile = ProfileDefinition.model_validate(run.composition.profile.content)
                 async with runtime.executable.stream(
                     prompt,
                     previous_state=previous,
@@ -310,7 +328,6 @@ class Coordinator:
                     else runtime.bindings,
                     deferred_resume=resume,
                     tool_recovery="never",
-                    usage_limits=UsageLimits(request_limit=profile.max_requests),
                 ) as stream:
                     live_stream = stream
                     self.streams[run.id] = stream
@@ -359,36 +376,11 @@ class Coordinator:
                     raise ClawError(
                         "missing_outcome", "Execution ended without a saved result candidate"
                     )
-                state = result.state
-                if state is None:
-                    await asyncio.to_thread(
-                        self.store.finish_without_checkpoint,
-                        run.id,
-                        owner,
-                        status="failed",
-                        error="Execution did not produce a complete continuation",
-                    )
-                else:
-                    await commit(
-                        asyncio.to_thread(
-                            self.store.publish,
-                            run.id,
-                            owner,
-                            state,
-                            incorporated=await evidence(state),
-                            pending_deferred=pending(state),
-                            status="waiting" if result.status == "suspended" else result.status,
-                            output=result.output,
-                            error=result.failure.code if result.failure is not None else None,
-                            requests=REQUESTS.dump_json(result.deferred).decode()
-                            if result.deferred
-                            else None,
-                        )
-                    )
+                await publish_result(result)
                 published = True
         except asyncio.CancelledError:
             if not published:
-                await commit(asyncio.to_thread(self.store.retire_owner, run.id, owner))
+                await settle_on_cancel(asyncio.to_thread(self.store.retire_owner, run.id, owner))
             raise
         except Exception as exc:
             if published:
@@ -396,7 +388,13 @@ class Coordinator:
                 logger.error("Runtime cleanup failed after publication: %s", run.id)
                 return
             code = exc.code if isinstance(exc, ClawError) else "execution_failed"
-            await commit(
+            # Harness retains a validated candidate when cleanup prevented terminal delivery.
+            # Preserve its state and deferred requests without relabelling failure as success.
+            outcome = live_stream.outcome if live_stream is not None else None
+            if outcome is not None and outcome.state is not None:
+                await publish_result(outcome, failure=code)
+                return
+            await settle_on_cancel(
                 asyncio.to_thread(
                     self.store.finish_without_checkpoint, run.id, owner, status="failed", error=code
                 )

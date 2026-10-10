@@ -49,7 +49,7 @@ def test_http_files_are_selected_environment_reads_and_scoped_downloads(console,
     with TestClient(create_app(models=models)) as client:
         authorize(client, tmp_path)
         configure(client)
-        thread = client.post("/api/threads", json={"title": "Files"}).json()
+        thread = client.post("/api/threads", json={"request_id": "create", "title": "Files"}).json()
         uploaded = client.post(
             f"/api/threads/{thread['id']}/files?request_id=upload&name=sample.html",
             content=b"<script>untrusted()</script>",
@@ -167,7 +167,9 @@ def test_native_agent_reads_attachment_and_retains_workspace_artifact(console, t
             ).status_code
             == 200
         )
-        thread = client.post("/api/threads", json={"title": "Agent files"}).json()
+        thread = client.post(
+            "/api/threads", json={"request_id": "create", "title": "Agent files"}
+        ).json()
         file = client.post(
             f"/api/threads/{thread['id']}/files?request_id=input&name=input.txt",
             content=b"attachment content",

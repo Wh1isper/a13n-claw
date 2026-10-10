@@ -9,8 +9,10 @@ import {
   type Resource,
   type Thread,
 } from "./api";
-import { Action, Empty, ErrorNotice, Status } from "./components";
+import { Empty, ErrorNotice, Status } from "./components";
+import { CommandProvider, usePendingCommands } from "./commands";
 import { Conversation, blankDraft, type Draft } from "./conversation";
+import { NewThread } from "./creation";
 import { Environments } from "./environments";
 import { Settings } from "./settings";
 import "./styles.css";
@@ -60,14 +62,16 @@ function App() {
   const [error, setError] = useState("");
   if (session)
     return (
-      <Console
-        api={session.api}
-        initial={session.instance}
-        logout={() => {
-          setSession(null);
-          setToken("");
-        }}
-      />
+      <CommandProvider>
+        <Console
+          api={session.api}
+          initial={session.instance}
+          logout={() => {
+            setSession(null);
+            setToken("");
+          }}
+        />
+      </CommandProvider>
     );
   return (
     <main className="login">
@@ -152,9 +156,10 @@ function Console({
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [page, selected, newThread]);
-  const hasDraft = Object.values(drafts).some(
-    (item) => item.text || item.files.length || item.pending,
-  );
+  const pendingCommands = usePendingCommands();
+  const hasDraft =
+    pendingCommands ||
+    Object.values(drafts).some((item) => item.text || item.files.length);
   useEffect(() => {
     if (!hasDraft) return;
     const guard = (event: BeforeUnloadEvent) => {
@@ -414,6 +419,7 @@ function Console({
                 ) : thread ? (
                   <Conversation
                     key={thread.id}
+                    active={page === "Threads"}
                     api={api}
                     actor={info.principal}
                     thread={thread}
@@ -422,7 +428,7 @@ function Console({
                     setDraft={(value) =>
                       setDrafts((previous) => ({
                         ...previous,
-                        [thread.id]: value,
+                        [thread.id]: value(previous[thread.id] ?? blankDraft()),
                       }))
                     }
                     changed={refresh}
@@ -438,6 +444,7 @@ function Console({
               <div hidden={page !== "Environments"}>
                 <Environments
                   key={thread?.id ?? "none"}
+                  active={page === "Environments"}
                   api={api}
                   actor={info.principal}
                   thread={thread}
@@ -447,72 +454,16 @@ function Console({
           </div>
           {info.principal.admin && (
             <div hidden={page !== "Settings"}>
-              <Settings api={api} changed={refresh} />
+              <Settings
+                api={api}
+                changed={refresh}
+                active={page === "Settings"}
+              />
             </div>
           )}
         </main>
       </div>
     </div>
-  );
-}
-function NewThread({
-  api,
-  profiles,
-  done,
-  cancel,
-}: {
-  api: Api;
-  profiles: Resource[];
-  done: (id: string) => void;
-  cancel: () => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [profile, setProfile] = useState("");
-  return (
-    <section className="panel form-panel">
-      <p className="eyebrow">INDEPENDENT HISTORY · SHARED WORKSPACE</p>
-      <h1>New conversation</h1>
-      <label>
-        Title
-        <input
-          value={title}
-          placeholder="What are you working on?"
-          onChange={(event) => setTitle(event.target.value)}
-          autoFocus
-        />
-      </label>
-      <label>
-        Profile
-        <select
-          value={profile}
-          onChange={(event) => setProfile(event.target.value)}
-        >
-          <option value="">Instance default</option>
-          {profiles.map((item) => (
-            <option key={item.id}>{item.id}</option>
-          ))}
-        </select>
-      </label>
-      <p className="subtle">
-        Creating a Thread does not start execution. Send its first message when
-        you're ready.
-      </p>
-      <div className="toolbar">
-        <Action
-          disabled={!title.trim() || !profiles.length}
-          run={async () => {
-            const thread = await api.send<Thread>("/threads", {
-              title,
-              profile_id: profile || null,
-            });
-            done(thread.id);
-          }}
-        >
-          Create Thread
-        </Action>
-        <button onClick={cancel}>Cancel</button>
-      </div>
-    </section>
   );
 }
 createRoot(document.getElementById("root")!).render(

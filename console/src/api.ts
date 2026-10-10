@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type Principal = {
   id: string;
@@ -162,7 +162,15 @@ export class Api {
   }
 }
 
-export function useRemote<T>(api: Api, path: string | null, poll = 0) {
+export function useRemote<T>(
+  api: Api,
+  path: string | null,
+  poll = 0,
+  enabled = true,
+  pollWhile?: (data: T) => boolean,
+) {
+  const predicate = useRef(pollWhile);
+  predicate.current = pollWhile;
   const [record, setRecord] = useState<{ path: string; data: T }>();
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
@@ -170,25 +178,27 @@ export function useRemote<T>(api: Api, path: string | null, poll = 0) {
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     setError("");
-    if (!path) return;
+    if (!path || !enabled) return;
     const load = async () => {
+      let again = true;
       try {
         const data = await api.get<T>(path);
         if (active) {
+          again = predicate.current?.(data) ?? true;
           setRecord({ path, data });
           setError("");
         }
       } catch (reason) {
         if (active) setError(message(reason));
       }
-      if (active && poll) timer = setTimeout(load, poll);
+      if (active && poll && again) timer = setTimeout(load, poll);
     };
     void load();
     return () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [api, path, revision, poll]);
+  }, [api, path, revision, poll, enabled]);
   return {
     data: record?.path === path ? record.data : undefined,
     error,

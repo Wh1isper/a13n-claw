@@ -14,6 +14,7 @@ from uuid import uuid4
 from a13n_harness import AgentSpec
 from a13n_harness.tools.permissions import ToolPermissions
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic_ai.usage import UsageLimits
 
 
 class ClawError(Exception):
@@ -80,6 +81,7 @@ class ProfileAgentSpec(AgentSpec):
     """Harness behavior with infrastructure selected only by Claw resources."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+    usage_limits: UsageLimits = Field(default_factory=lambda: UsageLimits(request_limit=50))
 
     @model_validator(mode="after")
     def installed_behavior(self) -> ProfileAgentSpec:
@@ -117,7 +119,25 @@ class ProfileDefinition(Value):
     skills: tuple[ResourceId, ...] = ()
     mcp_servers: tuple[ResourceId, ...] = ()
     child_profiles: tuple[ResourceId, ...] = ()
-    max_requests: int = Field(default=50, ge=1, le=1000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_request_limit(cls, value: object) -> object:
+        # Read existing captured Profiles without retaining a second policy owner.
+        # New serialized definitions contain only native agent.usage_limits.
+        if isinstance(value, dict) and "max_requests" in value:
+            value = dict(value)
+            limit = value.pop("max_requests")
+            agent = value.get("agent", {})
+            if not isinstance(agent, dict):
+                raise ValueError("Legacy Profiles require an agent object")
+            agent = dict(agent)
+            limits = agent.get("usage_limits", {})
+            if not isinstance(limits, dict):
+                raise ValueError("Legacy Profiles require a native usage limits object")
+            agent["usage_limits"] = {**limits, "request_limit": limit}
+            value["agent"] = agent
+        return value
 
     @field_validator("skills", "mcp_servers", "child_profiles")
     @classmethod

@@ -19,12 +19,11 @@ const templates: Record<string, Record<string, unknown>> = {
   profile: {
     model_id: "",
     environment_id: "",
-    agent: {},
+    agent: { usage_limits: { request_limit: 50 } },
     permissions: {},
     skills: [],
     mcp_servers: [],
     child_profiles: [],
-    max_requests: 50,
   },
   skill: { name: "my-skill", description: "", instructions: "", files: {} },
   mcp: { url: "", header_env: {}, allowed_tools: null, description: null },
@@ -36,8 +35,16 @@ const split = (text: string) =>
     .map((value) => value.trim())
     .filter(Boolean);
 
-export function Settings({ api, changed }: { api: Api; changed: () => void }) {
-  const resources = useRemote<Resource[]>(api, "/resources");
+export function Settings({
+  api,
+  changed,
+  active,
+}: {
+  api: Api;
+  changed: () => void;
+  active: boolean;
+}) {
+  const resources = useRemote<Resource[]>(api, "/resources", 0, active);
   const [kind, setKind] = useState("model");
   const [selection, setSelection] = useState<Resource | null>(null);
   const [creating, setCreating] = useState(false);
@@ -167,8 +174,8 @@ export function Settings({ api, changed }: { api: Api; changed: () => void }) {
           </label>
         </details>
       </section>
-      <Credentials api={api} />
-      <Clients api={api} />
+      <Credentials api={api} active={active} />
+      <Clients api={api} active={active} />
       <p className="subtle">
         Memory, bridges and automation are later delivery packages. They are not
         enabled by these settings.
@@ -331,18 +338,10 @@ function ResourceEditor({
                   }
                 />
               </label>
-              <label>
-                Maximum model requests
-                <input
-                  type="number"
-                  min={1}
-                  max={1000}
-                  value={Number(content.max_requests ?? 50)}
-                  onChange={(event) =>
-                    update("max_requests", Number(event.target.value))
-                  }
-                />
-              </label>
+              <p className="subtle">
+                Set request, token and tool-call limits in agent.usage_limits
+                below. The default request_limit is 50.
+              </p>
               <JsonField
                 label="Agent behavior (native AgentSpec JSON)"
                 value={content.agent ?? {}}
@@ -486,10 +485,12 @@ function JsonField({
     </label>
   );
 }
-function Credentials({ api }: { api: Api }) {
+function Credentials({ api, active }: { api: Api; active: boolean }) {
   const saved = useRemote<{ name: string; updated_at: string }[]>(
     api,
     "/credentials",
+    0,
+    active,
   );
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
@@ -569,8 +570,8 @@ function Credentials({ api }: { api: Api }) {
     </section>
   );
 }
-function Clients({ api }: { api: Api }) {
-  const clients = useRemote<Principal[]>(api, "/clients");
+function Clients({ api, active }: { api: Api; active: boolean }) {
+  const clients = useRemote<Principal[]>(api, "/clients", 0, active);
   const [edit, setEdit] = useState<Principal | null>(null);
   const [creating, setCreating] = useState(false);
   const [token, setToken] = useState("");

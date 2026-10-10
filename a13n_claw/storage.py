@@ -45,7 +45,16 @@ from a13n_claw.domain import (
     validate_resource,
 )
 
-_SCHEMA = """
+_THREAD_CREATIONS = """
+CREATE TABLE thread_creations (
+    actor_id TEXT NOT NULL REFERENCES principals(id), request_id TEXT NOT NULL,
+    fingerprint TEXT NOT NULL, thread_id TEXT NOT NULL REFERENCES threads(id),
+    PRIMARY KEY(actor_id, request_id)
+);
+"""
+
+_SCHEMA = (
+    """
 CREATE TABLE resources (
     kind TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL,
     content TEXT NOT NULL, retired INTEGER NOT NULL DEFAULT 0,
@@ -139,8 +148,10 @@ CREATE TABLE assets (
     sha256 TEXT NOT NULL, created_at TEXT NOT NULL, content BLOB NOT NULL,
     UNIQUE(actor_id,request_id)
 );
-PRAGMA user_version = 1;
 """
+    + _THREAD_CREATIONS
+    + "PRAGMA user_version = 2;"
+)
 
 
 class Store:
@@ -153,7 +164,11 @@ class Store:
             if version == 0:
                 # A single startup owner applies the initial schema atomically.
                 db.executescript("BEGIN IMMEDIATE;\n" + _SCHEMA + "\nCOMMIT;")
-            elif version != 1:
+            elif version == 1:
+                db.executescript(
+                    "BEGIN IMMEDIATE;\n" + _THREAD_CREATIONS + "\nPRAGMA user_version = 2;\nCOMMIT;"
+                )
+            elif version != 2:
                 raise ClawError(
                     "schema_incompatible", "This database requires another Claw version"
                 )
@@ -433,10 +448,31 @@ class Store:
         *,
         parent_thread_id: str | None = None,
         parent_run_id: str | None = None,
+        request_id: str | None = None,
     ) -> ThreadRecord:
+        # Internal one-shot creation may omit identity; the public API requires it.
+        request_id = request_id or new_id("create")
+        fingerprint = digest(
+            {
+                "title": title,
+                "profile": profile_id,
+                "parent_thread": parent_thread_id,
+                "parent_run": parent_run_id,
+            }
+        )
         with self._transaction() as db:
             actor = self._principal(db, actor_id)
             actor.require("create")
+            prior = db.execute(
+                "SELECT fingerprint,thread_id FROM thread_creations "
+                "WHERE actor_id=? AND request_id=?",
+                (actor_id, request_id),
+            ).fetchone()
+            if prior is not None:
+                if prior["fingerprint"] != fingerprint:
+                    raise ClawError("request_conflict", "Thread creation identity was reused")
+                actor.require("create", prior["thread_id"])
+                return self._thread(db, prior["thread_id"])
             if profile_id is None:
                 defaults = self._resource(db, "defaults", "instance")
                 profile_id = InstanceDefaults.model_validate(defaults.content).profile_id
@@ -465,6 +501,10 @@ class Store:
                 (thread_id, title, profile_id, parent_thread_id, parent_run_id, now()),
             )
             self._grant_created_thread(db, actor, thread_id)
+            db.execute(
+                "INSERT INTO thread_creations VALUES (?,?,?,?)",
+                (actor_id, request_id, fingerprint, thread_id),
+            )
             return self._thread(db, thread_id)
 
     def fork_thread(
@@ -808,7 +848,8 @@ class Store:
                 raise ClawError("run_not_preparing", "Run cannot start")
             self._authorize_run(db, run)
             rows = db.execute(
-                "SELECT * FROM inputs WHERE run_id=? AND disposition='pending' ORDER BY sequence",
+                "SELECT * FROM inputs WHERE run_id=? "
+                "AND disposition IN ('pending','steering') ORDER BY sequence",
                 (run_id,),
             ).fetchall()
             for row in rows:
@@ -817,7 +858,7 @@ class Store:
                 sender.use_profile(run.composition.profile.id)
             db.execute(
                 "UPDATE inputs SET disposition='delivering' "
-                "WHERE run_id=? AND disposition='pending'",
+                "WHERE run_id=? AND disposition IN ('pending','steering')",
                 (run_id,),
             )
             db.execute("UPDATE runs SET status='running' WHERE id=?", (run_id,))
@@ -893,8 +934,10 @@ class Store:
     ) -> str:
         if status not in {None, "waiting", "completed", "failed", "cancelled"}:
             raise ValueError("Invalid publication status")
-        if (status == "waiting") != (requests is not None):
+        if status == "waiting" and requests is None:
             raise ValueError("A waiting boundary must include its complete decision batch")
+        if requests is not None and status not in {"waiting", "failed", "cancelled"}:
+            raise ValueError("Deferred requests require a waiting or unsuccessful outcome")
         if requests is not None:
             validate_wait(state, requests)
         serialized = state.model_dump_json()
@@ -944,7 +987,7 @@ class Store:
                     raise ClawError(
                         "input_evidence", "Checkpoint evidence names input outside this execution"
                     )
-            if status == "waiting":
+            if requests is not None:
                 # Enqueue acceptance is not proof of consumption. Do not silently
                 # lose or replay these inputs when restoring a waiting boundary.
                 db.execute(
@@ -1197,7 +1240,12 @@ class Store:
                 "SELECT state FROM checkpoints WHERE id=?", (run.checkpoint_id,)
             ).fetchone()
             saved = HarnessState.model_validate_json(state[0])
-            if run.recovery_of is not None:
+            answered_here = db.execute(
+                "SELECT 1 FROM decisions WHERE run_id=? AND checkpoint_id=? "
+                "AND response IS NOT NULL",
+                (run_id, run.checkpoint_id),
+            ).fetchone()
+            if run.recovery_of is not None and answered_here is None:
                 return DeferredToolResume(
                     REQUESTS.validate_json(row["requests"]),
                     RESULTS.validate_json(row["response"]),
@@ -1224,6 +1272,37 @@ class Store:
                 )
             db.execute("UPDATE inputs SET disposition='unapplied' WHERE id=?", (input_id,))
             self._audit(db, "uncertainty_acknowledged", input_id, {"actor": actor_id, "note": note})
+            return self._receipt(
+                db.execute("SELECT * FROM inputs WHERE id=?", (input_id,)).fetchone()
+            )
+
+    def discard_blocked(self, actor_id: str, input_id: str, note: str) -> InputReceipt:
+        """Discard known-undelivered input without restoring its sender's authority."""
+        if not note.strip():
+            raise ClawError("reconciliation_note", "Describe why this input is discarded", 422)
+        with self._transaction() as db:
+            self._principal(db, actor_id).require("admin")
+            row = db.execute("SELECT * FROM inputs WHERE id=?", (input_id,)).fetchone()
+            if row is None:
+                raise ClawError("input_missing", "Input not found", 404)
+            if row["disposition"] == "unapplied":
+                return self._receipt(row)
+            if row["disposition"] != "blocked":
+                raise ClawError("input_transition", "Only blocked input can be discarded")
+            db.execute("UPDATE inputs SET disposition='unapplied' WHERE id=?", (input_id,))
+            self._audit(db, "blocked_input_discarded", input_id, {"actor": actor_id, "note": note})
+            run = self._run(db, row["run_id"])
+            remaining = db.execute(
+                "SELECT 1 FROM inputs WHERE run_id=? "
+                "AND disposition NOT IN ('incorporated','unapplied') LIMIT 1",
+                (run.id,),
+            ).fetchone()
+            deferred = db.execute(
+                "SELECT 1 FROM deferred_inputs WHERE run_id=?", (run.id,)
+            ).fetchone()
+            if run.status == "queued" and not remaining and not deferred:
+                self._finish(db, run, "cancelled", None, "All queued input was discarded")
+                self._audit(db, "empty_run_discarded", run.id, {"actor": actor_id})
             return self._receipt(
                 db.execute("SELECT * FROM inputs WHERE id=?", (input_id,)).fetchone()
             )
@@ -1585,6 +1664,24 @@ class Store:
                 "FROM deferred_inputs WHERE run_id=?",
                 (run_id, source.id),
             )
+            unanswered = db.execute(
+                "SELECT requests FROM decisions WHERE run_id=? AND checkpoint_id=? "
+                "AND response IS NULL",
+                (source.id, source.checkpoint_id),
+            ).fetchone()
+            if unanswered is not None:
+                # A failed cleanup can retain a valid unanswered boundary. Recovery
+                # must present that decision, never turn it into permission to replay.
+                db.execute(
+                    "UPDATE runs SET status='waiting',checkpoint_id=? WHERE id=?",
+                    (source.checkpoint_id, run_id),
+                )
+                db.execute("UPDATE inputs SET disposition='held' WHERE run_id=?", (run_id,))
+                db.execute(
+                    "INSERT INTO decisions(id,run_id,checkpoint_id,requests,created_at) "
+                    "VALUES (?,?,?,?,?)",
+                    (new_id("decision"), run_id, source.checkpoint_id, unanswered[0], now()),
+                )
             db.execute("UPDATE runs SET recovery_required=0 WHERE id=?", (source.id,))
             self._audit(db, "recovery_accepted", run_id, {"source": source.id, "actor": actor_id})
             return self._run(db, run_id)

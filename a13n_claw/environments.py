@@ -35,7 +35,7 @@ from a13n_harness.providers.environment.docker.configuration import (
 )
 from a13n_harness.providers.environment.docker.provider import DOCKER
 
-from a13n_claw.coordinator import commit
+from a13n_claw.async_utils import settle_on_cancel
 from a13n_claw.domain import ClawError, EnvironmentDefinition, RunRecord, TargetRecord, new_id
 from a13n_claw.storage import Store
 
@@ -144,7 +144,7 @@ class EnvironmentManager:
         error: str | None = None,
     ) -> TargetRecord:
         state = environment.dump_state()
-        return await commit(
+        return await settle_on_cancel(
             asyncio.to_thread(
                 self.store.target_observed,
                 target.id,
@@ -168,12 +168,14 @@ class EnvironmentManager:
         try:
             async with self._lock(target.id):
                 await asyncio.to_thread(self.store.authorize_execution, run.id, run.owner)
-                target = await asyncio.to_thread(self.store.target_operation, target.id, "prepare")
+                target = await settle_on_cancel(
+                    asyncio.to_thread(self.store.target_operation, target.id, "prepare")
+                )
                 try:
                     environment = await self.factory(target)
                     # Inspect an interrupted or uncertain preparation before any mutation.
                     await environment.reconcile()
-                    await commit(environment.prepare())
+                    await settle_on_cancel(environment.prepare())
                     await self._observe(target, environment, "ready")
                 except BaseException:
                     if environment is not None:
@@ -181,7 +183,7 @@ class EnvironmentManager:
                             target, environment, "unavailable", "preparation_failed"
                         )
                     else:
-                        await commit(
+                        await settle_on_cancel(
                             asyncio.to_thread(
                                 self.store.target_observed,
                                 target.id,
@@ -203,7 +205,9 @@ class EnvironmentManager:
             )
         finally:
             if environment is not None:
-                await commit(self._release(target, environment, selected.retention, acquired))
+                await settle_on_cancel(
+                    self._release(target, environment, selected.retention, acquired)
+                )
 
     @asynccontextmanager
     async def files(self, actor_id: str, run_id: str) -> AsyncIterator[BoundEnvironment]:
@@ -227,7 +231,7 @@ class EnvironmentManager:
                 observed = await environment.reconcile()
                 if selected.kind == "local":
                     # Local has no durable daemon; every operational adapter is fresh.
-                    await commit(environment.prepare())
+                    await settle_on_cancel(environment.prepare())
                 elif observed != "running":
                     await self._observe(
                         target, environment, "unavailable", "files_target_unavailable"
@@ -262,7 +266,9 @@ class EnvironmentManager:
                 yield bound
         finally:
             if environment is not None:
-                await commit(self._release(target, environment, selected.retention, acquired))
+                await settle_on_cancel(
+                    self._release(target, environment, selected.retention, acquired)
+                )
 
     async def _release(
         self,
@@ -306,30 +312,32 @@ class EnvironmentManager:
         target: TargetRecord,
         action: Literal["inspect", "prepare", "stop", "remove"],
     ) -> TargetRecord:
-        target = await asyncio.to_thread(self.store.target_operation, target.id, action)
+        target = await settle_on_cancel(
+            asyncio.to_thread(self.store.target_operation, target.id, action)
+        )
         environment: Environment | None = None
         try:
             environment = await self.factory(target)
             observed = await environment.reconcile()
             status = {"running": "ready", "stopped": "stopped", "absent": "removed"}[observed]
             if action == "prepare":
-                await commit(environment.prepare())
+                await settle_on_cancel(environment.prepare())
                 status = "ready"
             elif action == "stop":
-                await commit(environment.stop())
+                await settle_on_cancel(environment.stop())
                 observed = await environment.reconcile()
                 if observed == "running":
                     raise ClawError("target_unconfirmed", "Provider did not confirm target stop")
                 status = "stopped" if observed == "stopped" else "removed"
             elif action == "remove":
-                await commit(environment.destroy())
+                await settle_on_cancel(environment.destroy())
                 status = "removed"
             return await self._observe(target, environment, status)
         except BaseException:
             if environment is not None:
                 await self._observe(target, environment, "unavailable", "management_failed")
             else:
-                await commit(
+                await settle_on_cancel(
                     asyncio.to_thread(
                         self.store.target_observed,
                         target.id,
@@ -342,4 +350,4 @@ class EnvironmentManager:
             raise
         finally:
             if environment is not None:
-                await commit(environment.close())
+                await settle_on_cancel(environment.close())
