@@ -1,6 +1,7 @@
 """Install and serve the wheel and rebuilt sdist outside the source checkout."""
 
 import argparse
+import json
 import os
 import re
 import socket
@@ -9,7 +10,7 @@ import tempfile
 import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 
 def check_console(base: str) -> None:
@@ -34,13 +35,27 @@ def check_console(base: str) -> None:
             assert response.status == 200
             assert response.headers.get_content_type() != "text/html"
             assert response.read()
-    for path in ("/api/threads", "/assets/missing.js", "/%2e%2e/pyproject.toml"):
+    for path, status in (
+        ("/api/threads", 401),
+        ("/assets/missing.js", 404),
+        ("/%2e%2e/pyproject.toml", 404),
+    ):
         try:
             urlopen(base + path, timeout=5).close()
         except HTTPError as error:
-            assert error.code == 404, (path, error.code)
+            assert error.code == status, (path, error.code)
         else:
-            raise AssertionError(f"Expected 404: {path}")
+            raise AssertionError(f"Expected {status}: {path}")
+
+
+def check_authenticated(base: str, token: str) -> None:
+    headers = {"Authorization": f"Bearer {token}"}
+    with urlopen(Request(base + "/api/instance", headers=headers), timeout=5) as response:
+        instance = json.load(response)
+        assert instance["dispatcher"] == "ready"
+        assert instance["principal"]["admin"] is True
+    with urlopen(Request(base + "/api/threads", headers=headers), timeout=5) as response:
+        assert json.load(response) == []
 
 
 def check_wheel(wheel: Path, root: Path, expected: str) -> None:
@@ -59,15 +74,31 @@ def check_wheel(wheel: Path, root: Path, expected: str) -> None:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
+    workspace = root / "workspace"
+    workspace.mkdir()
+    data = root / "data"
     with (root / "serve.log").open("w+") as log:
         process = subprocess.Popen(
-            [str(executable), "-m", "a13n_claw", "serve", "--port", str(port)],
+            [
+                str(executable),
+                "-m",
+                "a13n_claw",
+                "serve",
+                "--port",
+                str(port),
+                "--data-root",
+                str(data),
+                "--workspace",
+                str(workspace),
+            ],
             cwd=root,
             stdout=log,
             stderr=log,
         )
         try:
-            check_console(f"http://127.0.0.1:{port}")
+            base = f"http://127.0.0.1:{port}"
+            check_console(base)
+            check_authenticated(base, (data / "operator.token").read_text().strip())
         except Exception:
             log.seek(0)
             print(log.read())
@@ -99,7 +130,10 @@ def check(dist: Path, expected: str) -> None:
         rebuilt = root / "from-sdist"
         rebuilt.mkdir()
         check_wheel(next((root / "rebuilt").glob("*.whl")), rebuilt, expected)
-    print("Wheel and rebuilt sdist: version, console, assets, and 404 checks passed.")
+    print(
+        "Wheel and rebuilt sdist: version, authenticated runtime, "
+        "console, assets, and boundary checks passed."
+    )
 
 
 if __name__ == "__main__":

@@ -4,9 +4,11 @@
 
 A fresh, local-first agent runtime project targeting [a13n Harness](https://github.com/converge-ai-labs/agent-foundation), inspired by [YA Claw](https://github.com/Wh1isper/ya-mono/tree/main/packages/ya-claw).
 
-**Current scope: console placeholder, not an agent runtime.** Source builds include a responsive React console and a Python static server. Threads, environments, and settings explain planned capabilities; they do not execute agents, save state, or load credentials. Application APIs, authentication, scheduling, bridges, and Harness integration are not implemented.
+**Current source scope: a single-node runtime and real conversation Console.** Run agents through Harness with durable Threads, inputs, checkpoints, decisions, cancellation/recovery, delegated work, and checkpoint forks. Manage versioned Profiles, model credentials, skills, MCP servers, scoped clients, reusable Local/Docker targets, and retained files through authenticated APIs and the Console. All Threads share one explicitly selected workspace.
 
-## Try the placeholder
+File-memory organization, embedded bridges, and scheduling/automation are later deliveries. Published `0.0.2` remains an informational CLI placeholder; these runtime capabilities require a source build until a runtime release is published.
+
+## Start from source
 
 From a source checkout:
 
@@ -15,10 +17,13 @@ uv sync --locked
 uv run a13n-claw --version
 uv run a13n-claw --help
 make console-build
-make serve
+mkdir -p "$HOME/claw-workspace"
+uv run a13n-claw serve --workspace "$HOME/claw-workspace"
 ```
 
-Open `http://127.0.0.1:8080`. `a13n-claw serve --host 127.0.0.1 --port 8080` provides explicit bind options; no arguments still print help. This preview has no authentication, so keep it on a trusted interface.
+Open `http://127.0.0.1:8080` and connect with the locally generated `~/.a13n-claw/operator.token`. Add a credential, model, environment, and Profile in Settings before creating work. See [Getting started](docs/content/getting-started.md) for the complete setup.
+
+The default workspace is startup cwd; the default data root is `~/.a13n-claw`. They must be separate, non-nested directories. Local shell is host-account execution, not a sandbox. Managed credentials are plaintext in the protected SQLite database. Read [Operations](docs/content/operations.md) before granting access, exposing the listener, or backing up data.
 
 Source builds report `0.0.0`. Release builds derive their version from `release/a13n-claw-vX.Y.Z` tags. The published `0.0.2` package is the earlier informational CLI placeholder and does not include the console.
 
@@ -35,7 +40,7 @@ make artifact-check
 make docs-build
 ```
 
-`console/` is the private runtime frontend; `a13n_claw/` is the Python package; `docs/` remains the independent documentation site. `make console-dev` provides frontend hot reload on port 5173. `make build` compiles console assets into the wheel and sdist; installed serving and wheel rebuilds from the sdist require no Node.js. Docker installs the same wheel.
+`console/` is the private runtime frontend; `a13n_claw/` is the Python package; `docs/` remains the independent documentation site. `make console-dev` provides frontend hot reload on port 5173 and proxies APIs to the backend on port 8080. `make build` compiles console assets into the wheel and sdist; installed serving and wheel rebuilds from the sdist require no Node.js. Docker installs the same wheel.
 
 - [Contributing](CONTRIBUTING.md): setup, validation, and releases.
 - [Development standards](DEVELOPMENT.md): code and test conventions.
@@ -43,7 +48,7 @@ make docs-build
 - [Release setup](docs/content/releasing.md): GitHub environments, secrets, and initial publication.
 - [Specifications](spec/README.md): accepted boundaries, not migration proposals.
 
-The documentation is a static Fumadocs site deployed through **Cloudflare Workers Static Assets**, not Pages. The public site is configured for [a13n-claw.wh1isper.top](https://a13n-claw.wh1isper.top). It becomes available after Cloudflare credentials and the custom domain are configured; no account identifier is embedded in the repository.
+The documentation is a static Fumadocs site deployed through **Cloudflare Workers Static Assets**, not Pages. The public site is configured for [a13n-claw.wh1isper.top](https://a13n-claw.wh1isper.top). It hosts documentation only, not the agent runtime; no account identifier is embedded in the repository.
 
 ## Compatibility and license
 

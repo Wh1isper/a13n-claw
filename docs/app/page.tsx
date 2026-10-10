@@ -28,9 +28,9 @@ export default function Home() {
           </a>
         </div>
         <p className="notice">
-          <strong>Starting small, deliberately.</strong> Source builds include a
-          console preview and static server. Agent execution, persistence, and
-          authentication are not implemented. Published 0.0.2 artifacts remain
+          <strong>Real work, retained context.</strong> Source builds include
+          authenticated agent execution, durable conversations, reusable
+          environments, and a working Console. Published 0.0.2 artifacts remain
           the earlier CLI-only placeholder.
         </p>
       </section>
@@ -38,8 +38,8 @@ export default function Home() {
         <article>
           <h2>One execution foundation</h2>
           <p>
-            Future agent execution will use Harness public APIs, rather than
-            maintaining another agent engine.
+            Agent execution uses Harness public APIs, rather than maintaining
+            another agent engine.
           </p>
         </article>
         <article>
@@ -52,8 +52,8 @@ export default function Home() {
         <article>
           <h2>Ready to build on</h2>
           <p>
-            Reproducible tools, offline tests, documented contracts, and
-            versioned package and image publication.
+            Reproducible tools, local integration tests, documented contracts,
+            and versioned package and image publication.
           </p>
         </article>
       </section>

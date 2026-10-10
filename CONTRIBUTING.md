@@ -14,30 +14,30 @@ The independent `uv.lock`, `console/pnpm-lock.yaml`, and `docs/pnpm-lock.yaml` o
 
 ## Validation
 
-| Command               | Purpose                                       |
-| --------------------- | --------------------------------------------- |
-| `make format`         | Apply pre-commit formatting and file hygiene  |
-| `make lint`           | Check Python and Markdown formatting          |
-| `make typecheck`      | Run Pyright                                   |
-| `make deps-check`     | Check Python dependency declarations          |
-| `make test`           | Run offline tests                             |
-| `make console-check`  | Check console types and formatting            |
-| `make console-build`  | Install and build packaged console assets     |
-| `make console-dev`    | Preview the console with hot reload           |
-| `make serve`          | Serve built console assets on port 8080       |
-| `make docs-check`     | Check documentation formatting and types      |
-| `make docs-serve`     | Preview the documentation                     |
-| `make docs-build`     | Export the static site and check links        |
-| `make build`          | Build console, wheel, and source distribution |
-| `make artifact-check` | Install and HTTP-test wheel and rebuilt sdist |
-| `make workflow-check` | Run actionlint in Docker                      |
-| `make image-check`    | Build and run the non-root placeholder image  |
-| `make check`          | Run static checks                             |
-| `make check-all`      | Run the full CI-equivalent gates              |
+| Command               | Purpose                                        |
+| --------------------- | ---------------------------------------------- |
+| `make format`         | Apply pre-commit formatting and file hygiene   |
+| `make lint`           | Check Python and Markdown formatting           |
+| `make typecheck`      | Run Pyright                                    |
+| `make deps-check`     | Check Python dependency declarations           |
+| `make test`           | Run tests without external service credentials |
+| `make console-check`  | Check console types and formatting             |
+| `make console-build`  | Install and build packaged console assets      |
+| `make console-dev`    | Preview the console with hot reload            |
+| `make serve`          | Serve built console assets on port 8080        |
+| `make docs-check`     | Check documentation formatting and types       |
+| `make docs-serve`     | Preview the documentation                      |
+| `make docs-build`     | Export the static site and check links         |
+| `make build`          | Build console, wheel, and source distribution  |
+| `make artifact-check` | Install and HTTP-test wheel and rebuilt sdist  |
+| `make workflow-check` | Run actionlint in Docker                       |
+| `make image-check`    | Build and run the non-root runtime image       |
+| `make check`          | Run static checks                              |
+| `make check-all`      | Run the full CI-equivalent gates               |
 
 Choose local checks by the changed surface and risk. Do not repeat unaffected checks. CI runs the complete applicable gates for ready pull requests and pushes to `main`. Python checks also run on Windows; package artifacts must be installable without the source checkout. Report unavailable checks honestly.
 
-`make build` owns the source-to-distribution pipeline. A direct `uv build` requires a prior `make console-build`; missing assets fail explicitly. The sdist includes frontend source and prebuilt assets, so rebuilding its wheel requires only Python tooling. Run `make console-install` after console lockfile changes before `make console-dev` or `make console-check`. `make serve` uses the last built assets, not Vite hot reload.
+`make build` owns the source-to-distribution pipeline. A direct `uv build` requires a prior `make console-build`; missing assets fail explicitly. The sdist includes frontend source and prebuilt assets, so rebuilding its wheel requires only Python tooling. Run `make console-install` after console lockfile changes before `make console-dev` or `make console-check`. `make serve` runs the backend with the last built assets, not Vite hot reload. `make console-dev` proxies `/api` to the backend on port 8080. Tests include loopback HTTP provider/MCP and real local shell execution. Opt into Docker lifecycle acceptance with `CLAW_TEST_DOCKER_IMAGE=python:3.13-slim-bookworm uv run pytest tests/test_environments.py`; this creates and removes disposable test-owned containers.
 
 ## Changes and reviews
 
@@ -70,4 +70,4 @@ Source version is always `0.0.0`. Stable tags use `release/a13n-claw-vX.Y.Z`; RC
 
 Only tag a commit on `main` with successful **CI** and **Site** workflow runs. Release automation verifies those successful checks for the tagged commit, prepares the version in an ephemeral checkout, builds the wheel and sdist, publishes to PyPI, publishes the same wheel as a non-root GHCR image, and creates a GitHub Release with generated notes and both Python artifacts. Stable images also update `latest`; RC images do not. Publication is not a deployment of an agent service.
 
-Configure the prerequisites in [Release setup](docs/content/releasing.md) before creating a tag. Do not publish `0.0.1` until the maintainer explicitly confirms configuration and authorizes the release. Re-run failed jobs after checking which channels already published; never reuse a version for changed bytes.
+Configure the prerequisites in [Release setup](docs/content/releasing.md) before creating a tag. Publication requires explicit maintainer authorization for the selected release. Re-run failed jobs after checking which channels already published; never reuse a version for changed bytes.

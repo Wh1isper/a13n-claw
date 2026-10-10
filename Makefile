@@ -20,7 +20,7 @@ typecheck: ## Type-check Python sources
 deps-check: ## Check Python dependency declarations
 	uv run --locked deptry a13n_claw
 
-test: ## Run offline tests
+test: ## Run tests without external service credentials
 	uv run --locked pytest
 
 check: lint typecheck deps-check docs-check console-check ## Run static checks
@@ -33,7 +33,7 @@ console-build: console-install ## Build the console into Python package assets
 	pnpm --dir console build
 console-dev: ## Serve the console with hot reload on loopback port 5173
 	pnpm --dir console dev
-serve: ## Serve built console assets on loopback port 8080
+serve: ## Run the backend and built Console on loopback port 8080
 	uv run --locked a13n-claw serve
 build: console-build ## Build the console, wheel, and source distribution
 	uv build --clear
@@ -52,7 +52,7 @@ docs-build: ## Build the static documentation site and validate links
 workflow-check: ## Validate GitHub Actions with actionlint
 	docker run --rm -v "$(CURDIR):/repo" -w /repo rhysd/actionlint:1.7.12
 
-image-check: build ## Build and smoke-test the non-root placeholder image
+image-check: build ## Build and smoke-test the non-root runtime image
 	docker build -f deploy/docker/Dockerfile -t a13n-claw:check .
 	docker run --rm a13n-claw:check --version
 	uv run --locked python scripts/check_image.py

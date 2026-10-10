@@ -1,6 +1,6 @@
 # Repository Guide
 
-A13n Claw is an independent project targeting a13n Harness. The initial release is a placeholder, not an implemented runtime.
+A13n Claw is an independent, single-node agent runtime built on published a13n Harness primitives. The Python application owns durable work, access, configuration, and environment management; the React Console is its API frontend.
 
 ## Sources of truth
 
@@ -19,9 +19,9 @@ Preserve unrelated work and secrets. An implementation request does not automati
 
 ## Package and release boundaries
 
-Use Python 3.13, uv, `a13n-claw` distribution names, and `a13n_claw` Python imports. This single-package repository keeps `a13n_claw/` directly at its root, without a `src/` wrapper. Keep the source version at `0.0.0`; release preparation injects the canonical tag version into an ephemeral checkout. Future Harness dependencies use bounded published requirements, not paths into a neighboring agent-foundation checkout.
+Use Python 3.13, uv, `a13n-claw` distribution names, and `a13n_claw` Python imports. This single-package repository keeps `a13n_claw/` directly at its root, without a `src/` wrapper. Keep the source version at `0.0.0`; release preparation injects the canonical tag version into an ephemeral checkout. Harness dependencies use bounded published requirements, not paths into a neighboring agent-foundation checkout.
 
-`console/` owns the private React/Vite console; `docs/` owns the separate documentation site. Neither frontend is an npm release. Build console assets into `a13n_claw/static/console/` and include them in both wheel and sdist. Installed serving and sdist rebuilds require no Node.js. The current server is static-only; do not imply application APIs or authentication exist. Generated Python artifacts, static exports, caches, and credentials are not committed. Cloudflare hosts documentation only; it does not host an agent runtime. RC releases must never advance a container `latest` tag.
+`console/` owns the private React/Vite console; `docs/` owns the separate documentation site. Neither frontend is an npm release. Build console assets into `a13n_claw/static/console/` and include them in both wheel and sdist. Installed serving and sdist rebuilds require no Node.js. The server owns authenticated application APIs and durable SQLite state as well as static assets. Memory organization, embedded bridges, and automation remain later deliveries; do not describe them as available. Generated Python artifacts, static exports, caches, and credentials are not committed. Cloudflare hosts documentation only; it does not host an agent runtime. RC releases must never advance a container `latest` tag.
 
 ## Validation
 
