@@ -23,6 +23,8 @@ Provider credentials and privileged integration configuration remain protected b
 
 Instance and Profile defaults initialize Thread selections. Changing a default affects newly resolved work; it does not silently reset an existing Thread's explicit selections. Applying changed defaults to an existing Thread is an explicit operation.
 
+The Instance selects its exclusive conversation mode at startup under [One Thread mode](10-one-thread-mode.md#instance-mode-and-lifetime). This is an Instance-level routing and authority choice, not a per-Channel, Profile, or model-selected override. Main identity, worker ownership, and automatic-processing pause are durable application state, not prompt conventions.
+
 The Instance owns its one workspace root and the memory/automatic-organization settings. Thread or Profile selections cannot introduce another workspace root or another Thread's private memory. A memory-enabled ordinary Run captures Global and its own private scope according to [memory](09-memory.md); environment selection exposes the [shared workspace](05-workspaces-and-environments.md), not a Project selection.
 
 Claw distinguishes editing a shared resource from selecting a different resource. Work that resolves that shared resource after an accepted edit can use the new content; work already accepted retains its captured content. Historical Runs remain explainable even if a resource is renamed or retired.

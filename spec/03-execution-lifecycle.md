@@ -16,7 +16,7 @@ At execution start, Claw selects the Thread's current complete checkpoint under 
 
 ## Conversation Message Admission
 
-Always-steer is the conversation message behavior for both console and bridge ingress, not a per-platform execution mode. The caller need not inspect liveness or choose between submit and steer. Claw serializes the routing decision with Thread ownership:
+Always-steer is the behavior for direct Console/API conversation messages, collaboration messages, and per-Channel bridge input, not a per-platform choice. In [One Thread mode](10-one-thread-mode.md), external messages first enter the durable Inbox; content-light Main attention uses this admission boundary while message bodies are selectively retrieved. An Inbox receipt is not proof of incorporation into a Run. The caller need not inspect liveness or choose between submit and steer. Claw serializes the routing decision with Thread ownership:
 
 | Thread condition                                       | Disposition of a new eligible message                                                  |
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------- |
@@ -78,6 +78,8 @@ sequenceDiagram
 
 A Run is not reported as successfully completed until its required result and continuation boundary are durable. Failure to deliver a notification afterwards cannot change that outcome. A failed or cancelled execution can still leave a valid checkpoint or changed external data; Claw reports those facts rather than implying rollback.
 
+In One Thread mode, a terminal Main Run does not settle the Inbox. Claw checks durable actionable backlog and admits eligible successor work under [wake and drain](10-one-thread-mode.md#wake-and-drain), including after restart if the Run-end notification never ran. This creates or reuses work without rewriting the completed Run or bypassing a decision or recovery barrier.
+
 ## Human Decisions
 
 A Pending decision names the exact waiting work, requested action, and continuation to which an answer applies. Claw saves the complete waiting boundary before presenting it as resumable. A question and a tool approval are distinct requests; an arbitrary new chat message is not an answer to either.
@@ -101,6 +103,8 @@ Cancellation records intent before reporting a final outcome. Queued work can be
 Delegated work uses a distinct Thread and Run with a recorded parent relationship and explicitly bounded authority. Inline execution does not create a new independent work owner; background execution does. Child progress and completion are visible without merging their history into the parent Thread.
 
 A parent that waits for a child can continue only from the child's saved outcome or an explicit failure condition, not merely a delegation receipt. Child-result delivery and parent continuation are tracked separately so a retry cannot append the result twice. Stopping a parent does not prove every child stopped; the requested propagation policy and actual child outcomes remain visible.
+
+[Persistent workers](10-one-thread-mode.md#persistent-worker-collaboration) use a separate Thread-lifetime ownership relation. They remain addressable across Main Runs and can receive direct human input. Run-scoped delegation receipts and child-result delivery do not by themselves establish that relation or confer worker collaboration authority.
 
 ## Invariants
 
