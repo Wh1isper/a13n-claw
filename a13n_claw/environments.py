@@ -14,11 +14,9 @@ from typing import Literal
 from a13n_harness.environment import (
     FILE_ACTIONS,
     FILE_READ_ACTIONS,
-    Environment,
     EnvironmentAction,
     EnvironmentMount,
     EnvironmentPermissionSet,
-    EnvironmentState,
 )
 from a13n_harness.environment.advanced import BoundEnvironment
 from a13n_harness.environment.coordinator import create_environment_runtime
@@ -28,19 +26,18 @@ from a13n_harness.providers.environment.direct_local.configuration import (
     DirectLocalRootConfiguration,
     DirectLocalShellProfile,
 )
-from a13n_harness.providers.environment.direct_local.provider import DIRECT_LOCAL
 from a13n_harness.providers.environment.docker.configuration import (
     DockerEnvironmentConfiguration,
     DockerMountConfiguration,
 )
-from a13n_harness.providers.environment.docker.provider import DOCKER
 
 from a13n_claw.async_utils import settle_on_cancel
 from a13n_claw.domain import ClawError, EnvironmentDefinition, RunRecord, TargetRecord, new_id
 from a13n_claw.storage import Store
+from a13n_claw.targets import ManagedTarget, create_target
 
 logger = logging.getLogger("a13n_claw.environments")
-AdapterFactory = Callable[[TargetRecord], Awaitable[Environment]]
+TargetFactory = Callable[[TargetRecord], Awaitable[ManagedTarget]]
 
 
 def local_configuration(workspace: str, shell: bool) -> DirectLocalEnvironmentConfiguration:
@@ -84,7 +81,11 @@ def target_definition(run: RunRecord) -> dict:
                 ),
             ),
         )
-    return {"kind": selected.kind, "configuration": recipe.model_dump(mode="json")}
+    configuration = recipe.model_dump(mode="json")
+    if selected.kind == "docker":
+        # Preserve existing generations; image pulling is now Claw lifecycle policy.
+        configuration["pull_policy"] = "if_missing"
+    return {"kind": selected.kind, "configuration": configuration}
 
 
 def permissions(selected: EnvironmentDefinition) -> EnvironmentPermissionSet:
@@ -106,28 +107,8 @@ def permissions(selected: EnvironmentDefinition) -> EnvironmentPermissionSet:
     return EnvironmentPermissionSet(operations=frozenset(operations))
 
 
-async def create_adapter(target: TargetRecord) -> Environment:
-    """Only the installed provider catalog can construct operational access."""
-    if target.definition["kind"] == "local":
-        environment = await DIRECT_LOCAL.create(
-            DirectLocalEnvironmentConfiguration.model_validate(target.definition["configuration"]),
-            environment_id=target.id,
-        )
-    else:
-        environment = await DOCKER.create(
-            DockerEnvironmentConfiguration.model_validate(target.definition["configuration"]),
-            environment_id=target.id,
-            state=EnvironmentState.model_validate(target.provider_state)
-            if target.provider_state
-            else None,
-        )
-    # Only the manager can replace backing targets, never a tool in an active Run.
-    environment.recover_on_unavailable = False
-    return environment
-
-
 class EnvironmentManager:
-    def __init__(self, store: Store, factory: AdapterFactory = create_adapter):
+    def __init__(self, store: Store, factory: TargetFactory = create_target):
         self.store = store
         self.factory = factory
         self.locks: dict[str, asyncio.Lock] = {}
@@ -139,11 +120,11 @@ class EnvironmentManager:
     async def _observe(
         self,
         target: TargetRecord,
-        environment: Environment,
+        environment: ManagedTarget,
         status: str,
         error: str | None = None,
     ) -> TargetRecord:
-        state = environment.dump_state()
+        state = environment.state
         return await settle_on_cancel(
             asyncio.to_thread(
                 self.store.target_observed,
@@ -163,7 +144,7 @@ class EnvironmentManager:
         target = await asyncio.to_thread(
             self.store.target_for, run.id, run.owner, target_definition(run)
         )
-        environment: Environment | None = None
+        environment: ManagedTarget | None = None
         acquired = False
         try:
             async with self._lock(target.id):
@@ -173,9 +154,15 @@ class EnvironmentManager:
                 )
                 try:
                     environment = await self.factory(target)
-                    # Inspect an interrupted or uncertain preparation before any mutation.
-                    await environment.reconcile()
-                    await settle_on_cancel(environment.prepare())
+                    if self.users.get(target.id):
+                        # Another file reader/executor pins the backing identity. Validate
+                        # the saved selection only; do not reconcile to a replacement.
+                        async with await environment.source().connector.open():
+                            pass
+                    else:
+                        # Inspect an interrupted preparation before any lifecycle mutation.
+                        await settle_on_cancel(environment.reconcile())
+                        await settle_on_cancel(environment.prepare())
                     await self._observe(target, environment, "ready")
                 except BaseException:
                     if environment is not None:
@@ -197,7 +184,7 @@ class EnvironmentManager:
                 self.users[target.id] = self.users.get(target.id, 0) + 1
                 acquired = True
             yield EnvironmentMount(
-                environment=environment,
+                source=environment.source(),
                 permission_ceiling=permissions(selected),
                 mount_path="/workspace",
                 working_directory="/workspace",
@@ -205,9 +192,7 @@ class EnvironmentManager:
             )
         finally:
             if environment is not None:
-                await settle_on_cancel(
-                    self._release(target, environment, selected.retention, acquired)
-                )
+                await settle_on_cancel(self._release(target, selected.retention, acquired))
 
     @asynccontextmanager
     async def files(self, actor_id: str, run_id: str) -> AsyncIterator[BoundEnvironment]:
@@ -216,7 +201,7 @@ class EnvironmentManager:
         definition = target_definition(run)
         target = await asyncio.to_thread(self.store.files_target, actor_id, run_id, definition)
         selected = EnvironmentDefinition.model_validate(run.composition.environment.content)
-        environment: Environment | None = None
+        environment: ManagedTarget | None = None
         acquired = False
         try:
             async with self._lock(target.id):
@@ -228,21 +213,21 @@ class EnvironmentManager:
                         "target_unavailable", "Prepare the selected target before browsing files"
                     )
                 environment = await self.factory(target)
-                observed = await environment.reconcile()
-                if selected.kind == "local":
-                    # Local has no durable daemon; every operational adapter is fresh.
-                    await settle_on_cancel(environment.prepare())
-                elif observed != "running":
+                try:
+                    # File reads pin the saved selection, without lifecycle/name recovery.
+                    async with await environment.source().connector.open():
+                        pass
+                except BaseException:
                     await self._observe(
                         target, environment, "unavailable", "files_target_unavailable"
                     )
-                    raise ClawError("target_unavailable", "Selected target is not running")
+                    raise
                 self.users[target.id] = self.users.get(target.id, 0) + 1
                 acquired = True
             runtime = create_environment_runtime(
                 mounts={
                     "workspace": EnvironmentMount(
-                        environment=environment,
+                        source=environment.source(),
                         permission_ceiling=EnvironmentPermissionSet(operations=FILE_READ_ACTIONS),
                         mount_path="/workspace",
                         working_directory="/workspace",
@@ -266,26 +251,17 @@ class EnvironmentManager:
                 yield bound
         finally:
             if environment is not None:
-                await settle_on_cancel(
-                    self._release(target, environment, selected.retention, acquired)
-                )
+                await settle_on_cancel(self._release(target, selected.retention, acquired))
 
     async def _release(
         self,
         target: TargetRecord,
-        environment: Environment,
         retention: str,
         acquired: bool,
     ) -> None:
         async with self._lock(target.id):
-            try:
-                await environment.close()
-            except Exception:
-                await self._observe(target, environment, "unavailable", "access_cleanup_failed")
-                logger.warning("Target access cleanup failed: %s", target.id)
-            finally:
-                if acquired:
-                    self.users[target.id] -= 1
+            if acquired:
+                self.users[target.id] -= 1
             if acquired and not self.users.get(target.id) and retention == "stop":
                 try:
                     await self._manage_locked(target, "stop")
@@ -315,17 +291,20 @@ class EnvironmentManager:
         target = await settle_on_cancel(
             asyncio.to_thread(self.store.target_operation, target.id, action)
         )
-        environment: Environment | None = None
+        environment: ManagedTarget | None = None
         try:
             environment = await self.factory(target)
-            observed = await environment.reconcile()
+            observed = await settle_on_cancel(environment.reconcile())
             status = {"running": "ready", "stopped": "stopped", "absent": "removed"}[observed]
-            if action == "prepare":
+            if action == "inspect" and observed == "running":
+                async with await environment.source().connector.open():
+                    pass
+            elif action == "prepare":
                 await settle_on_cancel(environment.prepare())
                 status = "ready"
             elif action == "stop":
                 await settle_on_cancel(environment.stop())
-                observed = await environment.reconcile()
+                observed = await settle_on_cancel(environment.reconcile())
                 if observed == "running":
                     raise ClawError("target_unconfirmed", "Provider did not confirm target stop")
                 status = "stopped" if observed == "stopped" else "removed"
@@ -348,6 +327,3 @@ class EnvironmentManager:
                     )
                 )
             raise
-        finally:
-            if environment is not None:
-                await settle_on_cancel(environment.close())
