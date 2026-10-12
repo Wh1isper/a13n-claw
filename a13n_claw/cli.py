@@ -60,23 +60,41 @@ def parser() -> argparse.ArgumentParser:
         node = commands.add_parser(name, parents=[common], help=help_text)
         return node.add_subparsers(dest="action", required=True)
 
-    configuration = group("config", "Review, validate, apply and export YAML configuration")
-    for action in ("path", "init", "show", "validate", "apply", "export"):
+    configuration = group("config", "Edit, validate, save and reload file-first configuration")
+    for action in (
+        "path",
+        "init",
+        "show",
+        "validate",
+        "status",
+        "save",
+        "reload",
+        "apply",
+        "export",
+        "migrate",
+    ):
         node = configuration.add_parser(action, parents=[common])
-        if action in {"apply", "export"}:
+        if action in {"reload", "apply", "export", "status", "save", "migrate"}:
             node.add_argument(
                 "--offline",
                 action="store_true",
                 help="Require exclusive ownership of a stopped Instance",
             )
-        if action == "apply":
+        if action in {"reload", "apply", "save"}:
             node.add_argument(
-                "--request-id", help="Retry identity; defaults to document fingerprint"
+                "--revision",
+                required=action == "save",
+                help="Expected file revision from config status",
             )
+        if action == "save":
+            node.add_argument(
+                "--file", type=Path, required=True, help="Candidate YAML to save without loading"
+            )
+        if action in {"reload", "apply"}:
             node.add_argument(
                 "--dry-run",
                 action="store_true",
-                help="Validate against accepted state without publishing",
+                help="Preview the file against loaded state without loading",
             )
         if action == "export":
             node.add_argument(
@@ -165,7 +183,9 @@ def parser() -> argparse.ArgumentParser:
             dependency.add_argument("--dependency-run")
             dependency.add_argument("--due-at")
             dependency.add_argument("--human-key")
-    channels = group("channels", "Inspect Channel bindings (edit through config export/apply)")
+    channels = group(
+        "channels", "Inspect Channel bindings (edit the configuration file, then reload)"
+    )
     channels.add_parser("list", parents=[common])
     deliveries = group("deliveries", "Inspect sends and reconcile unknown outcomes")
     deliveries.add_parser("list", parents=[common])
@@ -201,7 +221,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     try:
         # Path/init must work even when the selected document is not yet valid.
-        if args.command == "config" and args.action in {"path", "init"}:
+        if args.command == "config" and (
+            args.action in {"path", "init"}
+            or (
+                args.offline
+                and (args.data_root or os.environ.get("CLAW_DATA_ROOT"))
+                and args.action in {"status", "export", "save", "migrate"}
+            )
+            or (
+                not args.offline
+                and (args.url or os.environ.get("CLAW_URL"))
+                and args.action in {"status", "export", "save", "reload", "apply"}
+            )
+        ):
             from a13n_claw.configuration import Configuration
 
             config = Configuration()
@@ -225,6 +257,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
             app = create_app(
                 data_root=data_root(args, config),
+                config_path=config_path(args),
                 workspace=workspace,
                 concurrency=args.concurrency
                 if args.concurrency is not None

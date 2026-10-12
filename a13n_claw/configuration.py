@@ -1,13 +1,14 @@
-"""Reviewable configuration documents and atomic publication to application state."""
+"""File configuration values and their transactional execution projection."""
 
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Literal
 
 import yaml
-from pydantic import Field, JsonValue, model_validator
+from pydantic import Field, JsonValue, ValidationError, model_validator
 
 from a13n_claw.attention import ChannelPolicy, ConversationMode
 from a13n_claw.domain import (
@@ -22,7 +23,6 @@ from a13n_claw.domain import (
     SkillDefinition,
     Value,
     canonical,
-    digest,
 )
 from a13n_claw.messaging import Messaging
 from a13n_claw.storage import Store
@@ -37,7 +37,7 @@ GROUPS = {
 
 
 class ServerSettings(Value):
-    """Local launch settings, never published by configuration apply."""
+    """Launch settings take effect at the next startup, not during reload."""
 
     host: str = "127.0.0.1"
     port: int = Field(default=8080, ge=1, le=65535)
@@ -58,58 +58,43 @@ class Configuration(Value):
     mcp: dict[ResourceId, MCPDefinition] = Field(default_factory=dict)
     defaults: InstanceDefaults | None = None
     channels: dict[ResourceId, ChannelPolicy] = Field(default_factory=dict)
-    versions: dict[str, Annotated[int, Field(ge=0)]] = Field(default_factory=dict)
     retired: tuple[str, ...] = ()
 
-    def changes(self) -> list[ResourceChange]:
+    def definitions(self) -> dict[tuple[str, str], dict[str, JsonValue]]:
         data = self.model_dump(mode="json")
-        result = []
+        result = {}
         for group, kind in GROUPS.items():
             entries = data[group]
             assert isinstance(entries, dict)
             for identity, content in entries.items():
                 assert isinstance(content, dict)
-                key = f"{kind}/{identity}"
-                result.append(
-                    ResourceChange(
-                        kind=kind,
-                        id=identity,
-                        content=content,
-                        expected_version=self.versions.get(key, 0),
-                        retired=key in self.retired,
-                    )
-                )
+                result[kind, identity] = content
         if self.defaults is not None:
-            result.append(
-                ResourceChange(
-                    kind="defaults",
-                    id="instance",
-                    content=self.defaults.model_dump(mode="json"),
-                    expected_version=self.versions.get("defaults/instance", 0),
-                    retired="defaults/instance" in self.retired,
-                )
-            )
+            result["defaults", "instance"] = self.defaults.model_dump(mode="json")
         return result
 
     @model_validator(mode="after")
-    def version_keys(self) -> Configuration:
-        resources = {f"{item.kind}/{item.id}" for item in self.changes()}
-        keys = resources | {f"channel/{identity}" for identity in self.channels}
-        if self.versions.keys() - keys or set(self.retired) - resources:
-            raise ValueError("Version and retirement keys must name definitions in this document")
+    def retirement_keys(self) -> Configuration:
+        if set(self.retired) - {f"{kind}/{identity}" for kind, identity in self.definitions()}:
+            raise ValueError("Retirement keys must name definitions in this document")
         return self
 
-    def publication(self) -> dict[str, JsonValue]:
-        return self.model_dump(mode="json", exclude={"server"})
+
+class ConfigurationWrite(Value):
+    expected_revision: str = Field(min_length=1, max_length=100)
+    text: str = Field(max_length=2_000_000)
 
 
-class ConfigurationApply(Value):
-    request_id: str = Field(min_length=1, max_length=200)
-    configuration: Configuration
+class ConfigurationReload(Value):
+    expected_revision: str = Field(min_length=1, max_length=100)
+
+
+class ConfigurationPreview(Value):
+    text: str = Field(max_length=2_000_000)
 
 
 class UniqueLoader(yaml.SafeLoader):
-    """Reject duplicate keys instead of silently accepting a different configuration."""
+    """Reject duplicate keys rather than silently accepting different configuration."""
 
     def construct_mapping(self, node, deep=False):
         self.flatten_mapping(node)
@@ -117,21 +102,35 @@ class UniqueLoader(yaml.SafeLoader):
         for key_node, value_node in node.value:
             key = self.construct_object(key_node, deep=deep)
             if not isinstance(key, str) or key in result:
-                raise ClawError("configuration_yaml", "YAML keys must be unique strings", 422)
+                raise ClawError(
+                    "configuration_yaml",
+                    f"YAML keys must be unique strings (line {key_node.start_mark.line + 1})",
+                    422,
+                )
             result[key] = self.construct_object(value_node, deep=deep)
         return result
 
 
-def read_yaml(path: Path) -> object:
+def parse_yaml(text: str) -> object:
     try:
-        return yaml.load(path.read_text(encoding="utf-8"), Loader=UniqueLoader)
-    except (yaml.YAMLError, UnicodeError, RecursionError) as error:
-        # Parser exceptions may include submitted secrets and source lines.
-        raise ClawError("configuration_yaml", "Invalid UTF-8 YAML document", 422) from error
+        return yaml.load(text, Loader=UniqueLoader)
+    except (yaml.YAMLError, RecursionError) as error:
+        # Do not include source lines or submitted values in diagnostics.
+        raise ClawError("configuration_yaml", "Invalid YAML document", 422) from error
+
+
+def read_yaml(path: Path) -> object:
+    return parse_yaml(path.read_text(encoding="utf-8"))
+
+
+def parse_configuration(text: str) -> Configuration:
+    if len(text.encode("utf-8")) > 2_000_000:
+        raise ClawError("configuration_size", "Configuration exceeds 2 MB", 422)
+    return Configuration.model_validate(parse_yaml(text))
 
 
 def load_configuration(path: Path) -> Configuration:
-    return Configuration.model_validate(read_yaml(path))
+    return parse_configuration(path.read_text(encoding="utf-8"))
 
 
 def dump_configuration(configuration: Configuration) -> str:
@@ -139,93 +138,139 @@ def dump_configuration(configuration: Configuration) -> str:
     return yaml.safe_dump({"format": 1, **data}, sort_keys=False, allow_unicode=True)
 
 
+def configuration_issues(error: ClawError | ValidationError) -> list[JsonValue]:
+    if isinstance(error, ClawError):
+        return [{"path": "configuration", "code": error.code, "message": str(error)}]
+    return [
+        {
+            "path": ".".join(map(str, item["loc"])),
+            "code": item["type"],
+            "message": "Check this field",
+        }
+        for item in error.errors(include_input=False, include_context=False, include_url=False)
+    ]
+
+
 def export_configuration(store: Store, actor_id: str) -> Configuration:
-    # Resources and Channel versions must belong to one coherent read.
+    """Explicit migration of a pre-file Instance; ordinary exports read the file."""
     with store._transaction() as db:
         store._principal(db, actor_id).require("admin")
         data: dict = {group: {} for group in GROUPS}
-        data.update(versions={}, retired=[], channels={})
+        data.update(retired=[], channels={})
         groups = {kind: group for group, kind in GROUPS.items()}
         for row in db.execute("SELECT kind,id FROM resources ORDER BY kind,id").fetchall():
             resource = store._resource(db, row[0], row[1])
-            key = f"{resource.kind}/{resource.id}"
             if resource.kind == "defaults":
                 data["defaults"] = resource.content
             else:
                 data[groups[resource.kind]][resource.id] = resource.content
-            data["versions"][key] = resource.version
             if resource.retired:
-                data["retired"].append(key)
+                data["retired"].append(f"{resource.kind}/{resource.id}")
         for row in db.execute("SELECT * FROM channels WHERE active=1 ORDER BY id"):
             data["channels"][row["id"]] = json.loads(row["policy"])
-            data["versions"][f"channel/{row['id']}"] = row["version"]
         return Configuration.model_validate(data)
 
 
-def apply_configuration(
+def project_configuration(
+    store: Store,
+    db: sqlite3.Connection,
+    actor_id: str,
+    document: Configuration,
+) -> list[JsonValue]:
+    """Load a complete desired catalog. The caller owns the transaction/rollback."""
+    actor = store._principal(db, actor_id)
+    actor.require("admin")
+    desired = document.definitions()
+    rows = db.execute("SELECT kind,id FROM resources ORDER BY kind,id").fetchall()
+    current = {(row[0], row[1]): store._resource(db, row[0], row[1]) for row in rows}
+    changes = []
+    summary: list[JsonValue] = []
+    for (kind, identity), content in desired.items():
+        prior = current.get((kind, identity))
+        retired = f"{kind}/{identity}" in document.retired
+        if prior and prior.content == content and prior.retired == retired:
+            continue
+        changes.append(
+            ResourceChange(
+                kind=kind,
+                id=identity,
+                content=content,
+                expected_version=prior.version if prior else 0,
+                retired=retired,
+            )
+        )
+        summary.append(
+            {"resource": f"{kind}/{identity}", "action": "update" if prior else "create"}
+        )
+    for (kind, identity), prior in current.items():
+        if (kind, identity) not in desired and not prior.retired:
+            changes.append(
+                ResourceChange(
+                    kind=kind,
+                    id=identity,
+                    content=prior.content,
+                    expected_version=prior.version,
+                    retired=True,
+                )
+            )
+            summary.append({"resource": f"{kind}/{identity}", "action": "retire"})
+    store._import_resources(db, actor_id, changes)
+    for row in db.execute("SELECT id FROM resources WHERE kind='profile' AND retired=0").fetchall():
+        store._capture(db, actor, row[0], "")
+    if (
+        document.defaults
+        and "defaults/instance" not in document.retired
+        and document.defaults.profile_id
+    ):
+        store._capture(db, actor, document.defaults.profile_id, "")
+    messaging = Messaging(store)
+    for identity, policy in document.channels.items():
+        if policy.enabled and policy.profile_id:
+            store._capture(db, actor, policy.profile_id, "")
+        prior = db.execute("SELECT * FROM channels WHERE id=?", (identity,)).fetchone()
+        if (
+            prior
+            and prior["active"]
+            and json.loads(prior["policy"]) == policy.model_dump(mode="json")
+        ):
+            continue
+        messaging._save_channel(db, actor_id, identity, policy, prior["version"] if prior else 0)
+        summary.append(
+            {"resource": f"channel/{identity}", "action": "update" if prior else "create"}
+        )
+    for row in db.execute("SELECT * FROM channels WHERE active=1").fetchall():
+        if row["id"] not in document.channels:
+            policy = ChannelPolicy.model_validate_json(row["policy"])
+            if policy.enabled:
+                disabled = policy.model_copy(update={"enabled": False})
+                db.execute(
+                    "UPDATE channels SET policy=?,version=version+1 WHERE id=?",
+                    (disabled.model_dump_json(), row["id"]),
+                )
+                store._audit(db, "channel_disabled", row["id"], {"actor": actor_id})
+                summary.append({"resource": f"channel/{row['id']}", "action": "disable"})
+    return summary
+
+
+def load_projection(
     store: Store,
     actor_id: str,
-    request: ConfigurationApply,
+    document: Configuration,
+    path: Path,
+    revision: str,
     *,
     validate_only: bool = False,
-) -> dict[str, JsonValue]:
-    document = request.configuration
-    fingerprint = digest(document.publication())
+) -> list[JsonValue]:
     with store._transaction() as db:
-        actor = store._principal(db, actor_id)
-        actor.require("admin")
-        prior = db.execute(
-            "SELECT fingerprint,result FROM configuration_applications "
-            "WHERE actor_id=? AND request_id=?",
-            (actor_id, request.request_id),
-        ).fetchone()
-        if prior and not validate_only:
-            if prior["fingerprint"] != fingerprint:
-                raise ClawError("request_conflict", "Configuration request identity was reused")
-            return json.loads(prior["result"])
-        # Roll back a successful dry run as well as any failed validation.
         db.execute("SAVEPOINT configuration_validation")
-        resources = store._import_resources(db, actor_id, document.changes())
-        for row in db.execute(
-            "SELECT id FROM resources WHERE kind='profile' AND retired=0"
-        ).fetchall():
-            store._capture(db, actor, row[0], "")
-        defaults = db.execute(
-            "SELECT content FROM resources WHERE kind='defaults' AND id='instance' AND retired=0"
-        ).fetchone()
-        if defaults:
-            profile_id = InstanceDefaults.model_validate_json(defaults[0]).profile_id
-            if profile_id:
-                store._capture(db, actor, profile_id, "")
-        messaging = Messaging(store)
-        channels = [
-            messaging._save_channel(
-                db,
-                actor_id,
-                identity,
-                policy,
-                document.versions.get(f"channel/{identity}", 0),
-            )
-            for identity, policy in document.channels.items()
-        ]
-        result: dict[str, JsonValue] = {
-            "request_id": request.request_id,
-            "versions": {f"{item.kind}/{item.id}": item.version for item in resources}
-            | {f"channel/{item['id']}": item["version"] for item in channels},
-            "validated": True,
-            "applied": not validate_only,
-        }
+        changes = project_configuration(store, db, actor_id, document)
         if validate_only:
             db.execute("ROLLBACK TO configuration_validation")
         else:
             db.execute(
-                "INSERT INTO configuration_applications VALUES (?,?,?,?)",
-                (
-                    actor_id,
-                    request.request_id,
-                    fingerprint,
-                    canonical(result),
-                ),
+                "INSERT INTO configuration_state VALUES (1,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+                "path=excluded.path,revision=excluded.revision,document=excluded.document",
+                (str(path), revision, canonical(document.model_dump(mode="json"))),
             )
         db.execute("RELEASE configuration_validation")
-        return result
+        return changes

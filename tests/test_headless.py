@@ -14,10 +14,7 @@ from a13n_claw.app import create_app
 from a13n_claw.cli import main
 from a13n_claw.configuration import (
     Configuration,
-    ConfigurationApply,
-    apply_configuration,
     dump_configuration,
-    export_configuration,
     load_configuration,
 )
 from a13n_claw.domain import ClawError
@@ -31,88 +28,6 @@ def configuration():
     data["models"]["primary"]["model_name"] = "fixture"
     data["models"]["primary"]["credential_env"] = "TEST_KEY"
     return Configuration.model_validate(data)
-
-
-def test_document_export_edit_conflict_and_retry(runtime_store):
-    store = runtime_store
-    original = export_configuration(store, "operator")
-    edited = Configuration.model_validate(
-        original.model_dump(mode="json")
-        | {
-            "environments": {"local": {"kind": "local", "files": "write"}},
-        }
-    )
-    request = ConfigurationApply(request_id="first", configuration=edited)
-    dry = apply_configuration(store, "operator", request, validate_only=True)
-    assert not dry["applied"] and export_configuration(store, "operator") == original
-    saved = apply_configuration(store, "operator", request)
-    assert saved["applied"]
-    assert apply_configuration(Store(store.path), "operator", request) == saved
-    assert export_configuration(store, "operator").versions["environment/local"] == 2
-    with pytest.raises(ClawError, match="Resource changed"):
-        apply_configuration(store, "operator", request.model_copy(update={"request_id": "other"}))
-    with pytest.raises(ClawError, match="identity was reused"):
-        apply_configuration(
-            store, "operator", request.model_copy(update={"configuration": original})
-        )
-
-
-def test_publication_rolls_back_resources_channels_and_receipt(runtime_store):
-    store = runtime_store
-    original = export_configuration(store, "operator")
-    data = original.model_dump(mode="json")
-    data["channels"] = {
-        "chat": {
-            "platform": "http",
-            "account": "test",
-            "channel": "chat",
-            "ingress_actor_id": "missing",
-            "allowed_senders": ["human"],
-        }
-    }
-    request = ConfigurationApply(
-        request_id="invalid", configuration=Configuration.model_validate(data)
-    )
-    with pytest.raises(ClawError):
-        apply_configuration(store, "operator", request)
-    assert export_configuration(store, "operator") == original
-    with store._connection() as db:
-        assert db.execute("SELECT COUNT(*) FROM configuration_applications").fetchone()[0] == 0
-    data["channels"]["chat"]["ingress_actor_id"] = "operator"
-    result = apply_configuration(
-        store,
-        "operator",
-        request.model_copy(update={"configuration": Configuration.model_validate(data)}),
-    )
-    assert result["versions"]["channel/chat"] == 1
-    assert export_configuration(store, "operator").channels["chat"].channel == "chat"
-
-
-def test_publication_checks_references_and_preserves_captured_resources(runtime_store):
-    store = runtime_store
-    original = export_configuration(store, "operator")
-    data = original.model_dump(mode="json")
-    data["profiles"]["default"]["model_id"] = "missing"
-    with pytest.raises(ClawError, match="Missing model"):
-        apply_configuration(
-            store,
-            "operator",
-            ConfigurationApply(
-                request_id="missing", configuration=Configuration.model_validate(data)
-            ),
-        )
-    assert export_configuration(store, "operator") == original
-    data = original.model_dump(mode="json")
-    data["retired"] = ["model/model"]
-    with pytest.raises(ClawError, match="retired"):
-        apply_configuration(
-            store,
-            "operator",
-            ConfigurationApply(
-                request_id="retired", configuration=Configuration.model_validate(data)
-            ),
-        )
-    assert export_configuration(store, "operator") == original
 
 
 def test_roundtrip_yaml_and_ambiguous_keys(tmp_path):
@@ -145,7 +60,7 @@ def test_offline_cli_bootstrap_secret_export_and_lease(tmp_path, monkeypatch, ca
     assert first.coordination.view("operator")["main_id"] == main_id
     exported = tmp_path / "export.yaml"
     main([*common, "config", "export", "--offline", "--output", str(exported)])
-    assert load_configuration(exported).versions["model/primary"] == 1
+    assert load_configuration(exported).models["primary"].provider == "openai"
     assert "fixture-secret" not in exported.read_text() + capsys.readouterr().out
     with InstanceLease(root), pytest.raises(SystemExit) as error:
         main([*common, "config", "apply", "--offline"])
@@ -175,88 +90,6 @@ def test_default_config_initialization_keeps_data_private(tmp_path, monkeypatch)
     assert Store(root / "claw.sqlite3").resolve_credential("OPENAI_API_KEY") == (
         "private-credential-fixture"
     )
-
-
-def test_retired_defaults_export_and_publication(runtime_store, tmp_path):
-    store = runtime_store
-    store.save_resource(
-        "operator", "defaults", "instance", {"profile_id": "missing"}, 0, retired=True
-    )
-    exported = export_configuration(store, "operator")
-    assert "defaults/instance" in exported.retired
-    path = tmp_path / "retired.yaml"
-    path.write_text(dump_configuration(exported), encoding="utf-8")
-    apply_configuration(
-        store,
-        "operator",
-        ConfigurationApply(request_id="retired-defaults", configuration=load_configuration(path)),
-    )
-    retained = export_configuration(store, "operator")
-    assert retained.defaults.profile_id == "missing"
-    assert "defaults/instance" in retained.retired
-    assert retained.versions["defaults/instance"] == 2
-
-
-def test_receipt_failure_rolls_back_entire_publication(runtime_store):
-    store = runtime_store
-    original = export_configuration(store, "operator")
-    data = original.model_dump(mode="json")
-    data["channels"] = {
-        "chat": {
-            "platform": "http",
-            "account": "test",
-            "channel": "chat",
-            "ingress_actor_id": "operator",
-            "allowed_senders": ["human"],
-        }
-    }
-    with store._transaction() as db:
-        audit_count = db.execute("SELECT COUNT(*) FROM audit").fetchone()[0]
-        db.execute(
-            "CREATE TRIGGER fail_configuration_receipt BEFORE INSERT ON configuration_applications "
-            "BEGIN SELECT RAISE(ABORT, 'fixture receipt failure'); END"
-        )
-    request = ConfigurationApply(
-        request_id="receipt", configuration=Configuration.model_validate(data)
-    )
-    with pytest.raises(sqlite3.IntegrityError, match="fixture receipt failure"):
-        apply_configuration(store, "operator", request)
-    assert export_configuration(store, "operator") == original
-    with store._transaction() as db:
-        assert db.execute("SELECT COUNT(*) FROM audit").fetchone()[0] == audit_count
-        assert db.execute("SELECT COUNT(*) FROM configuration_applications").fetchone()[0] == 0
-        db.execute("DROP TRIGGER fail_configuration_receipt")
-    assert apply_configuration(store, "operator", request)["applied"]
-
-
-def test_configuration_requires_current_admin_even_for_receipt_replay(console, tmp_path):
-    from a13n_claw.domain import Principal
-    from a13n_claw.instance import token_hash
-
-    with TestClient(create_app(console=False)) as api:
-        authorize(api, tmp_path)
-        store = Store(tmp_path / "data" / "claw.sqlite3")
-        store.set_principal("operator", Principal(id="editor", admin=True), token_hash("editor"))
-        headers = {"Authorization": "Bearer editor"}
-        request = ConfigurationApply(request_id="access", configuration=configuration())
-        body = request.model_dump(mode="json")
-        assert api.post("/api/configuration/apply", json=body, headers=headers).status_code == 200
-        assert api.get("/api/configuration", headers=headers).status_code == 200
-        for update in ({"admin": False}, {"enabled": False}):
-            actor = store.principal("editor").model_copy(update=update)
-            store.set_principal("operator", actor, None)
-            assert api.get("/api/configuration", headers=headers).status_code == 403
-            for validate_only in (False, True):
-                assert (
-                    api.post(
-                        "/api/configuration/apply",
-                        json=body,
-                        headers=headers,
-                        params={"validate_only": validate_only},
-                    ).status_code
-                    == 403
-                )
-        assert export_configuration(store, "operator").versions["model/primary"] == 1
 
 
 def test_cli_timeout_never_retries_or_falls_back_offline(tmp_path, monkeypatch, capsys):
@@ -304,7 +137,7 @@ def test_v3_migration_preserves_mode_and_threads(runtime_store):
     store = runtime_store
     thread = store.create_thread("operator", "Retained", "default")
     with sqlite3.connect(store.path) as db:
-        db.execute("DROP TABLE configuration_applications")
+        db.execute("DROP TABLE configuration_state")
         db.execute("PRAGMA user_version=3")
     upgraded = Store(store.path, initial_mode="one_thread")
     assert upgraded.coordination.mode() == "per_channel"
@@ -324,7 +157,7 @@ def test_cli_error_does_not_print_secret_values(tmp_path, capsys):
     assert "private-value" not in capsys.readouterr().err
 
 
-def test_config_launch_paths_precedence_and_no_implicit_apply(console, tmp_path, monkeypatch):
+def test_config_launch_paths_precedence_and_startup_load(console, tmp_path, monkeypatch):
     path = tmp_path / "config.yaml"
     path.write_text(
         dump_configuration(
@@ -352,7 +185,7 @@ def test_config_launch_paths_precedence_and_no_implicit_apply(console, tmp_path,
     with TestClient(run.call_args.args[0]) as client:
         token = (tmp_path / "other-data" / "operator.token").read_text().strip()
         client.headers["Authorization"] = f"Bearer {token}"
-        assert client.get("/api/resources").json() == []
+        assert len(client.get("/api/resources").json()) == 4
         assert client.get("/api/instance").json()["workspace"] == str(tmp_path / "workspace")
 
 
@@ -446,7 +279,13 @@ async def test_subprocess_cli_over_http_failure_recovery_and_restart(console, tm
 
     await cli("config", "apply", "--offline")
     main_thread = await cli("main", "init", "--profile", "default", "--offline")
-    app = create_app(data_root=root, workspace=tmp_path / "workspace", models=models, console=False)
+    app = create_app(
+        data_root=root,
+        config_path=path,
+        workspace=tmp_path / "workspace",
+        models=models,
+        console=False,
+    )
     async with listening(app) as url:
         connection = ["--url", url, "--token-file", str(root / "operator.token")]
         status = await cli("status", *connection)
@@ -511,7 +350,13 @@ async def test_subprocess_cli_over_http_failure_recovery_and_restart(console, tm
         inspected = await cli("runs", "show", done["id"], *connection)
         assert inspected["checkpoint_id"] == done["checkpoint_id"]
     async with listening(
-        create_app(data_root=root, workspace=tmp_path / "workspace", models=models, console=False)
+        create_app(
+            data_root=root,
+            config_path=path,
+            workspace=tmp_path / "workspace",
+            models=models,
+            console=False,
+        )
     ) as url:
         connection = ["--url", url, "--token-file", str(root / "operator.token")]
         retained = await cli("runs", "show", done["id"], *connection)

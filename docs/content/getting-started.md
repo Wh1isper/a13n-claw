@@ -16,7 +16,7 @@ mkdir -p "$HOME/claw-workspace"
 uv run a13n-claw serve --workspace "$HOME/claw-workspace"
 ```
 
-Open `http://127.0.0.1:8080`. The first startup creates `~/.a13n-claw/operator.token`; read that file locally and paste its value into the Console's **Access token** field. Do not put it in a URL, screenshot, shared terminal log, or configuration bundle. The browser keeps it only in this tab's memory; reloading requires reconnecting.
+Open `http://127.0.0.1:8080`. For a new Instance, the first startup creates an empty `~/.a13n-claw/config.yaml` and `~/.a13n-claw/operator.token`; read that file locally and paste its value into the Console's **Access token** field. Do not put it in a URL, screenshot, shared terminal log, or configuration bundle. The browser keeps it only in this tab's memory; reloading requires reconnecting.
 
 The default data root is `~/.a13n-claw`. The default workspace is the server's startup directory. Use `--data-root` / `CLAW_DATA_ROOT` and `--workspace` / `CLAW_WORKSPACE` to select explicit paths. The workspace must exist. Data and workspace must be separate, non-nested directories: credentials and saved application state must not sit inside the agent's ordinary file tree.
 
@@ -24,15 +24,16 @@ Use `--host 127.0.0.1 --port 9000` to change the listener and `--concurrency 4` 
 
 ## Configure the first Profile
 
-In **Settings**:
+In **Settings → Configuration**:
 
-1. Add a **model** with a resource ID, provider (`openai`, `anthropic`, or `google`), the provider's model name, and a credential reference such as `OPENAI_API_KEY`. An optional base URL selects a compatible endpoint; it is not a connectivity check. OpenAI uses the Chat Completions protocol.
-2. In **Credentials**, save the reference's secret value. Alternatively set that variable in the server environment before startup. Managed credentials take precedence. Credential values cannot be read back through the API.
-3. Add an **environment**. Start with Local, read-only files, and shell disabled. Docker requires an explicit image available to the server's Docker daemon. Review [environment authority](./operations.md#environment-authority) before enabling shell or write access.
-4. Add a **profile** selecting that model and environment. Optional native AgentSpec JSON supplies instructions and supported model settings; Claw owns execution dependencies, output type, models, and installed capabilities.
-5. Optionally set **defaults** → `instance` → `profile_id`. Otherwise choose a Profile explicitly when creating a Thread.
+1. Select **Add starter definitions** to create a model, read-only Local environment, default Profile, and Instance defaults in one draft.
+2. In **Models**, choose `openai`, `anthropic`, or `google`, supply the provider's exact model name, and set a credential reference such as `OPENAI_API_KEY`. OpenAI uses Chat Completions. An optional compatible base URL does not prove connectivity.
+3. In **Environments**, review file authority and shell access. Docker requires an explicit image and a reachable daemon. Read [environment authority](./operations.md#environment-authority) before enabling shell or writes.
+4. In **Profiles**, edit instructions, usage limits, tool policy, and optional skill/MCP/child selections. **YAML** exposes the complete shared draft and additional native agent settings.
+5. Select **Validate & preview**, then **Save file**, then **Load saved file**. Saving writes the selected YAML file; loading activates it for new work. Accepted Runs retain captured definitions.
+6. Open **Credentials** and save the reference's secret value. Alternatively provide it in the server environment before startup. Managed credentials take precedence and values cannot be read back.
 
-Definitions are versioned. Editing a definition affects later admissions; accepted Runs retain their captured composition. Missing references and conflicting edits are rejected, not silently repaired. Use **Atomic import / export** for reviewed JSON bundles; exports contain credential reference names, never credential values.
+Missing references and stale file revisions are rejected while your draft is preserved. See [Configuration and CLI](./configuration.md) for editing an existing file, conflict recovery, and migrating a pre-file Instance, and the [field reference](./configuration-reference.md) for each group.
 
 ## Choose centralized coordination
 
@@ -72,4 +73,4 @@ docker run --name claw -p 127.0.0.1:8080:8080 \
   a13n-claw:local serve --host 0.0.0.0
 ```
 
-The image runs as UID 10001. Named volumes preserve data across container replacement; bind mounts must be writable by that UID when writes are required. Read `/home/claw/data/operator.token` locally inside the server container to connect. The image prints help unless `serve` is supplied. It does not mount a Docker socket or create agent execution containers automatically. Read [Operations](./operations.md) before exposing or backing up an Instance.
+The image runs as UID 10001. The configuration file is `/home/claw/data/config.yaml`. Named volumes preserve configuration and data across container replacement; bind mounts must be writable by that UID when writes are required. Read `/home/claw/data/operator.token` locally inside the server container to connect. The image prints help unless `serve` is supplied. It does not mount a Docker socket or create agent execution containers automatically. Read [Operations](./operations.md) before exposing or backing up an Instance.

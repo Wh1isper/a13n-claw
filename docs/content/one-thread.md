@@ -31,10 +31,11 @@ In this mode, configured MCP integrations and Claw's external messaging tools ar
 
 The current transport is generic authenticated HTTP ingress and explicit HTTP egress. Vendor-specific embedded adapters, platform login flows, and platform-native decision cards are not included. An integration must verify the platform event and normalize its sender, addressed status, and stable event identity before calling Claw.
 
-1. Create a dedicated client in **Settings** for the integration. It can have empty ordinary actions, Profile IDs, and Thread IDs; ownership of an ingress binding does not grant Main history access.
-2. In **Coordination → Channels → Add Channel**, choose a stable binding ID and edit its policy JSON.
+1. Create a dedicated client in **Settings → Access** for the integration. It can have empty ordinary actions, Profile IDs, and Thread IDs; ownership of an ingress binding does not grant Main history access.
+2. In **Settings → Configuration → Channels**, add a stable binding ID and edit its policy using the form or YAML.
 3. Set the exact platform/account/conversation identity, integration client ID, execution principal, and explicit sender allowlist. For groups, keep `require_addressed` enabled unless unaddressed messages are intentionally eligible.
 4. Set `shared_context_acknowledged` only when all participating conversations are authorized to share Main's context. This is required in One Thread mode.
+5. Validate and preview the complete configuration, save the file, then load it. Inspect the loaded binding in **Coordination → Channels**.
 
 For example, an inbound-only binding named `release-room` can use:
 
@@ -55,7 +56,7 @@ For example, an inbound-only binding named `release-room` can use:
 }
 ```
 
-The execution principal needs current submit authority on Main. Existing bindings cannot be retargeted to another qualified conversation; create a new binding instead. Policy edits use the viewed version and reject stale changes.
+The execution principal needs current submit authority on Main. Existing bindings cannot be retargeted to another qualified conversation; create a new binding instead. Configuration saves use the viewed whole-file revision and reject stale changes; loading activates the policy. See [Configuration and CLI](./configuration.md) for conflicts and reload behavior.
 
 With the integration client's Bearer token in the Authorization header, submit to `POST /api/channels/release-room/messages`:
 

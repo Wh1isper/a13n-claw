@@ -170,7 +170,7 @@ class Store:
                 db.executescript(
                     "BEGIN IMMEDIATE;\n" + _THREAD_CREATIONS + "\nPRAGMA user_version = 2;\nCOMMIT;"
                 )
-            elif version not in {2, 3, 4}:
+            elif version not in {2, 3, 4, 5}:
                 raise ClawError(
                     "schema_incompatible", "This database requires another Claw version"
                 )
@@ -178,12 +178,12 @@ class Store:
                 db.executescript(
                     "BEGIN IMMEDIATE;\n" + COORDINATION_SCHEMA + "\nPRAGMA user_version=3;\nCOMMIT;"
                 )
-            if version < 4:
+            if version < 5:
                 db.executescript(
-                    "BEGIN IMMEDIATE; CREATE TABLE configuration_applications ("
-                    "actor_id TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL,"
-                    "result TEXT NOT NULL, PRIMARY KEY(actor_id,request_id));"
-                    "PRAGMA user_version=4; COMMIT;"
+                    "BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS configuration_state ("
+                    "id INTEGER PRIMARY KEY CHECK(id=1), path TEXT NOT NULL, "
+                    "revision TEXT NOT NULL, document TEXT NOT NULL);"
+                    "PRAGMA user_version=5; COMMIT;"
                 )
             if version == 0:
                 db.execute("UPDATE coordination SET mode=? WHERE id=1", (initial_mode,))

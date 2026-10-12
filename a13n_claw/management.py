@@ -18,18 +18,16 @@ from pydantic import JsonValue
 
 from a13n_claw.configuration import (
     Configuration,
-    ConfigurationApply,
-    apply_configuration,
-    dump_configuration,
-    export_configuration,
     load_configuration,
     read_yaml,
 )
-from a13n_claw.domain import ClawError, digest, endpoint
+from a13n_claw.configuration_files import ConfigurationFile, revision
+from a13n_claw.domain import ClawError, endpoint
 from a13n_claw.instance import InstanceLease, operator_token, token_hash
 from a13n_claw.storage import Store
 
-STARTER = """# Edit definitions, validate, then explicitly apply. Never put secrets here.
+STARTER = """# File-first configuration. Startup loads this file; use config reload after edits.
+# Keep secrets in managed credentials or environment variables.
 format: 1
 server:
   host: 127.0.0.1
@@ -53,8 +51,8 @@ profiles:
       instructions: You are a helpful assistant.
 defaults:
   profile_id: default
-# Export accepted configuration before editing existing resources.
-# The export includes versions; absent versions mean create-only.
+# This is the complete catalog. Removing a resource retires it on reload.
+# Server settings take effect after restart; existing Runs keep captured definitions.
 """
 
 
@@ -67,11 +65,7 @@ def document(args: argparse.Namespace) -> Configuration:
     path = config_path(args)
     if path.is_file():
         return load_configuration(path)
-    if (
-        args.config
-        or os.environ.get("CLAW_CONFIG")
-        or (args.command == "config" and args.action in {"show", "validate", "apply"})
-    ):
+    if args.command == "config" and args.action in {"show", "validate", "reload", "apply"}:
         raise ClawError("configuration_missing", "Selected configuration file does not exist", 422)
     return Configuration()
 
@@ -95,7 +89,9 @@ def offline(
     if initial_mode not in {"one_thread", "per_channel"}:
         raise ClawError("conversation_mode", "Choose per_channel or one_thread", 422)
     if not create and not (root / "claw.sqlite3").is_file():
-        raise ClawError("instance_missing", "Initialize with config apply --offline first", 404)
+        raise ClawError(
+            "instance_missing", "Initialize with serve or config reload --offline first", 404
+        )
     with InstanceLease(root):
         token = operator_token(root)
         store = Store(root / "claw.sqlite3", initial_mode=initial_mode)
@@ -193,22 +189,22 @@ def secret_input(args: argparse.Namespace) -> str:
 
 
 def run_configuration(args: argparse.Namespace, config: Configuration) -> None:
-    action = args.action
+    action = "reload" if args.action == "apply" else args.action
+    path = config_path(args)
     if action == "path":
-        output({"path": str(config_path(args))}, as_json=args.json)
+        output({"path": str(path)}, as_json=args.json)
         return
     if action == "init":
-        path = config_path(args)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with path.open("x", encoding="utf-8") as handle:
             handle.write(STARTER)
-        output({"path": str(path), "applied": False}, as_json=args.json)
+        output({"path": str(path), "loaded": False}, as_json=args.json)
         return
     if action == "show":
         if args.json:
-            output(config.model_dump(mode="json", exclude_defaults=True), as_json=True)
+            output(read_yaml(path), as_json=True)
         else:
-            print(dump_configuration(config), end="")
+            print(path.read_text(encoding="utf-8"), end="")
         return
     if action == "validate":
         output(
@@ -216,49 +212,70 @@ def run_configuration(args: argparse.Namespace, config: Configuration) -> None:
             as_json=args.json,
         )
         return
-    request = (
-        ConfigurationApply(
-            request_id=args.request_id or "config-" + digest(config.publication()),
-            configuration=config,
+    if action == "migrate" and not args.offline:
+        raise ClawError(
+            "offline_required", "Migration requires --offline and a stopped Instance", 422
         )
-        if action == "apply"
-        else None
-    )
     if args.offline:
         with offline(
             data_root(args, config),
-            create=action == "apply",
+            create=action == "reload",
             initial_mode=os.environ.get(
                 "CLAW_CONVERSATION_MODE", config.server.mode or "one_thread"
             ),
         ) as store:
-            if request:
-                result = apply_configuration(store, "operator", request, validate_only=args.dry_run)
+            source = ConfigurationFile(store, path)
+            if action == "migrate":
+                source.initialize(migrate=True)
+                result = source.status("operator")
+            elif action == "reload":
+                expected = args.revision or revision(path.read_bytes())
+                result = source.reload("operator", expected, dry_run=args.dry_run)
+            elif action == "save":
+                result = source.save(
+                    "operator", args.file.read_text(encoding="utf-8"), args.revision
+                )
             else:
-                result = export_configuration(store, "operator").model_dump(mode="json")
+                result = source.status("operator")
     else:
         client = Client(args, config)
         try:
-            result = (
-                client.request(
-                    "POST",
-                    "configuration/apply",
-                    request.model_dump(mode="json"),
-                    validate_only=args.dry_run,
+            if action == "save":
+                result = client.request(
+                    "PUT",
+                    "configuration",
+                    {
+                        "text": args.file.read_text(encoding="utf-8"),
+                        "expected_revision": args.revision,
+                    },
                 )
-                if request
-                else client.request("GET", "configuration")
-            )
+            elif action == "reload":
+                # Inspect the server-owned source, not an unrelated local YAML document.
+                expected = args.revision
+                if expected is None:
+                    status = client.request("GET", "configuration")
+                    assert isinstance(status, dict)
+                    expected = status["revision"]
+                result = client.request(
+                    "POST",
+                    "configuration/reload",
+                    {
+                        "expected_revision": expected,
+                    },
+                    dry_run=args.dry_run,
+                )
+            else:
+                result = client.request("GET", "configuration")
         finally:
             client.close()
     if action == "export":
-        exported = Configuration.model_validate(result).model_copy(update={"server": config.server})
-        text = dump_configuration(exported)
+        assert isinstance(result, dict) and isinstance(result["text"], str)
+        text = result["text"]
         if args.output:
             with args.output.open("x", encoding="utf-8") as handle:
                 handle.write(text)
         elif args.json:
-            output(exported.model_dump(mode="json", exclude_defaults=True), as_json=True)
+            output(result["document"], as_json=True)
         else:
             print(text, end="")
     else:

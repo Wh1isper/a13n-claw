@@ -15,15 +15,16 @@ from a13n_claw.domain import ClawError
 class InstanceLease:
     """Kernel-backed exclusion, released on process death without stale lock deletion."""
 
-    def __init__(self, data_root: Path):
+    def __init__(self, data_root: Path, *, filename: str = "server.lock"):
         self.data_root = data_root.resolve()
+        self.filename = filename
         self._file: BinaryIO | None = None
 
     def acquire(self) -> None:
         if self._file is not None:
             raise ClawError("instance_owned", "This lease has already been acquired")
         self.data_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        handle = (self.data_root / "server.lock").open("a+b")
+        handle = (self.data_root / self.filename).open("a+b")
         try:
             if os.name == "nt":
                 import msvcrt

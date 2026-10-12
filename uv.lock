@@ -19,6 +19,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-ai" },
     { name = "pyyaml" },
+    { name = "ruamel-yaml" },
     { name = "uvicorn" },
 ]
 
@@ -44,6 +45,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12,<3" },
     { name = "pydantic-ai", specifier = ">=2.55.0,<3" },
     { name = "pyyaml", specifier = ">=6,<7" },
+    { name = "ruamel-yaml", specifier = ">=0.18,<0.20" },
     { name = "uvicorn", specifier = ">=0.34,<1" },
 ]
 

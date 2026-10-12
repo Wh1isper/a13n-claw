@@ -15,13 +15,14 @@ Claw runs agents through published [a13n Harness](https://github.com/converge-ai
 - Generic HTTP Channel ingress and Main-only explicit egress with independent delivery reconciliation.
 - Retained attachments/artifacts, selected-context file browsing, and managed target lifecycle.
 - Operator and scoped client access, write-only managed credentials, and offline operator-token recovery.
-- Reviewable YAML configuration, atomic version-checked publication, and headless CLI operations.
+- One YAML configuration source with form/source editing, revision-checked saves, explicit atomic reload, and headless CLI operations.
 
 Published `0.0.2` artifacts are still the earlier informational CLI placeholder. The runtime described here is available from source, not retroactively added to those artifacts. This is an independent project with no legacy configuration or persistence compatibility.
 
 ## Start here
 
-- [Headless configuration and CLI](./configuration.md): initialize and operate without a browser.
+- [Configuration and CLI](./configuration.md): edit, validate, save, and load through one source.
+- [Configuration field reference](./configuration-reference.md): groups, defaults, and examples.
 - [Getting started](./getting-started.md): start the server and configure a working Profile.
 - [One Thread coordination](./one-thread.md): Main/workers, Channel bindings, Inbox processing, and delivery.
 - [Operations](./operations.md): access, shared workspace, recovery, and data handling.

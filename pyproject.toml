@@ -15,6 +15,7 @@ dependencies = [
   "pydantic>=2.12,<3",
   "pydantic-ai>=2.55.0,<3",
   "pyyaml>=6,<7",
+  "ruamel-yaml>=0.18,<0.20",
   "uvicorn>=0.34,<1",
 ]
 classifiers = [

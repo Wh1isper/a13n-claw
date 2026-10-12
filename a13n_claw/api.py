@@ -18,7 +18,8 @@ from a13n_claw.attention import (
     ProcessingChange,
     ProcessingControl,
 )
-from a13n_claw.configuration import ConfigurationApply
+from a13n_claw.configuration import ConfigurationPreview, ConfigurationReload, ConfigurationWrite
+from a13n_claw.configuration_files import ConfigurationFile
 from a13n_claw.coordinator import Coordinator
 from a13n_claw.domain import (
     MAX_ASSET_BYTES,
@@ -42,6 +43,7 @@ class Services:
     runtime: Runtime
     coordinator: Coordinator
     workspace: Path
+    configuration: ConfigurationFile
     deliveries: DeliveryDispatcher | None = None
 
 
@@ -139,7 +141,7 @@ async def resources(actor: Actor, app: Application):
 
 @router.post("/resources/import")
 async def import_resources(body: ResourceImport, actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.import_resources, actor.id, body.resources)
+    return await asyncio.to_thread(app.configuration.update_resources, actor.id, body.resources)
 
 
 @router.get("/profiles")
@@ -461,7 +463,7 @@ async def channels(actor: Actor, app: Application):
 @router.put("/channels/{channel_id}")
 async def save_channel(channel_id: ResourceId, body: ChannelChange, actor: Actor, app: Application):
     return await asyncio.to_thread(
-        Messaging(app.store).save_channel, actor.id, channel_id, body.policy, body.expected_version
+        app.configuration.update_channel, actor.id, channel_id, body.policy, body.expected_version
     )
 
 
@@ -492,24 +494,31 @@ async def reconcile_delivery(
 
 @router.get("/configuration")
 async def configuration(actor: Actor, app: Application):
-    from a13n_claw.configuration import export_configuration
-
-    return await asyncio.to_thread(export_configuration, app.store, actor.id)
+    return await asyncio.to_thread(app.configuration.status, actor.id)
 
 
-@router.post("/configuration/apply")
-async def publish_configuration(
-    body: ConfigurationApply,
+@router.put("/configuration")
+async def save_configuration(body: ConfigurationWrite, actor: Actor, app: Application):
+    return await asyncio.to_thread(
+        app.configuration.save, actor.id, body.text, body.expected_revision
+    )
+
+
+@router.post("/configuration/validate")
+async def validate_configuration(body: ConfigurationPreview, actor: Actor, app: Application):
+    return await asyncio.to_thread(app.configuration.preview, actor.id, body.text)
+
+
+@router.post("/configuration/reload")
+async def reload_configuration(
+    body: ConfigurationReload,
     actor: Actor,
     app: Application,
-    validate_only: bool = False,
+    dry_run: bool = False,
 ):
-    from a13n_claw.configuration import apply_configuration
-
-    return await asyncio.to_thread(
-        apply_configuration,
-        app.store,
-        actor.id,
-        body,
-        validate_only=validate_only,
+    result = await asyncio.to_thread(
+        app.configuration.reload, actor.id, body.expected_revision, dry_run=dry_run
     )
+    if not dry_run:
+        app.coordinator.wake()
+    return result

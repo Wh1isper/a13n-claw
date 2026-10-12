@@ -96,6 +96,7 @@ def main():
     (workspace / "result.txt").write_text("Browser acceptance artifact\n", encoding="utf-8")
     app = create_app(
         data_root=args.root.resolve() / "data",
+        config_path=args.root.resolve() / "config.yaml",
         workspace=workspace,
         models=fixture_models,
         mode=args.mode,
