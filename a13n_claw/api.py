@@ -18,6 +18,7 @@ from a13n_claw.attention import (
     ProcessingChange,
     ProcessingControl,
 )
+from a13n_claw.configuration import ConfigurationApply
 from a13n_claw.coordinator import Coordinator
 from a13n_claw.domain import (
     MAX_ASSET_BYTES,
@@ -487,3 +488,28 @@ async def reconcile_delivery(
     )
     app.coordinator.wake()
     return result
+
+
+@router.get("/configuration")
+async def configuration(actor: Actor, app: Application):
+    from a13n_claw.configuration import export_configuration
+
+    return await asyncio.to_thread(export_configuration, app.store, actor.id)
+
+
+@router.post("/configuration/apply")
+async def publish_configuration(
+    body: ConfigurationApply,
+    actor: Actor,
+    app: Application,
+    validate_only: bool = False,
+):
+    from a13n_claw.configuration import apply_configuration
+
+    return await asyncio.to_thread(
+        apply_configuration,
+        app.store,
+        actor.id,
+        body,
+        validate_only=validate_only,
+    )

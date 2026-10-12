@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "getting-started",
+    "configuration",
     "one-thread",
     "operations",
     "development",

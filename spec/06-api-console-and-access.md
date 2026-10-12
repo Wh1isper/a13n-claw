@@ -4,6 +4,8 @@
 
 Claw exposes one application boundary for management, conversation, observation, and execution control. API handlers and embedded bridges invoke that authority within the same server; only external clients need a network API. The console is an API frontend over that boundary. It owns navigation, forms, local drafts, and presentation; the backend owns validation, authorization, accepted work, and saved outcomes.
 
+The CLI supports headless configuration and operational intervention through the same authority. The server can run with the Console disabled or its assets unavailable; browser availability is not a prerequisite for execution. The Console is an optional management and inspection surface, while external messaging remains the primary conversation entry point.
+
 This document defines operation semantics and trust boundaries, not endpoint paths, authentication protocols, frontend components, or generated client types.
 
 ## Application Surfaces

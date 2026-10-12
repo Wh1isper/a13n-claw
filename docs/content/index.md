@@ -11,15 +11,17 @@ Claw runs agents through published [a13n Harness](https://github.com/converge-ai
 - Always-steer messages, held inputs at decision boundaries, explicit queued Runs, approvals, cancellation, and reviewed recovery.
 - Captured model, Profile, environment, skill, MCP, and child-work definitions with current authorization checks.
 - Independent delegated Threads and checkpoint forks sharing the Instance workspace.
-- Optional One Thread coordination with persistent Main/workers, explicit Inbox dispositions, durable drain/backoff/pause, and direct worker conversations.
+- Default One Thread coordination for new Instances with persistent Main/workers, explicit Inbox dispositions, durable drain/backoff/pause, and direct worker conversations.
 - Generic HTTP Channel ingress and Main-only explicit egress with independent delivery reconciliation.
 - Retained attachments/artifacts, selected-context file browsing, and managed target lifecycle.
 - Operator and scoped client access, write-only managed credentials, and offline operator-token recovery.
+- Reviewable YAML configuration, atomic version-checked publication, and headless CLI operations.
 
 Published `0.0.2` artifacts are still the earlier informational CLI placeholder. The runtime described here is available from source, not retroactively added to those artifacts. This is an independent project with no legacy configuration or persistence compatibility.
 
 ## Start here
 
+- [Headless configuration and CLI](./configuration.md): initialize and operate without a browser.
 - [Getting started](./getting-started.md): start the server and configure a working Profile.
 - [One Thread coordination](./one-thread.md): Main/workers, Channel bindings, Inbox processing, and delivery.
 - [Operations](./operations.md): access, shared workspace, recovery, and data handling.

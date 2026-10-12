@@ -34,13 +34,9 @@ def create_app(
     workspace: Path | None = None,
     concurrency: int = 4,
     models: ModelFactory = provider_model,
-    mode: ConversationMode | None = None,
+    mode: str | None = None,
+    console: bool = True,
 ) -> FastAPI:
-    if not (CONSOLE_DIRECTORY / "index.html").is_file():
-        raise RuntimeError(
-            "Console assets are missing. In a source checkout, run `make console-build`; "
-            "otherwise reinstall an a13n-claw distribution containing the console."
-        )
     root = (
         (data_root or Path(os.environ.get("CLAW_DATA_ROOT", "~/.a13n-claw"))).expanduser().resolve()
     )
@@ -51,13 +47,9 @@ def create_app(
     if not 1 <= concurrency <= 64:
         raise ClawError("concurrency_range", "Concurrency must be between 1 and 64", 422)
 
-    selected_mode = mode or os.environ.get("CLAW_CONVERSATION_MODE", "per_channel")
-    if selected_mode not in {"per_channel", "one_thread"}:
+    selected_mode = mode if mode is not None else os.environ.get("CLAW_CONVERSATION_MODE")
+    if selected_mode is not None and selected_mode not in {"per_channel", "one_thread"}:
         raise ClawError("conversation_mode", "Choose per_channel or one_thread", 422)
-
-    conversation_mode: ConversationMode = (
-        "one_thread" if selected_mode == "one_thread" else "per_channel"
-    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -67,12 +59,16 @@ def create_app(
         deliveries: DeliveryDispatcher | None = None
         try:
             token = await asyncio.to_thread(operator_token, root)
-            store = await asyncio.to_thread(Store, root / "claw.sqlite3")
+            store = await asyncio.to_thread(Store, root / "claw.sqlite3", initial_mode="one_thread")
             await asyncio.to_thread(store.bootstrap, token_hash(token))
             del token
             await asyncio.to_thread(store.reconcile_startup)
             await asyncio.to_thread(store.coordination.reconcile_startup)
-            await asyncio.to_thread(store.coordination.configure_mode, conversation_mode)
+            if selected_mode is not None:
+                conversation_mode: ConversationMode = (
+                    "one_thread" if selected_mode == "one_thread" else "per_channel"
+                )
+                await asyncio.to_thread(store.coordination.configure_mode, conversation_mode)
             runtime = Runtime(store, root, models=models)
             coordinator = Coordinator(store, str(selected), runtime, concurrency=concurrency)
             deliveries = DeliveryDispatcher(Messaging(store))
@@ -160,5 +156,8 @@ def create_app(
         return response
 
     app.include_router(router)
-    app.mount("/", StaticFiles(directory=CONSOLE_DIRECTORY, html=True), name="console")
+    if console and (CONSOLE_DIRECTORY / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=CONSOLE_DIRECTORY, html=True), name="console")
+    elif console:
+        logger.warning("Console assets unavailable; API remains available. Run make console-build.")
     return app

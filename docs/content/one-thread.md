@@ -7,15 +7,15 @@ description: Coordinate durable Inbox work and persistent workers through one Ma
 
 One Thread mode gives the Instance one persistent **Main** Thread. External messages enter its durable Inbox; Main selectively reads them and coordinates independent workers. This is available in source builds, not in the published `0.0.2` placeholder.
 
-After [building the Console and configuring a Profile](./getting-started.md), start the server with:
+After [configuring a Profile](./configuration.md), start the server with:
 
 ```bash
 uv run a13n-claw serve --workspace "$HOME/claw-workspace" --mode one_thread
 ```
 
-Alternatively set `CLAW_CONVERSATION_MODE=one_thread`. The default is `per_channel`: each external conversation advances its own Thread. Mode selection applies to the whole Instance at startup, not to individual Channels. Stop the server cleanly and settle active or uncertain work before switching. Old-mode histories, bindings, and work are not migrated or silently reactivated; inspect inactive Threads explicitly. Switching modes is not a recovery shortcut.
+New Instances default to `one_thread`; the explicit flag above also selects it for an existing Instance. Without an override, an existing Instance retains its saved mode. Use `--mode per_channel` for independent external conversations, each advancing its own Thread. Mode selection applies to the whole Instance at startup, not to individual Channels. Stop the server cleanly and settle active or uncertain work before switching. Old-mode histories, bindings, and work are not migrated or silently reactivated; inspect inactive Threads explicitly. Switching modes is not a recovery shortcut.
 
-Open **Coordination**, select Main's starting Profile, and choose **Initialize Main**. Its identity and worker ownership survive Runs and restarts. Repeating initialization returns the existing Main; ordinary Thread creation or forking does not create another coordinator. Open Main to give instructions. Direct Console messages still use ordinary durable admission, independently of external Inbox processing.
+Run `a13n-claw main init --profile PROFILE_ID`, or open **Coordination**, select Main's starting Profile, and choose **Initialize Main**. Its identity and worker ownership survive Runs and restarts. Repeating initialization returns the existing Main; ordinary Thread creation or forking does not create another coordinator. Open Main to give instructions. Direct Console messages still use ordinary durable admission, independently of external Inbox processing.
 
 ## Work with persistent workers
 

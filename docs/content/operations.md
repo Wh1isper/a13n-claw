@@ -3,6 +3,8 @@ title: Operations
 description: Operate a single-node Instance without confusing saved state, authority, and external effects.
 ---
 
+The [headless CLI](./configuration.md) provides configuration, saved-state inspection, pause controls, decisions, cancellation, and reviewed recovery without the Console. Live commands use the authenticated API; offline configuration requires exclusive Instance ownership.
+
 ## Access and secrets
 
 The Instance is for a trusted operator and explicitly granted participants, not hostile multi-tenant workloads. Keep the default loopback listener or place it behind a trusted TLS reverse proxy. The Console and `/api` must share an origin. Forward the original Host and scheme correctly; do not enable arbitrary CORS or put access tokens in query strings. API calls require an Authorization Bearer header; browser requests with a foreign Origin are rejected. No cookies grant authority.

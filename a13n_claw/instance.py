@@ -109,7 +109,9 @@ def reset_operator(data_root: Path) -> Path:
             temporary.flush()
             os.fsync(temporary.fileno())
         os.replace(temporary.name, path)
-        Store(data_root / "claw.sqlite3").reset_operator(token_hash(token))
+        Store(data_root / "claw.sqlite3", initial_mode="one_thread").reset_operator(
+            token_hash(token)
+        )
         return path
 
 

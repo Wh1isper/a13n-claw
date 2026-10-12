@@ -5,7 +5,7 @@ description: Start an Instance, configure execution, and continue work in the Co
 
 ## From source
 
-Use Python 3.13, [uv](https://docs.astral.sh/uv/), Node.js 24, pnpm 10.30.3, and Make:
+Use Python 3.13 and [uv](https://docs.astral.sh/uv/) for the [headless configuration and CLI workflow](./configuration.md). The optional Console source build additionally uses Node.js 24, pnpm 10.30.3, and Make:
 
 ```bash
 git clone https://github.com/Wh1isper/a13n-claw.git
@@ -36,7 +36,7 @@ Definitions are versioned. Editing a definition affects later admissions; accept
 
 ## Choose centralized coordination
 
-The default conversation mode is `per_channel`. For one Main coordinator with persistent workers and a durable external Inbox, start with `--mode one_thread` (or `CLAW_CONVERSATION_MODE=one_thread`) and initialize Main in **Coordination** after configuring its Profile. See [One Thread coordination](./one-thread.md) for Channel bindings, pause controls, and safe delivery reconciliation. Mode changes are startup-only and do not migrate old histories or pending work.
+New Instances default to `one_thread`; existing Instances retain their saved mode unless explicitly overridden. Initialize Main in **Coordination** or with `main init --profile PROFILE_ID` after configuring its Profile. Use `--mode per_channel` only when independent per-Channel routing is intended. See [One Thread coordination](./one-thread.md) for Channel bindings, pause controls, and safe delivery reconciliation. Mode changes are startup-only and do not migrate old histories or pending work.
 
 ## Work in a Thread
 

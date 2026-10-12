@@ -6,6 +6,14 @@ Claw owns the configuration consumed by its API-driven product. A Profile is a r
 
 Mutable defaults and fixed Run compositions have separate lifecycles. Accepted application state is the configuration authority. Importing or exporting configuration is a management operation, not a second authority competing with that state.
 
+## Headless Configuration
+
+An operator can configure and administer an Instance without a browser. Reviewable configuration files are explicit inputs and exports, not a live mirror or an alternative store of accepted definitions. Starting the server does not implicitly publish resource edits. Local launch settings select the listener, data root, workspace, concurrency, Console availability, and optional conversation-mode override; they are distinct from accepted reusable resources.
+
+A publication validates all submitted definitions, their version preconditions, and the resulting active Profile dependency graph before atomically accepting resource and Channel changes. Omission preserves existing definitions; retirement is explicit. Exports contain credential references and the versions read, never managed secret values. Reusing a publication request identity with the same content returns its original acceptance; different content is rejected. Acceptance describes that publication, not proof that later edits have left it current.
+
+Offline initialization and configuration require exclusive Instance ownership. They use the same application validation and persistence boundary without dispatching work or reconciling interrupted execution. Operations against a running owner use authenticated APIs and cannot fall back to offline database access on a network failure. Definition validation does not assert provider connectivity. Credentials use a separate protected input path rather than command-line values or ordinary configuration exports.
+
 ## Definition Boundaries
 
 A Profile expresses intended agent behavior and selections for models, instructions, capabilities, tools, skills, delegation, and execution environments. Shared resources retain their own identity and lifecycle. Claw uses Harness public concepts where they already own execution semantics rather than inventing parallel model, tool, or capability types.
