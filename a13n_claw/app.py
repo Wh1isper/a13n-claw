@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from a13n_harness.environment import EnvironmentError
+from a13n_harness.environment.errors import EnvironmentProviderError
 from a13n_harness.errors import HarnessError
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -113,7 +114,10 @@ def create_app(
 
     @app.exception_handler(HarnessError)
     @app.exception_handler(EnvironmentError)
-    async def harness_error(request: Request, error: HarnessError | EnvironmentError):
+    @app.exception_handler(EnvironmentProviderError)
+    async def harness_error(
+        request: Request, error: HarnessError | EnvironmentError | EnvironmentProviderError
+    ):
         return JSONResponse(
             status_code=409,
             content={

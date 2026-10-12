@@ -1,11 +1,14 @@
 import asyncio
 import os
+from contextlib import closing
 from pathlib import Path
 
+import docker
 import pytest
 from a13n_harness import AgentSpec, HarnessBuilder
 from a13n_harness.context import AgentContext
 from a13n_harness.environment import EnvironmentError, EnvironmentMount
+from a13n_harness.environment.errors import EnvironmentProviderError
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
@@ -69,7 +72,6 @@ async def test_local_fresh_access_read_policy_and_shared_workspace(
     run = admitted(runtime_store, workspace)
     manager = EnvironmentManager(runtime_store)
     async with manager.acquire(run) as mount:
-        assert mount.environment.recover_on_unavailable is False
         await exercise_mount(mount, write=False)
         target = runtime_store.targets("operator", run.thread_id)[0]
         with pytest.raises(ClawError, match="active target use"):
@@ -106,7 +108,7 @@ async def test_local_write_and_model_change_reuse_generation(runtime_store: Stor
     )
     second = admitted(runtime_store, workspace, first.thread_id, "second")
     async with EnvironmentManager(runtime_store).acquire(second) as second_mount:
-        assert second_mount.environment is not mount.environment
+        assert second_mount.source is not mount.source
         await exercise_mount(second_mount, write=True)
     assert runtime_store.targets("operator", first.thread_id)[0].id == original.id
     assert len(runtime_store.targets("operator", first.thread_id)) == 1
@@ -144,16 +146,55 @@ async def test_real_docker_target_reuse_restart_stop_and_remove(
             target = runtime_store.targets("operator", first.thread_id)[0]
             target_id = target.id
             await exercise_mount(mount, write=True)
-            physical_id = mount.environment.descriptor.backing_identity
+            physical_id = mount.source.state
         assert runtime_store.target("operator", target_id).status == "stopped"
         runtime_store.finish_without_checkpoint(first.id, "first", status="cancelled", error="test")
         second = admitted(runtime_store, workspace, first.thread_id, "second")
         # Reconstruct the manager and Store, as after server restart.
         manager = EnvironmentManager(Store(runtime_store.path))
         async with manager.acquire(second) as second_mount:
-            assert second_mount.environment.descriptor.backing_identity == physical_id
+            assert second_mount.source.state == physical_id
             await exercise_mount(second_mount, write=True)
+            async with manager.acquire(second) as overlapping:
+                assert overlapping.source.state == physical_id
+            # An external stop cannot be repaired while an existing user pins this target.
+            with closing(docker.DockerClient()) as client:
+                container = client.containers.get(physical_id.state["container_id"])
+                await asyncio.to_thread(container.stop)
+                with pytest.raises((EnvironmentError, EnvironmentProviderError)):
+                    async with manager.acquire(second):
+                        pytest.fail("Active target acquisition must not restart the container")
+                container.reload()
+                assert container.status == "exited"
+                assert manager.users[target_id] == 1
         assert len(runtime_store.targets("operator", first.thread_id)) == 1
+        connector = await second_mount.source.ensure_ready()
+        # A Run connector has no authority to restart the stopped target.
+        with pytest.raises((EnvironmentError, EnvironmentProviderError)):
+            await connector.open()
+        assert runtime_store.target("operator", target_id).status == "stopped"
+        await manager.manage("operator", target_id, "prepare")
+        async with manager.files("operator", second.id) as files:
+            assert (await files.files.read_text("/workspace/result.txt")).text == "saved"
+        await manager.manage("operator", target_id, "remove")
+        replacement = await manager.manage("operator", target_id, "prepare")
+        assert replacement.provider_state != physical_id.model_dump(mode="json")
+        # Name reconciliation belongs only to management; an issued connector stays fixed.
+        with pytest.raises((EnvironmentError, EnvironmentProviderError)):
+            await connector.open()
+        assert (await manager.manage("operator", target_id, "inspect")).status == "ready"
+        # A running container is not ready if initialization was not confirmed.
+        with closing(docker.DockerClient()) as client:
+            container = client.containers.get(replacement.provider_state["state"]["container_id"])
+            result = await asyncio.to_thread(
+                container.exec_run,
+                ["python", "-I", "-c", "import os; os.unlink('/tmp/a13n/initialized')"],
+            )
+            assert result.exit_code == 0
+        with pytest.raises((EnvironmentError, EnvironmentProviderError)):
+            await manager.manage("operator", target_id, "inspect")
+        assert runtime_store.target("operator", target_id).status == "unavailable"
+        assert (await manager.manage("operator", target_id, "stop")).status == "stopped"
     finally:
         # Remove only targets created by this test, including preparation failures.
         for target in runtime_store.targets("operator", first.thread_id):
@@ -166,7 +207,7 @@ async def test_real_docker_target_reuse_restart_stop_and_remove(
 async def test_cancelling_prepare_keeps_target_lock_until_mutation_settles(
     runtime_store: Store, tmp_path: Path, monkeypatch
 ):
-    from a13n_claw.environments import create_adapter
+    from a13n_claw.targets import create_target
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -176,7 +217,7 @@ async def test_cancelling_prepare_keeps_target_lock_until_mutation_settles(
     settled = asyncio.Event()
 
     async def factory(target):
-        environment = await create_adapter(target)
+        environment = await create_target(target)
         original = environment.prepare
 
         async def prepare():

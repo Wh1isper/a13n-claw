@@ -44,6 +44,7 @@ from a13n_claw.domain import (
 )
 from a13n_claw.environments import EnvironmentManager, local_configuration
 from a13n_claw.storage import Store
+from a13n_claw.targets import FixedSource
 
 ModelFactory = Callable[[ModelDefinition, str], AbstractAsyncContextManager[Model]]
 
@@ -159,10 +160,11 @@ class Runtime:
                     TemporaryDirectory(prefix="claw-skills-", dir=self.data_root)
                 )
                 await asyncio.to_thread(write_skills, Path(temporary), run)
-                environment = await DIRECT_LOCAL.create(local_configuration(temporary, False))
-                stack.push_async_callback(environment.close)
+                source = FixedSource(
+                    DIRECT_LOCAL.execution_connector(local_configuration(temporary, False))
+                )
                 mounts["skills"] = EnvironmentMount(
-                    environment=environment,
+                    source=source,
                     permission_ceiling=EnvironmentPermissionSet(operations=FILE_READ_ACTIONS),
                     mount_path="/claw-skills",
                     provider_root="/",

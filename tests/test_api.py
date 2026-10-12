@@ -84,6 +84,39 @@ def completed(client: TestClient, run_id: str):
     pytest.fail("Run did not reach a durable terminal state")
 
 
+def test_environment_provider_failure_is_a_safe_conflict(console, tmp_path, monkeypatch, caplog):
+    from a13n_harness.environment.errors import (
+        EnvironmentProviderError,
+        EnvironmentProviderErrorCategory,
+        EnvironmentProviderOutcomeCertainty,
+    )
+
+    from a13n_claw.environments import EnvironmentManager
+
+    async def failed_management(self, actor_id, target_id, action):
+        raise EnvironmentProviderError(
+            "private-provider-diagnostic",
+            code="provider_target_unavailable",
+            category=EnvironmentProviderErrorCategory.UNAVAILABLE,
+            certainty=EnvironmentProviderOutcomeCertainty.NOT_DISPATCHED,
+            details={"credential": "private-provider-credential"},
+        )
+
+    monkeypatch.setattr(EnvironmentManager, "manage", failed_management)
+    with TestClient(create_app(models=models)) as client:
+        authorize(client, tmp_path)
+        response = client.post("/api/targets/target-test/manage", json={"operation": "inspect"})
+        assert response.status_code == 409
+        assert response.json() == {
+            "error": {
+                "code": "provider_target_unavailable",
+                "message": "Request conflicts with saved state or current environment",
+            }
+        }
+        assert response.headers["Cache-Control"] == "no-store"
+        assert "private-provider" not in response.text + caplog.text
+
+
 def test_authenticated_http_execution_reconnect_and_fork(console, tmp_path):
     with TestClient(create_app(models=models)) as client:
         assert client.get("/api/threads").status_code == 401

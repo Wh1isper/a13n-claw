@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from a13n_harness import (
@@ -21,7 +21,6 @@ from a13n_harness import (
 from a13n_harness.capabilities.steering import steering_input_ids
 from a13n_harness.context import AgentContext
 from a13n_harness.environment import EnvironmentMount
-from a13n_harness.environment.coordinator import create_environment_runtime
 from a13n_harness.errors import RunError
 from a13n_harness.events import HarnessExtensionEvent
 from a13n_harness.model_context import ModelContextCoordinatorCapability
@@ -317,20 +316,25 @@ class Coordinator:
                 initial = await asyncio.to_thread(self.store.start, run.id, owner)
                 prompt = prompt_for(initial)
                 known_inputs.update(item.id for item in initial)
-                async with runtime.executable.stream(
-                    prompt,
-                    previous_state=previous,
-                    bindings=replace(
-                        runtime.bindings,
-                        environment=create_environment_runtime(
-                            mounts=runtime.environments, default_mount="workspace"
-                        ),
+                if runtime.environments:
+                    stream = runtime.executable.stream(
+                        prompt,
+                        previous_state=previous,
+                        bindings=runtime.bindings,
+                        environments=runtime.environments,
+                        default_environment="workspace",
+                        deferred_resume=resume,
+                        tool_recovery="never",
                     )
-                    if runtime.environments
-                    else runtime.bindings,
-                    deferred_resume=resume,
-                    tool_recovery="never",
-                ) as stream:
+                else:
+                    stream = runtime.executable.stream(
+                        prompt,
+                        previous_state=previous,
+                        bindings=runtime.bindings,
+                        deferred_resume=resume,
+                        tool_recovery="never",
+                    )
+                async with stream:
                     live_stream = stream
                     self.streams[run.id] = stream
                     consume = asyncio.create_task(self._consume(run.id, stream))
