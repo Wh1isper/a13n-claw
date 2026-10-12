@@ -248,7 +248,8 @@ def test_previous_v4_database_migrates_without_losing_history(runtime_store, tmp
     assert upgraded.thread("operator", thread.id).title == "Retained v4 Thread"
 
 
-def test_offline_cli_can_inspect_export_and_repair_invalid_source(tmp_path, capsys):
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_offline_cli_can_inspect_export_and_repair_invalid_source(tmp_path, capsys, newline):
     import json
 
     from a13n_claw.cli import main
@@ -257,17 +258,18 @@ def test_offline_cli_can_inspect_export_and_repair_invalid_source(tmp_path, caps
     common = ["--config", str(source), "--data-root", str(root), "--json"]
     main([*common, "config", "init"])
     main([*common, "config", "reload", "--offline"])
-    valid = source.read_text()
-    source.write_text("profiles: [broken\n", encoding="utf-8")
+    valid = source.read_text().replace("\n", newline)
+    broken = f"profiles: [broken{newline}"
+    source.write_bytes(broken.encode("utf-8"))
     capsys.readouterr()
     main([*common, "config", "status", "--offline"])
     state = json.loads(capsys.readouterr().out)
-    assert state["issues"] and state["text"] == "profiles: [broken\n"
+    assert state["issues"] and state["text"] == broken
     exported = tmp_path / "broken-copy.yaml"
     main([*common, "config", "export", "--offline", "--output", str(exported)])
     assert exported.read_bytes() == source.read_bytes()
     candidate = tmp_path / "replacement.yaml"
-    candidate.write_text(valid, encoding="utf-8")
+    candidate.write_bytes(valid.encode("utf-8"))
     main(
         [
             *common,
@@ -280,4 +282,4 @@ def test_offline_cli_can_inspect_export_and_repair_invalid_source(tmp_path, caps
             state["revision"],
         ]
     )
-    assert source.read_text() == valid
+    assert source.read_bytes() == candidate.read_bytes()

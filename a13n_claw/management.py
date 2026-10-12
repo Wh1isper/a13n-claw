@@ -233,7 +233,7 @@ def run_configuration(args: argparse.Namespace, config: Configuration) -> None:
                 result = source.reload("operator", expected, dry_run=args.dry_run)
             elif action == "save":
                 result = source.save(
-                    "operator", args.file.read_text(encoding="utf-8"), args.revision
+                    "operator", args.file.read_bytes().decode("utf-8"), args.revision
                 )
             else:
                 result = source.status("operator")
@@ -245,7 +245,7 @@ def run_configuration(args: argparse.Namespace, config: Configuration) -> None:
                     "PUT",
                     "configuration",
                     {
-                        "text": args.file.read_text(encoding="utf-8"),
+                        "text": args.file.read_bytes().decode("utf-8"),
                         "expected_revision": args.revision,
                     },
                 )
@@ -272,8 +272,8 @@ def run_configuration(args: argparse.Namespace, config: Configuration) -> None:
         assert isinstance(result, dict) and isinstance(result["text"], str)
         text = result["text"]
         if args.output:
-            with args.output.open("x", encoding="utf-8") as handle:
-                handle.write(text)
+            with args.output.open("xb") as handle:
+                handle.write(text.encode("utf-8"))
         elif args.json:
             output(result["document"], as_json=True)
         else:
