@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -74,7 +74,8 @@ def test_published_08_generation_and_state_remain_compatible(runtime_store, lega
         {"kind": "docker", "image": "python:3.13-slim-bookworm", "files": "write"},
         1,
     )
-    run = admitted(runtime_store, Path("/claw-test-workspace"))
+    # Preserve the Linux daemon path recorded by 0.8, even on a Windows test host.
+    run = admitted(runtime_store, PurePosixPath("/claw-test-workspace"))
     assert target_definition(run) == legacy_record.definition
     assert digest(target_definition(run)) == legacy_record.generation
     target = DockerTarget(legacy_record)

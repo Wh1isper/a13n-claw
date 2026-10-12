@@ -1,7 +1,7 @@
 import asyncio
 import os
 from contextlib import closing
-from pathlib import Path
+from pathlib import Path, PurePath
 
 import docker
 import pytest
@@ -19,7 +19,9 @@ from a13n_claw.environments import EnvironmentManager
 from a13n_claw.storage import Store
 
 
-def admitted(store: Store, workspace: Path, thread_id: str | None = None, request: str = "first"):
+def admitted(
+    store: Store, workspace: PurePath, thread_id: str | None = None, request: str = "first"
+):
     thread_id = thread_id or store.create_thread("operator", "Workspace", "default").id
     receipt = store.admit(
         "operator", thread_id, InputRequest(request_id=request, text="work"), str(workspace)
