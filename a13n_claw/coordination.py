@@ -36,75 +36,6 @@ from a13n_claw.domain import (
 if TYPE_CHECKING:
     from a13n_claw.storage import Store
 
-SCHEMA = """
-ALTER TABLE threads ADD COLUMN active INTEGER NOT NULL DEFAULT 1;
-ALTER TABLE threads ADD COLUMN owner_main_id TEXT REFERENCES threads(id);
-ALTER TABLE delegations ADD COLUMN delivery_attention_id TEXT;
-CREATE TABLE coordination (
-    id INTEGER PRIMARY KEY CHECK(id=1), mode TEXT NOT NULL DEFAULT 'per_channel',
-    main_id TEXT REFERENCES threads(id), actor_id TEXT REFERENCES principals(id),
-    paused INTEGER NOT NULL DEFAULT 0, version INTEGER NOT NULL DEFAULT 1,
-    progress INTEGER NOT NULL DEFAULT 0, failures INTEGER NOT NULL DEFAULT 0,
-    retry_at TEXT, blocked_reason TEXT
-);
-INSERT INTO coordination(id) VALUES (1);
-CREATE TABLE worker_creations (
-    main_id TEXT NOT NULL REFERENCES threads(id), request_id TEXT NOT NULL,
-    fingerprint TEXT NOT NULL, worker_id TEXT NOT NULL REFERENCES threads(id),
-    input_id TEXT NOT NULL REFERENCES inputs(id), PRIMARY KEY(main_id,request_id)
-);
-CREATE TABLE inbox (
-    sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
-    main_id TEXT NOT NULL REFERENCES threads(id), origin TEXT NOT NULL,
-    fingerprint TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL,
-    source_thread_id TEXT REFERENCES threads(id), source_run_id TEXT REFERENCES runs(id),
-    channel_id TEXT, input_id TEXT REFERENCES inputs(id),
-    disposition TEXT NOT NULL DEFAULT 'pending',
-    version INTEGER NOT NULL DEFAULT 1, note TEXT NOT NULL DEFAULT '',
-    dependency_run_id TEXT REFERENCES runs(id), due_at TEXT, human_key TEXT,
-    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-    UNIQUE(main_id,origin)
-);
-CREATE INDEX inbox_actionable ON inbox(main_id,disposition,sequence);
-CREATE TABLE attention_notices (
-    run_id TEXT PRIMARY KEY REFERENCES runs(id), sequence INTEGER NOT NULL
-);
-CREATE TABLE automatic_inputs (
-    input_id TEXT PRIMARY KEY REFERENCES inputs(id)
-);
-CREATE TABLE automatic_runs (
-    run_id TEXT PRIMARY KEY REFERENCES runs(id), progress INTEGER NOT NULL,
-    settled INTEGER NOT NULL DEFAULT 0, automatic_only INTEGER NOT NULL DEFAULT 1
-);
-CREATE TABLE channels (
-    id TEXT PRIMARY KEY, version INTEGER NOT NULL, policy TEXT NOT NULL,
-    thread_id TEXT REFERENCES threads(id), active INTEGER NOT NULL DEFAULT 1,
-    qualified_key TEXT NOT NULL
-);
-CREATE UNIQUE INDEX active_channel_key ON channels(qualified_key) WHERE active=1;
-CREATE TABLE ingress (
-    channel_id TEXT NOT NULL REFERENCES channels(id), event_id TEXT NOT NULL,
-    fingerprint TEXT NOT NULL, receipt TEXT NOT NULL,
-    PRIMARY KEY(channel_id,event_id)
-);
-CREATE TABLE external_assets (
-    asset_id TEXT NOT NULL REFERENCES assets(id), channel_id TEXT NOT NULL REFERENCES channels(id),
-    event_id TEXT NOT NULL, sender TEXT NOT NULL, addressed INTEGER NOT NULL,
-    PRIMARY KEY(asset_id,channel_id,event_id)
-);
-CREATE TABLE deliveries (
-    id TEXT PRIMARY KEY, thread_id TEXT NOT NULL REFERENCES threads(id),
-    run_id TEXT NOT NULL REFERENCES runs(id), actor_id TEXT NOT NULL REFERENCES principals(id),
-    request_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
-    channel_id TEXT NOT NULL REFERENCES channels(id), channel_version INTEGER NOT NULL,
-    text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
-    version INTEGER NOT NULL DEFAULT 1, transport_receipt TEXT, error TEXT,
-    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-    UNIQUE(thread_id,request_id)
-);
-CREATE INDEX delivery_pending ON deliveries(status);
-"""
-
 
 class Coordination:
     def __init__(self, store: Store):
@@ -485,14 +416,13 @@ class Coordination:
             )
 
     def track_automatic_input(self, db: sqlite3.Connection, receipt: InputReceipt) -> None:
-        db.execute("INSERT OR IGNORE INTO automatic_inputs VALUES (?)", (receipt.id,))
+        db.execute("UPDATE inputs SET automatic=1 WHERE id=?", (receipt.id,))
         self.refresh_automatic_run(db, receipt.run_id)
 
     def refresh_automatic_run(self, db: sqlite3.Connection, run_id: str) -> None:
         """Input provenance survives transfers; caller-controlled source labels do not count."""
         counts = db.execute(
-            "SELECT COUNT(*),COUNT(a.input_id) FROM inputs i LEFT JOIN automatic_inputs a "
-            "ON a.input_id=i.id WHERE i.run_id=?",
+            "SELECT COUNT(*),SUM(automatic) FROM inputs WHERE run_id=?",
             (run_id,),
         ).fetchone()
         if counts[1]:
@@ -825,7 +755,7 @@ class Coordination:
                     active_run = self.store._run(db, active[0])
                     self.store._authorize_run(db, active_run)
                     notice = db.execute(
-                        "SELECT sequence FROM attention_notices WHERE run_id=?", (active[0],)
+                        "SELECT notice_sequence FROM automatic_runs WHERE run_id=?", (active[0],)
                     ).fetchone()
                     if notice and notice[0] >= backlog[1]:
                         return
@@ -842,12 +772,11 @@ class Coordination:
                     ),
                     workspace,
                 )
-                db.execute(
-                    "INSERT INTO attention_notices VALUES (?,?) ON CONFLICT(run_id) "
-                    "DO UPDATE SET sequence=excluded.sequence",
-                    (receipt.run_id, backlog[1]),
-                )
                 self.track_automatic_input(db, receipt)
+                db.execute(
+                    "UPDATE automatic_runs SET notice_sequence=? WHERE run_id=?",
+                    (backlog[1], receipt.run_id),
+                )
             except ClawError as exc:
                 db.execute("ROLLBACK TO wake_admission")
                 db.execute("UPDATE coordination SET blocked_reason=? WHERE id=1", (exc.code,))

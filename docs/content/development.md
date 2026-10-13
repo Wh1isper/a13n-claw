@@ -26,6 +26,23 @@ make docs-build
 
 `make build` builds the console first, then the wheel and sdist. Direct `uv build` requires a prior console build and fails if assets are absent. Editable installs do not require assets until you serve the console. Generated assets are not committed, but both distributions contain them; the sdist also contains frontend source. Installation and sdist-to-wheel rebuilds do not require Node.js. `make artifact-check` installs both wheels outside the checkout and tests real HTTP responses and their referenced JavaScript/CSS. `make image-check` also verifies non-root serving and that saved configuration survives container replacement and loads at the next startup.
 
+## SQLite migrations
+
+`a13n_claw/database/schema.py` owns SQLAlchemy Core metadata. `database/migrations/versions/` owns the linear Alembic history shipped in the wheel and sdist. Runtime reads and writes remain short `sqlite3` transactions in `storage.py`, coordination, and messaging; metadata does not introduce an ORM or a second runtime store.
+
+After changing metadata, generate a revision against a temporary database:
+
+```bash
+make db-migrate msg="describe the schema change"
+uv run --locked ruff check --select I --fix a13n_claw/database/migrations/versions
+uv run --locked ruff format a13n_claw/database/migrations/versions
+uv run --locked pytest tests/test_migrations.py
+```
+
+Review the generated operations and add any required data backfill. Autogeneration cannot infer renames or application-level transformations. Revisions keep their own historical definitions; never import current metadata into an upgrade. SQLite batch operations support changes requiring table rebuilds. The runner checks foreign keys before committing, so schema, data, and revision roll back together on failure. Keep one migration head and add a populated-upgrade regression for each subsequent revision. Downgrades use a pre-upgrade backup, not reverse migrations.
+
+The baseline is a development reset: earlier `user_version` databases require a fresh data root. See [backup and restart](./operations.md#backup-and-restart). Future changes append migrations rather than editing a released baseline. Tests cover clean creation, metadata parity, repeated opens, unknown revisions, failed DDL/data rollback, and generated batch upgrades with retained work.
+
 ## Documentation
 
 Portable Markdown lives under `docs/content/`. The Fumadocs application under `docs/` uses Next.js static export. Run `make docs-serve` to preview it and `make docs-build` to build the site and check internal links and anchors.

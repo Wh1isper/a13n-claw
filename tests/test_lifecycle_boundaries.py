@@ -20,7 +20,6 @@ from a13n_claw.decisions import RESULTS
 from a13n_claw.domain import ClawError, InputRequest, Principal, ProfileDefinition
 from a13n_claw.environments import EnvironmentManager, target_definition
 from a13n_claw.runtime import Runtime
-from a13n_claw.storage import Store
 
 
 @pytest.mark.parametrize("discard_next", [False, True])
@@ -106,29 +105,6 @@ def test_creation_identity_is_atomic_and_does_not_rediscover_defaults(runtime_st
     assert store.create_thread("operator", "Work", request_id="create").id == results[0].id
     with pytest.raises(ClawError, match="identity was reused"):
         store.create_thread("operator", "Different", request_id="create")
-
-
-@pytest.mark.parametrize("version", [1, 2])
-def test_schema_upgrade_retains_existing_history(tmp_path, version):
-    from a13n_claw.storage import _SCHEMA
-
-    path = tmp_path / "legacy.sqlite3"
-    # Build the actual old schema, not a new database with a false version marker.
-    with sqlite3.connect(path) as db:
-        db.executescript(_SCHEMA)
-        if version == 1:
-            db.execute("DROP TABLE thread_creations")
-        db.execute(f"PRAGMA user_version={version}")
-        db.execute(
-            "INSERT INTO threads(id,title,profile_id,created_at) "
-            "VALUES ('retained','Retained','default','2026-01-01')"
-        )
-    reopened = Store(path)
-    reopened.bootstrap("operator-token-hash")
-    thread = reopened.thread("operator", "retained")
-    assert thread.title == "Retained" and thread.active and thread.owner_main_id is None
-    assert reopened.coordination.mode() == "per_channel"
-    assert Store(path).thread("operator", thread.id) == thread
 
 
 def test_legacy_profile_limits_normalize_to_one_native_owner():

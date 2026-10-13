@@ -476,6 +476,23 @@ def test_per_channel_ingress_keeps_direct_conversations(runtime_store):
     assert first["thread_id"] == second["thread_id"] and first["run_id"] == second["run_id"]
     assert len(store.inputs("operator", first["thread_id"])) == 2
     assert not store.coordination.view("operator")["main_id"]
+    store.claim(first["run_id"], "owner", "/shared")
+    initial = store.start(first["run_id"], "owner")
+    late = receive(messaging, "late")
+    store.publish(
+        first["run_id"],
+        "owner",
+        HarnessState.new(thread_id=first["thread_id"]),
+        incorporated=tuple(item.id for item in initial),
+        status="completed",
+    )
+    successor = store.runs("operator", first["thread_id"])[-1]
+    assert successor.id != first["run_id"]
+    reopened = Messaging(Store(store.path))
+    replay = receive(reopened, "late")
+    assert replay["input_id"] == late["input_id"]
+    assert replay["run_id"] == successor.id
+    assert len(store.inputs("operator", first["thread_id"])) == 3
 
 
 @pytest.mark.parametrize("barrier", ["paused", "delivery_reconciliation_required"])

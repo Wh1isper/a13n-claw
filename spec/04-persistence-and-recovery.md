@@ -23,6 +23,12 @@ Accepted work and pending delivery are durable application facts. External clien
 
 Native runtime objects, live credentials, connection handles, process-local locks, stream subscribers, and shell observation handles are not restorable execution authority. Saved references must be validated before use.
 
+## Schema Compatibility
+
+Startup applies forward schema migrations under exclusive Instance ownership before loading application state, reconciling work, or dispatching execution. Each upgrade preserves accepted work and commits schema, transformed data, and revision identity together. A failed upgrade leaves the prior committed state available for correction and retry. An unknown revision blocks startup without resetting data or claiming compatibility.
+
+The current development baseline replaces the earlier pre-migration schemas; those disposable databases require a fresh data root. From this baseline onward, schema evolution preserves existing data through appended migrations. Returning to an older application requires a matching pre-upgrade backup. Configuration files and independently owned working data retain their own lifecycles.
+
 ## Checkpoint Publication
 
 Claw retains complete Harness continuation, including referenced content required to load it. Rendered Items, summarized history, partial streams, and usage displays cannot substitute for a checkpoint.

@@ -231,21 +231,15 @@ def test_exact_bytes_revision_includes_line_endings_and_comments(runtime_store, 
     )
 
 
-def test_previous_v4_database_migrates_without_losing_history(runtime_store, tmp_path):
+def test_reopening_preserves_loaded_configuration_and_history(runtime_store, tmp_path):
     store = runtime_store
-    thread = store.create_thread("operator", "Retained v4 Thread", "default")
-    with store._transaction() as db:
-        db.execute("DROP TABLE configuration_state")
-        db.execute(
-            "CREATE TABLE configuration_applications (actor_id TEXT NOT NULL, "
-            "request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, result TEXT NOT NULL, "
-            "PRIMARY KEY(actor_id,request_id))"
-        )
-        db.execute("PRAGMA user_version=4")
-    upgraded = Store(store.path)
-    source = migrated(upgraded, tmp_path)
-    assert not source.status("operator")["pending"]
-    assert upgraded.thread("operator", thread.id).title == "Retained v4 Thread"
+    thread = store.create_thread("operator", "Retained Thread", "default")
+    source = migrated(store, tmp_path)
+    before = source.status("operator")
+    reopened = Store(store.path)
+    source = ConfigurationFile(reopened, source.path)
+    assert source.status("operator") == before
+    assert reopened.thread("operator", thread.id).title == "Retained Thread"
 
 
 @pytest.mark.parametrize("newline", ["\n", "\r\n"])
