@@ -3,7 +3,6 @@ import {
   Api,
   allowed,
   message,
-  pretty,
   useRemote,
   type Principal,
   type Resource,
@@ -64,12 +63,14 @@ export function CoordinationPage({
   profiles,
   active,
   navigate,
+  openSettings,
 }: {
   api: Api;
   actor: Principal;
   profiles: Resource[];
   active: boolean;
   navigate: (id: string) => void;
+  openSettings?: () => void;
 }) {
   const state = useRemote<CoordinationState>(
     api,
@@ -104,7 +105,6 @@ export function CoordinationPage({
   );
   const [editing, setEditing] = useState<InboxItem | null>(null);
   const [delivery, setDelivery] = useState<Delivery | null>(null);
-  const [channel, setChannel] = useState<Channel | null>(null);
   const control = useCommand<Control, CoordinationState>(
     "coordination-control",
   );
@@ -507,49 +507,16 @@ export function CoordinationPage({
                 Vendor adapters are separate integrations.
               </p>
             </div>
-            <button
-              disabled={!!channel}
-              onClick={() =>
-                setChannel({
-                  id: "",
-                  version: 0,
-                  active: true,
-                  policy: {
-                    platform: "http",
-                    account: "default",
-                    channel: "",
-                    ingress_actor_id: actor.id,
-                    execution_actor_id: actor.id,
-                    allowed_senders: [],
-                    enabled: true,
-                    inbound: true,
-                    outbound: false,
-                    group: false,
-                    require_addressed: true,
-                    shared_context_acknowledged: false,
-                    profile_id: null,
-                    delivery_url: null,
-                    credential_env: null,
-                  },
-                })
-              }
-            >
-              Add Channel
-            </button>
+            {openSettings && (
+              <button onClick={openSettings}>Edit in Settings</button>
+            )}
           </div>
+          <p className="config-tip">
+            Channel definitions live in the configuration file. Open Settings →
+            Channels to edit, save and load them. This view shows loaded
+            bindings.
+          </p>
           <ErrorNotice>{channels.error}</ErrorNotice>
-          {channel && (
-            <ChannelEditor
-              key={`${channel.id}:${channel.version}`}
-              api={api}
-              snapshot={channel}
-              close={() => setChannel(null)}
-              done={() => {
-                setChannel(null);
-                refresh();
-              }}
-            />
-          )}
           {channels.data?.map((item) => (
             <article className="attention-item" key={item.id}>
               <div className="section-heading">
@@ -563,12 +530,6 @@ export function CoordinationPage({
                         : "disabled"
                   }
                 />
-                <button
-                  disabled={!!channel || !item.active}
-                  onClick={() => setChannel(item)}
-                >
-                  Edit policy
-                </button>
               </div>
               <p>
                 {String(item.policy.platform)} / {String(item.policy.account)} /{" "}
@@ -778,88 +739,6 @@ function DeliveryEditor({
       <div className="toolbar">
         <button className="primary" disabled={busy}>
           Save reconciliation
-        </button>
-        <button type="button" disabled={busy} onClick={close}>
-          Close editor
-        </button>
-      </div>
-    </form>
-  );
-}
-
-function ChannelEditor({
-  api,
-  snapshot,
-  close,
-  done,
-}: {
-  api: Api;
-  snapshot: Channel;
-  close: () => void;
-  done: () => void;
-}) {
-  const [id, setId] = useState(snapshot.id);
-  const [policy, setPolicy] = useState(pretty(snapshot.policy));
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  return (
-    <form
-      className="coordination-editor"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        setBusy(true);
-        setError("");
-        try {
-          await api.send(
-            `/channels/${encodeURIComponent(id)}`,
-            { expected_version: snapshot.version, policy: JSON.parse(policy) },
-            "PUT",
-          );
-          done();
-        } catch (reason) {
-          setError(message(reason));
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      <h3>{snapshot.version ? "Edit Channel policy" : "Bind a Channel"}</h3>
-      <p>
-        Main shares knowledge across all participating Channels. Set{" "}
-        <code>shared_context_acknowledged</code> only for conversations
-        authorized to share that context. Ingress clients do not automatically
-        get API access to Main history.
-      </p>
-      <label>
-        Binding ID
-        <input
-          value={id}
-          onChange={(e) => setId(e.target.value)}
-          disabled={!!snapshot.version}
-          required
-          pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
-        />
-      </label>
-      <label>
-        Policy JSON
-        <textarea
-          className="code-editor"
-          rows={18}
-          value={policy}
-          onChange={(e) => setPolicy(e.target.value)}
-          required
-          spellCheck={false}
-        />
-      </label>
-      <p className="subtle">
-        Use managed credential references, never literal credentials. Endpoints
-        cannot contain credentials. Existing qualified destinations cannot be
-        retargeted.
-      </p>
-      <ErrorNotice>{error}</ErrorNotice>
-      <div className="toolbar">
-        <button className="primary" disabled={busy}>
-          Save Channel policy
         </button>
         <button type="button" disabled={busy} onClick={close}>
           Close editor

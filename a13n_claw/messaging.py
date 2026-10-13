@@ -35,47 +35,57 @@ class Messaging:
         self, actor_id: str, channel_id: str, policy: ChannelPolicy, expected_version: int
     ) -> dict[str, Any]:
         with self.store._transaction() as db:
-            self.store._principal(db, actor_id).require("admin")
-            state = self.coordination.state(db)
-            if state["mode"] == "one_thread" and not policy.shared_context_acknowledged:
+            return self._save_channel(db, actor_id, channel_id, policy, expected_version)
+
+    def _save_channel(
+        self,
+        db: sqlite3.Connection,
+        actor_id: str,
+        channel_id: str,
+        policy: ChannelPolicy,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        self.store._principal(db, actor_id).require("admin")
+        state = self.coordination.state(db)
+        if state["mode"] == "one_thread" and not policy.shared_context_acknowledged:
+            raise ClawError(
+                "shared_context", "Acknowledge that Main shares context across Channels", 422
+            )
+        self.store._principal(db, policy.ingress_actor_id)
+        executor = self.store._principal(db, policy.execution_actor_id)
+        executor.require("submit")
+        prior = db.execute("SELECT * FROM channels WHERE id=?", (channel_id,)).fetchone()
+        qualified = canonical([policy.platform, policy.account, policy.channel])
+        if prior:
+            if prior["version"] != expected_version:
+                raise ClawError("version_conflict", "Channel policy changed; refresh first")
+            if not prior["active"] or prior["qualified_key"] != qualified:
                 raise ClawError(
-                    "shared_context", "Acknowledge that Main shares context across Channels", 422
+                    "channel_identity", "Create a new binding instead of retargeting old state"
                 )
-            self.store._principal(db, policy.ingress_actor_id)
-            executor = self.store._principal(db, policy.execution_actor_id)
-            executor.require("submit")
-            prior = db.execute("SELECT * FROM channels WHERE id=?", (channel_id,)).fetchone()
-            qualified = canonical([policy.platform, policy.account, policy.channel])
-            if prior:
-                if prior["version"] != expected_version:
-                    raise ClawError("version_conflict", "Channel policy changed; refresh first")
-                if not prior["active"] or prior["qualified_key"] != qualified:
-                    raise ClawError(
-                        "channel_identity", "Create a new binding instead of retargeting old state"
-                    )
-                db.execute(
-                    "UPDATE channels SET policy=?,version=version+1 WHERE id=?",
-                    (policy.model_dump_json(), channel_id),
+            db.execute(
+                "UPDATE channels SET policy=?,version=version+1 WHERE id=?",
+                (policy.model_dump_json(), channel_id),
+            )
+        else:
+            if expected_version != 0:
+                raise ClawError("version_conflict", "Channel does not exist")
+            if db.execute(
+                "SELECT 1 FROM channels WHERE qualified_key=? AND active=1", (qualified,)
+            ).fetchone():
+                raise ClawError(
+                    "channel_duplicate", "This qualified conversation already has a binding"
                 )
-            else:
-                if expected_version != 0:
-                    raise ClawError("version_conflict", "Channel does not exist")
-                if db.execute(
-                    "SELECT 1 FROM channels WHERE qualified_key=? AND active=1", (qualified,)
-                ).fetchone():
-                    raise ClawError(
-                        "channel_duplicate", "This qualified conversation already has a binding"
-                    )
-                db.execute(
-                    "INSERT INTO channels(id,version,policy,qualified_key) VALUES (?,1,?,?)",
-                    (channel_id, policy.model_dump_json(), qualified),
-                )
-            self.store._audit(db, "channel_policy", channel_id, {"actor": actor_id})
-            return {
-                "id": channel_id,
-                "version": expected_version + 1,
-                "policy": policy.model_dump(mode="json"),
-            }
+            db.execute(
+                "INSERT INTO channels(id,version,policy,qualified_key) VALUES (?,1,?,?)",
+                (channel_id, policy.model_dump_json(), qualified),
+            )
+        self.store._audit(db, "channel_policy", channel_id, {"actor": actor_id})
+        return {
+            "id": channel_id,
+            "version": expected_version + 1,
+            "policy": policy.model_dump(mode="json"),
+        }
 
     def channels(self, actor_id: str) -> list[dict[str, Any]]:
         with self.store._transaction() as db:

@@ -12,7 +12,8 @@ RUN pip install --no-cache-dir /tmp/wheels/*.whl \
     && chmod 700 /home/claw/data \
     && chown -R 10001:10001 /home/claw
 USER 10001:10001
-ENV HOME=/home/claw CLAW_DATA_ROOT=/home/claw/data CLAW_WORKSPACE=/home/claw/workspace
+ENV HOME=/home/claw CLAW_DATA_ROOT=/home/claw/data CLAW_WORKSPACE=/home/claw/workspace \
+    CLAW_CONFIG=/home/claw/data/config.yaml
 WORKDIR /home/claw/workspace
 EXPOSE 8080
 ENTRYPOINT ["a13n-claw"]

@@ -1140,3 +1140,485 @@ footer {
     grid-template-columns: 1fr;
   }
 }
+
+/* File-first settings: one source, an editorial form, and explicit load state. */
+.settings {
+  max-width: 1180px;
+  margin-inline: auto;
+}
+.settings .page-heading {
+  margin-bottom: 12px;
+}
+.settings-tabs {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+.settings-tabs button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 12px 0;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+.settings-tabs button[aria-pressed="true"] {
+  color: var(--green);
+  border-bottom-color: var(--green);
+}
+.configuration-workbench {
+  min-width: 0;
+}
+.config-source-card {
+  border: 1px solid #cfded5;
+  background: #edf4ef;
+  border-radius: 10px;
+  padding: 16px 22px;
+  margin-bottom: 20px;
+}
+.config-source-title,
+.config-editor-heading,
+.config-definition-title,
+.config-savebar,
+.config-onboarding {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.config-source-title {
+  margin-bottom: 12px;
+}
+.config-source-title h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.config-state {
+  display: inline-flex;
+  border: 1px solid #bcd4c5;
+  background: #fff;
+  color: #2b6147;
+  border-radius: 20px;
+  padding: 6px 11px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.config-state-pending {
+  color: #855a22;
+  border-color: #ddc7a1;
+  background: #fffaf0;
+}
+.config-path {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  background: #ffffffa6;
+  color: #3c6550;
+}
+.config-source-issues {
+  margin-top: 12px;
+  color: #855a22;
+}
+.config-source-card > p {
+  margin: 10px 0 14px;
+}
+.config-revisions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.config-revisions button {
+  margin-left: auto;
+  background: transparent;
+  padding: 6px 10px;
+}
+.config-editor-layout {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+.config-nav {
+  background: #fafcfb;
+  border-right: 1px solid var(--border);
+  padding: 15px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+}
+.config-nav button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 11px 12px;
+}
+.config-nav button[aria-current="page"] {
+  background: #e8f0eb;
+  color: #204e3a;
+}
+.config-nav small {
+  font-size: 10px;
+  border-radius: 4px;
+  padding: 0 5px;
+  background: #ffffffb3;
+}
+.config-editor-body {
+  min-width: 0;
+  padding: 26px 30px 32px;
+}
+.config-editor-heading {
+  align-items: flex-start;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #edf1ee;
+}
+.config-editor-heading h2 {
+  margin-bottom: 5px;
+  font-size: 21px;
+}
+.config-editor-heading p {
+  margin: 0;
+  font-size: 12px;
+}
+.config-view-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 3px;
+  background: #f7faf8;
+}
+.config-view-toggle button {
+  border: 0;
+  background: transparent;
+  padding: 6px 11px;
+  color: var(--muted);
+}
+.config-view-toggle button[aria-pressed="true"] {
+  background: #fff;
+  color: var(--green);
+  box-shadow: 0 1px 3px #244a3322;
+}
+.config-resource-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding-top: 20px;
+}
+.config-resource-tabs button {
+  overflow-wrap: anywhere;
+  background: #fff;
+  font-family: ui-monospace, monospace;
+}
+.config-resource-tabs button[aria-pressed="true"] {
+  border-color: #659c80;
+  box-shadow: inset 0 0 0 1px #659c80;
+  color: #194b32;
+}
+.config-add {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0 24px;
+  max-width: 430px;
+}
+.config-add button {
+  flex-shrink: 0;
+}
+.config-add input {
+  background: #fafcfb;
+}
+.config-definition-title {
+  margin-bottom: 12px;
+}
+.config-definition-title h3 {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+.config-definition-title button {
+  font-size: 11px;
+}
+.config-fields {
+  max-width: 760px;
+}
+.config-fields label {
+  font-size: 12px;
+}
+.config-fields small {
+  font-weight: 400;
+}
+.config-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 20px;
+}
+.config-tip {
+  background: #f3f7f4;
+  border-left: 3px solid #bfd6c7;
+  padding: 12px 15px;
+  font-size: 12px;
+  line-height: 1.7;
+  border-radius: 0 5px 5px 0;
+}
+.config-field-section {
+  border-top: 1px solid var(--border);
+  margin-top: 26px;
+  padding-top: 12px;
+}
+.config-field-section > h3 {
+  margin-bottom: 4px;
+}
+.config-field-section > p {
+  margin-bottom: 10px;
+}
+.config-choices {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 16px 16px;
+  margin: 20px 0;
+}
+.config-choices legend {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 6px;
+}
+.config-map-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+.config-map-entry {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+.config-map-entry label {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+.config-map-entry button {
+  margin-bottom: 1px;
+}
+.config-retirement {
+  border-top: 1px solid var(--border);
+  margin-top: 26px;
+  padding-top: 15px;
+}
+.config-retirement label {
+  margin-bottom: 3px;
+}
+.config-empty {
+  padding: 38px 10px;
+  text-align: center;
+}
+.config-empty p {
+  max-width: 380px;
+  margin-inline: auto;
+}
+.config-yaml {
+  margin-top: 5px;
+  tab-size: 2;
+  background: #fbfcfb;
+  white-space: pre;
+  overflow: auto;
+  min-height: 480px;
+}
+.config-source-label {
+  margin-bottom: 0;
+}
+.config-savebar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 2;
+  padding: 17px 20px;
+  margin-top: 18px;
+  border: 1px solid #c9d9ce;
+  border-radius: 9px;
+  background: #ffffffef;
+  box-shadow: 0 6px 22px #2446310d;
+  backdrop-filter: blur(10px);
+  flex-wrap: wrap;
+}
+.config-savebar strong {
+  font-size: 12px;
+  display: block;
+  margin-bottom: 4px;
+}
+.config-savebar small {
+  display: block;
+  font-size: 10px;
+}
+.config-savebar .toolbar {
+  gap: 7px;
+}
+.config-feedback {
+  color: #235b3f;
+  background: #e9f3eb;
+  border-radius: 7px;
+  padding: 13px 17px;
+}
+.config-conflict {
+  background: #fff9ee;
+  border: 1px solid #ecd8b7;
+  border-radius: 8px;
+  padding: 18px 22px;
+  margin: 18px 0;
+  font-size: 13px;
+  color: #795629;
+}
+.config-conflict p {
+  color: #816645;
+}
+.config-onboarding {
+  background: #fff;
+  border: 1px dashed #b6ccbd;
+  border-radius: 8px;
+  padding: 18px 22px;
+  margin-bottom: 20px;
+}
+.config-onboarding h3 {
+  margin: 0 0 6px;
+}
+.config-onboarding p {
+  margin: 0;
+  max-width: 660px;
+  font-size: 12px;
+}
+.config-onboarding button {
+  flex-shrink: 0;
+}
+.config-preview {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-top: 18px;
+  padding: 18px 24px;
+}
+.config-preview h3 {
+  margin-top: 0;
+}
+.config-preview ul {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+}
+.config-preview li {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+.config-preview li > span {
+  width: 55px;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+@media (max-width: 1000px) {
+  .config-editor-layout {
+    grid-template-columns: 150px minmax(0, 1fr);
+  }
+  .config-editor-body {
+    padding: 22px;
+  }
+  .config-onboarding {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+@media (max-width: 760px) {
+  .config-editor-layout {
+    display: block;
+  }
+  .config-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 9px;
+  }
+  .config-nav button {
+    flex-shrink: 0;
+    padding: 9px 11px;
+  }
+  .config-source-card {
+    padding: 18px;
+  }
+  .config-source-title {
+    flex-wrap: wrap;
+    gap: 2px;
+    margin-bottom: 10px;
+  }
+  .config-editor-body {
+    padding: 20px;
+  }
+  .config-savebar {
+    position: static;
+    padding: 16px;
+  }
+  .config-savebar .toolbar {
+    width: 100%;
+  }
+  .config-yaml {
+    min-height: 370px;
+  }
+}
+@media (max-width: 480px) {
+  .config-columns {
+    grid-template-columns: 1fr;
+  }
+  .config-editor-body {
+    padding: 16px;
+  }
+  .config-editor-heading {
+    flex-wrap: wrap;
+  }
+  .config-definition-title {
+    align-items: flex-start;
+  }
+  .config-add {
+    flex-wrap: wrap;
+  }
+  .config-add input {
+    flex: 1 1 150px;
+  }
+  .config-map-row,
+  .config-map-entry {
+    flex-wrap: wrap;
+  }
+  .config-map-entry label {
+    flex-basis: 100%;
+  }
+  .config-savebar .toolbar button {
+    flex: 1 1 auto;
+  }
+  .config-revisions {
+    gap: 9px;
+  }
+  .config-revisions button {
+    margin-left: 0;
+  }
+  .settings-tabs {
+    gap: 20px;
+  }
+}
+
+@media (max-height: 650px), (max-width: 700px) {
+  .config-savebar {
+    position: static;
+  }
+}

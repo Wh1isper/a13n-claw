@@ -17,6 +17,8 @@ from pydantic import ValidationError
 
 from a13n_claw.api import Services, router
 from a13n_claw.attention import ConversationMode
+from a13n_claw.configuration import Configuration, load_configuration
+from a13n_claw.configuration_files import ConfigurationFile
 from a13n_claw.coordinator import Coordinator
 from a13n_claw.domain import ClawError
 from a13n_claw.instance import InstanceLease, operator_token, resolve_workspace, token_hash
@@ -32,32 +34,54 @@ def create_app(
     *,
     data_root: Path | None = None,
     workspace: Path | None = None,
-    concurrency: int = 4,
+    concurrency: int | None = None,
     models: ModelFactory = provider_model,
-    mode: ConversationMode | None = None,
+    mode: str | None = None,
+    console: bool | None = None,
+    config_path: Path | None = None,
 ) -> FastAPI:
-    if not (CONSOLE_DIRECTORY / "index.html").is_file():
-        raise RuntimeError(
-            "Console assets are missing. In a source checkout, run `make console-build`; "
-            "otherwise reinstall an a13n-claw distribution containing the console."
-        )
+    source = (
+        (config_path or Path(os.environ.get("CLAW_CONFIG", "~/.a13n-claw/config.yaml")))
+        .expanduser()
+        .resolve()
+    )
+    document = load_configuration(source) if source.exists() else Configuration()
+    settings = document.server
+
+    def relative(value: str) -> Path:
+        path = Path(value).expanduser()
+        return path if path.is_absolute() else source.parent / path
+
     root = (
-        (data_root or Path(os.environ.get("CLAW_DATA_ROOT", "~/.a13n-claw"))).expanduser().resolve()
+        (
+            data_root
+            or (
+                Path(os.environ["CLAW_DATA_ROOT"])
+                if "CLAW_DATA_ROOT" in os.environ
+                else relative(settings.data_root or "~/.a13n-claw")
+            )
+        )
+        .expanduser()
+        .resolve()
     )
     configured = workspace or (
-        Path(os.environ["CLAW_WORKSPACE"]) if "CLAW_WORKSPACE" in os.environ else None
+        Path(os.environ["CLAW_WORKSPACE"])
+        if "CLAW_WORKSPACE" in os.environ
+        else relative(settings.workspace)
+        if settings.workspace
+        else None
     )
+    concurrency = concurrency if concurrency is not None else settings.concurrency
+    console = console if console is not None else settings.console
     selected = resolve_workspace(Path.cwd(), configured, root)
     if not 1 <= concurrency <= 64:
         raise ClawError("concurrency_range", "Concurrency must be between 1 and 64", 422)
 
-    selected_mode = mode or os.environ.get("CLAW_CONVERSATION_MODE", "per_channel")
-    if selected_mode not in {"per_channel", "one_thread"}:
-        raise ClawError("conversation_mode", "Choose per_channel or one_thread", 422)
-
-    conversation_mode: ConversationMode = (
-        "one_thread" if selected_mode == "one_thread" else "per_channel"
+    selected_mode = (
+        mode if mode is not None else os.environ.get("CLAW_CONVERSATION_MODE", settings.mode)
     )
+    if selected_mode is not None and selected_mode not in {"per_channel", "one_thread"}:
+        raise ClawError("conversation_mode", "Choose per_channel or one_thread", 422)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -67,16 +91,24 @@ def create_app(
         deliveries: DeliveryDispatcher | None = None
         try:
             token = await asyncio.to_thread(operator_token, root)
-            store = await asyncio.to_thread(Store, root / "claw.sqlite3")
+            store = await asyncio.to_thread(Store, root / "claw.sqlite3", initial_mode="one_thread")
             await asyncio.to_thread(store.bootstrap, token_hash(token))
             del token
             await asyncio.to_thread(store.reconcile_startup)
             await asyncio.to_thread(store.coordination.reconcile_startup)
-            await asyncio.to_thread(store.coordination.configure_mode, conversation_mode)
+            if selected_mode is not None:
+                conversation_mode: ConversationMode = (
+                    "one_thread" if selected_mode == "one_thread" else "per_channel"
+                )
+                await asyncio.to_thread(store.coordination.configure_mode, conversation_mode)
+            configuration = ConfigurationFile(store, source, launch=settings)
+            await asyncio.to_thread(configuration.initialize)
             runtime = Runtime(store, root, models=models)
             coordinator = Coordinator(store, str(selected), runtime, concurrency=concurrency)
             deliveries = DeliveryDispatcher(Messaging(store))
-            app.state.services = Services(store, runtime, coordinator, selected, deliveries)
+            app.state.services = Services(
+                store, runtime, coordinator, selected, configuration, deliveries
+            )
             await coordinator.start()
             deliveries.start()
             logger.info("Operator access token file: %s", root / "operator.token")
@@ -160,5 +192,8 @@ def create_app(
         return response
 
     app.include_router(router)
-    app.mount("/", StaticFiles(directory=CONSOLE_DIRECTORY, html=True), name="console")
+    if console and (CONSOLE_DIRECTORY / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=CONSOLE_DIRECTORY, html=True), name="console")
+    elif console:
+        logger.warning("Console assets unavailable; API remains available. Run make console-build.")
     return app

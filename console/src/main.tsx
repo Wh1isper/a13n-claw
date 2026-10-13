@@ -260,6 +260,7 @@ function Console({
               profiles={profiles.data ?? []}
               active={page === "Coordination"}
               navigate={navigate}
+              openSettings={() => setPage("Settings")}
             />
           </div>
           <div hidden={page !== "Overview"}>

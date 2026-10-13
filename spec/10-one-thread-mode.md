@@ -8,7 +8,7 @@ One Thread is an Instance conversation mode with one canonical Main Thread coord
 
 ## Instance Mode and Lifetime
 
-The Instance selects either per-Channel mode or One Thread mode at startup. The selection is exclusive across the Instance, not a mix configured separately for individual Channels. Per-Channel mode retains direct Channel-to-Thread conversation admission. One Thread mode routes eligible external conversation messages into the Main Thread's durable Inbox instead of inserting every message body into its prompt.
+A new Instance defaults to One Thread mode. An existing Instance retains its saved mode when no explicit startup override is supplied. Per-Channel mode remains an explicit alternative; changing the product default never implicitly switches an existing Instance. The Instance selects either per-Channel mode or One Thread mode at startup. The selection is exclusive across the Instance, not a mix configured separately for individual Channels. Per-Channel mode retains direct Channel-to-Thread conversation admission. One Thread mode routes eligible external conversation messages into the Main Thread's durable Inbox instead of inserting every message body into its prompt.
 
 The Main Thread's identity and worker ownership survive Runs and process restarts. Mode changes need not migrate prior histories, bindings, or pending state: old-mode state may be explicitly discarded or left inactive. It must not silently become current-mode input, a delivery destination, or execution authority. No cross-mode history continuity is promised. Switching mode still requires orderly shutdown and settlement of active ownership; it cannot erase uncertain effects by reclassifying them as new work.
 

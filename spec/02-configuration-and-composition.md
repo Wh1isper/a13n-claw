@@ -4,7 +4,17 @@
 
 Claw owns the configuration consumed by its API-driven product. A Profile is a reusable application definition, not an executable runtime object. The backend validates and accepts configuration; the console edits and selects it through the same application boundary used by other authorized clients.
 
-Mutable defaults and fixed Run compositions have separate lifecycles. Accepted application state is the configuration authority. Importing or exporting configuration is a management operation, not a second authority competing with that state.
+Mutable defaults and fixed Run compositions have separate lifecycles. One operator-selected configuration file owns desired definitions and launch settings. The database retains the last successfully loaded definitions and the compositions captured for accepted work; it is a derived execution view, not a separately editable configuration catalog.
+
+## Headless Configuration
+
+An operator can configure and administer an Instance without a browser. Startup validates and loads the selected file before dispatching work. Runtime file edits take effect through explicit reload, without a file watcher. Launch settings select the listener, data root, workspace, concurrency, Console availability, and optional conversation-mode override; changing these fields requires restart.
+
+The file describes the complete desired catalog. Omitted resources retire and omitted Channels disable, preserving history and captured compositions. An explicit retirement marker can retain an inactive definition in the file. Runtime-generated resource versions stay in the database; operators do not author them in configuration. Exports preserve the selected source and credential references, never managed secret values. An existing database without a configuration file requires explicit migration; startup cannot silently erase its catalog.
+
+Saving the file and loading it have separate completion boundaries. A managed save validates the candidate and checks the exact source revision the editor read before replacing the file. It preserves comments and unrelated fields during structured edits. Identical retries are harmless; conflicting writes preserve the draft and report the conflict. External text editors need not honor application locks, so source drift remains observable. Reload validates the resulting active Profile graph and Channel policies, then atomically publishes their loaded state. A failed reload leaves the previous loaded state intact even when the file has already changed. A source revision identifies file bytes; it is distinct from resource versions and from provider readiness.
+
+Offline initialization and configuration require exclusive Instance ownership. They use the same application validation and persistence boundary without dispatching work or reconciling interrupted execution. Operations against a running owner use authenticated APIs and cannot fall back to offline database access on a network failure. Definition validation does not assert provider connectivity. Credentials use a separate protected input path rather than command-line values or ordinary configuration exports.
 
 ## Definition Boundaries
 
@@ -29,7 +39,7 @@ The Instance owns its one workspace root and the memory/automatic-organization s
 
 Claw distinguishes editing a shared resource from selecting a different resource. Work that resolves that shared resource after an accepted edit can use the new content; work already accepted retains its captured content. Historical Runs remain explainable even if a resource is renamed or retired.
 
-A submitted configuration change checks the version the editor actually read. Conflicting edits fail visibly without discarding local input. A combined configuration change and work submission either accepts the intended combination or rejects it; it never executes against an accidental mixture.
+A submitted configuration change checks the source revision the editor actually read. Resource-oriented compatibility operations also check their resource version and route through the same file owner. Conflicting edits fail visibly without discarding local input. A combined configuration change and work submission either accepts the intended combination or rejects it; it never executes against an accidental mixture.
 
 ## Capture Flow
 
@@ -61,4 +71,4 @@ Provider implementations are trusted installation choices. A Profile, imported d
 1. Every accepted Run has an inspectable effective composition independent of later edits.
 2. Mutable defaults, shared resource content, and captured execution behavior remain distinguishable.
 3. Configuration changes never replace or reset Thread history implicitly.
-4. All clients use one validation and publication boundary; saved configuration and current readiness are separate facts.
+4. All clients use one file authority and validation boundary; file save, runtime load, launch settings, and current readiness are separate facts.

@@ -39,10 +39,11 @@ def test_unknown_paths_are_not_html_or_private_files(console, path):
         assert "not public" not in response.text
 
 
-def test_missing_bundle_is_actionable(console):
+def test_missing_bundle_keeps_api_available(console):
     (console / "index.html").unlink()
-    with pytest.raises(RuntimeError, match="make console-build"):
-        app.create_app()
+    with TestClient(app.create_app()) as client:
+        assert client.get("/").status_code == 404
+        assert client.get("/api/instance").status_code == 401
 
 
 def test_serve_defaults(console):
@@ -58,9 +59,8 @@ def test_serve_bind_options(console):
     assert run.call_args.kwargs == {"host": "0.0.0.0", "port": 9000}
 
 
-def test_serve_missing_bundle_reports_cli_error(console, capsys):
+def test_serve_missing_bundle_starts_api(console):
     (console / "index.html").unlink()
-    with pytest.raises(SystemExit) as result:
+    with patch("uvicorn.run") as run:
         main(["serve"])
-    assert result.value.code == 2
-    assert "make console-build" in capsys.readouterr().err
+    assert run.call_args.kwargs == {"host": "127.0.0.1", "port": 8080}

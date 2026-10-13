@@ -6,11 +6,13 @@ A fresh, local-first agent runtime project targeting [a13n Harness](https://gith
 
 **Current source scope: a single-node runtime and real conversation Console.** Run agents through Harness with durable Threads, inputs, checkpoints, decisions, cancellation/recovery, delegated work, and checkpoint forks. Manage versioned Profiles, model credentials, skills, MCP servers, scoped clients, reusable Local/Docker targets, and retained files through authenticated APIs and the Console. All Threads share one explicitly selected workspace.
 
-Optional [One Thread mode](docs/content/one-thread.md) adds a persistent Main coordinator, owned workers, a durable Inbox with automatic drain and pause controls, and explicit Main-only delivery. Generic HTTP ingress and egress are available; vendor-specific embedded adapters, file-memory organization, and scheduling/automation are later deliveries. Published `0.0.2` remains an informational CLI placeholder; these runtime capabilities require a source build until a runtime release is published.
+[One Thread mode](docs/content/one-thread.md), the default for new Instances, provides a persistent Main coordinator, owned workers, a durable Inbox with automatic drain and pause controls, and explicit Main-only delivery. Generic HTTP ingress and egress are available; vendor-specific embedded adapters, file-memory organization, and scheduling/automation are later deliveries. Published `0.0.2` remains an informational CLI placeholder; these runtime capabilities require a source build until a runtime release is published.
 
 ## Start from source
 
-From a source checkout:
+For configuration and operations without a browser, follow [Headless configuration and CLI](docs/content/configuration.md). One YAML file is the configuration source for the CLI and Console. Startup loads it; later edits use explicit save and reload, with whole-file revision checks. Exports retain authored source and credential references. `serve --no-console` needs no frontend build. Existing Instances keep their saved conversation mode unless explicitly changed.
+
+To also use the optional Console from a source checkout:
 
 ```bash
 uv sync --locked
@@ -21,7 +23,7 @@ mkdir -p "$HOME/claw-workspace"
 uv run a13n-claw serve --workspace "$HOME/claw-workspace"
 ```
 
-Open `http://127.0.0.1:8080` and connect with the locally generated `~/.a13n-claw/operator.token`. Add a credential, model, environment, and Profile in Settings before creating work. See [Getting started](docs/content/getting-started.md) for the complete setup.
+Open `http://127.0.0.1:8080` and connect with the locally generated `~/.a13n-claw/operator.token`. Use Settings' starter definitions, review the model and Profile, then save and load the file. Store credential values separately before creating work. See [Getting started](docs/content/getting-started.md) for the complete setup.
 
 The default workspace is startup cwd; the default data root is `~/.a13n-claw`. They must be separate, non-nested directories. Local shell is host-account execution, not a sandbox. Managed credentials are plaintext in the protected SQLite database. Read [Operations](docs/content/operations.md) before granting access, exposing the listener, or backing up data.
 

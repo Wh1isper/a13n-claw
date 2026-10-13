@@ -51,6 +51,7 @@ def console(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     monkeypatch.setattr(app, "CONSOLE_DIRECTORY", directory)
+    monkeypatch.setenv("CLAW_CONFIG", str(tmp_path / "config.yaml"))
     monkeypatch.setenv("CLAW_DATA_ROOT", str(tmp_path / "data"))
     monkeypatch.setenv("CLAW_WORKSPACE", str(workspace))
     return directory

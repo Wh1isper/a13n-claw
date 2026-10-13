@@ -84,6 +84,8 @@ def check_wheel(wheel: Path, root: Path, expected: str) -> None:
                 "-m",
                 "a13n_claw",
                 "serve",
+                "--config",
+                str(root / "config.yaml"),
                 "--port",
                 str(port),
                 "--data-root",
@@ -104,12 +106,19 @@ def check_wheel(wheel: Path, root: Path, expected: str) -> None:
             print(log.read())
             raise
         finally:
-            process.terminate()
-            try:
+            if os.name == "nt":
+                # Windows virtualenv python.exe can be a launcher with a child interpreter.
+                # Terminating only the launcher leaves SQLite open in that child.
+                if process.poll() is None:
+                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], check=True)
                 process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+            else:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
 
 
 def check(dist: Path, expected: str) -> None:

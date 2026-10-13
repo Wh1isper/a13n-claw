@@ -157,7 +157,7 @@ CREATE TABLE assets (
 
 
 class Store:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, initial_mode: str = "per_channel"):
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         with self._connection() as db:
@@ -170,7 +170,7 @@ class Store:
                 db.executescript(
                     "BEGIN IMMEDIATE;\n" + _THREAD_CREATIONS + "\nPRAGMA user_version = 2;\nCOMMIT;"
                 )
-            elif version not in {2, 3}:
+            elif version not in {2, 3, 4, 5}:
                 raise ClawError(
                     "schema_incompatible", "This database requires another Claw version"
                 )
@@ -178,6 +178,15 @@ class Store:
                 db.executescript(
                     "BEGIN IMMEDIATE;\n" + COORDINATION_SCHEMA + "\nPRAGMA user_version=3;\nCOMMIT;"
                 )
+            if version < 5:
+                db.executescript(
+                    "BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS configuration_state ("
+                    "id INTEGER PRIMARY KEY CHECK(id=1), path TEXT NOT NULL, "
+                    "revision TEXT NOT NULL, document TEXT NOT NULL);"
+                    "PRAGMA user_version=5; COMMIT;"
+                )
+            if version == 0:
+                db.execute("UPDATE coordination SET mode=? WHERE id=1", (initial_mode,))
         self.coordination = Coordination(self)
 
     @contextmanager
@@ -372,30 +381,38 @@ class Store:
 
     def import_resources(self, actor_id: str, changes: list[ResourceChange]) -> list[Resource]:
         """Publish an entire version-checked configuration import or none of it."""
+        with self._transaction() as db:
+            return self._import_resources(db, actor_id, changes)
+
+    def _import_resources(
+        self,
+        db: sqlite3.Connection,
+        actor_id: str,
+        changes: list[ResourceChange],
+    ) -> list[Resource]:
         if len({(item.kind, item.id) for item in changes}) != len(changes):
             raise ClawError("duplicate_resource", "An import cannot change a resource twice", 422)
-        with self._transaction() as db:
-            self._principal(db, actor_id).require("admin")
-            result: list[Resource] = []
-            for item in changes:
-                content = validate_resource(item.kind, item.content)
-                row = db.execute(
-                    "SELECT version FROM resources WHERE kind=? AND id=?", (item.kind, item.id)
-                ).fetchone()
-                actual = row[0] if row else 0
-                if actual != item.expected_version:
-                    raise ClawError(
-                        "version_conflict", "Resource changed; preserve your draft and refresh"
-                    )
-                db.execute(
-                    "INSERT INTO resources VALUES (?, ?, ?, ?, ?) "
-                    "ON CONFLICT(kind,id) DO UPDATE SET "
-                    "version=excluded.version, content=excluded.content, retired=excluded.retired",
-                    (item.kind, item.id, actual + 1, canonical(content), item.retired),
+        self._principal(db, actor_id).require("admin")
+        result: list[Resource] = []
+        for item in changes:
+            content = validate_resource(item.kind, item.content)
+            row = db.execute(
+                "SELECT version FROM resources WHERE kind=? AND id=?", (item.kind, item.id)
+            ).fetchone()
+            actual = row[0] if row else 0
+            if actual != item.expected_version:
+                raise ClawError(
+                    "version_conflict", "Resource changed; preserve your draft and refresh"
                 )
-                self._audit(db, "resource_updated", item.id, {"actor": actor_id, "kind": item.kind})
-                result.append(self._resource(db, item.kind, item.id))
-            return result
+            db.execute(
+                "INSERT INTO resources VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(kind,id) DO UPDATE SET "
+                "version=excluded.version, content=excluded.content, retired=excluded.retired",
+                (item.kind, item.id, actual + 1, canonical(content), item.retired),
+            )
+            self._audit(db, "resource_updated", item.id, {"actor": actor_id, "kind": item.kind})
+            result.append(self._resource(db, item.kind, item.id))
+        return result
 
     def resources(self, actor_id: str) -> list[Resource]:
         with self._transaction() as db:
