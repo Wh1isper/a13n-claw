@@ -71,6 +71,21 @@ def check_wheel(wheel: Path, root: Path, expected: str) -> None:
     )
     if result.stdout.strip() != f"a13n-claw {expected}":
         raise ValueError(f"Unexpected installed version: {result.stdout!r}")
+    # Exercise package-owned migration assets from the installed wheel, including
+    # the template needed by the development generator and repeated startup.
+    subprocess.run(
+        [
+            str(executable),
+            "-c",
+            "from pathlib import Path; "
+            "from a13n_claw.database.migration import DatabaseMigrator, MIGRATIONS_PATH; "
+            "assert (MIGRATIONS_PATH / 'script.py.mako').is_file(); "
+            "migrator = DatabaseMigrator(Path('migration-check.sqlite3')); "
+            "migrator.upgrade(); migrator.upgrade()",
+        ],
+        cwd=root,
+        check=True,
+    )
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]

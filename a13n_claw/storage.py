@@ -18,8 +18,8 @@ from pathlib import Path
 from a13n_harness import DeferredToolResume, HarnessState
 from pydantic import JsonValue, TypeAdapter
 
-from a13n_claw.coordination import SCHEMA as COORDINATION_SCHEMA
 from a13n_claw.coordination import Coordination
+from a13n_claw.database.migration import DatabaseMigrator
 from a13n_claw.decisions import REQUESTS, RESULTS, validate_answer, validate_wait
 from a13n_claw.domain import (
     MAX_ASSET_BYTES,
@@ -47,146 +47,16 @@ from a13n_claw.domain import (
     validate_resource,
 )
 
-_THREAD_CREATIONS = """
-CREATE TABLE thread_creations (
-    actor_id TEXT NOT NULL REFERENCES principals(id), request_id TEXT NOT NULL,
-    fingerprint TEXT NOT NULL, thread_id TEXT NOT NULL REFERENCES threads(id),
-    PRIMARY KEY(actor_id, request_id)
-);
-"""
-
-_SCHEMA = (
-    """
-CREATE TABLE resources (
-    kind TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL,
-    content TEXT NOT NULL, retired INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY(kind, id)
-);
-CREATE TABLE credentials (
-    name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-CREATE TABLE principals (
-    id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, content TEXT NOT NULL
-);
-CREATE TABLE threads (
-    id TEXT PRIMARY KEY, title TEXT NOT NULL, profile_id TEXT NOT NULL,
-    version INTEGER NOT NULL DEFAULT 1, checkpoint_id TEXT,
-    parent_thread_id TEXT REFERENCES threads(id), parent_run_id TEXT,
-    fork_checkpoint_id TEXT REFERENCES checkpoints(id),
-    archived INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
-);
-CREATE TABLE runs (
-    sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
-    thread_id TEXT NOT NULL REFERENCES threads(id),
-    actor_id TEXT NOT NULL REFERENCES principals(id),
-    status TEXT NOT NULL, composition TEXT NOT NULL, checkpoint_id TEXT,
-    recovery_of TEXT REFERENCES runs(id), recovery_required INTEGER NOT NULL DEFAULT 0,
-    reconciled_at TEXT,
-    cancel_requested INTEGER NOT NULL DEFAULT 0,
-    output TEXT, error TEXT, owner TEXT, created_at TEXT NOT NULL, finished_at TEXT
-);
-CREATE INDEX runs_thread_order ON runs(thread_id, sequence);
-CREATE UNIQUE INDEX one_thread_owner ON runs(thread_id)
-    WHERE status IN ('preparing', 'running', 'waiting');
-CREATE TABLE inputs (
-    sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
-    thread_id TEXT NOT NULL REFERENCES threads(id), run_id TEXT NOT NULL REFERENCES runs(id),
-    actor_id TEXT NOT NULL REFERENCES principals(id), request_id TEXT NOT NULL,
-    fingerprint TEXT NOT NULL, text TEXT NOT NULL, source TEXT NOT NULL,
-    disposition TEXT NOT NULL, created_at TEXT NOT NULL,
-    attachment_ids TEXT NOT NULL DEFAULT '[]',
-    UNIQUE(actor_id, request_id)
-);
-CREATE INDEX inputs_run_order ON inputs(run_id, sequence);
-CREATE TABLE checkpoints (
-    id TEXT PRIMARY KEY, thread_id TEXT NOT NULL REFERENCES threads(id),
-    run_id TEXT REFERENCES runs(id), state TEXT NOT NULL, created_at TEXT NOT NULL
-);
-CREATE TABLE decisions (
-    id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
-    checkpoint_id TEXT NOT NULL REFERENCES checkpoints(id), requests TEXT NOT NULL,
-    response TEXT, actor_id TEXT REFERENCES principals(id), created_at TEXT NOT NULL,
-    answered_at TEXT
-);
-CREATE UNIQUE INDEX one_pending_decision ON decisions(run_id) WHERE response IS NULL;
-CREATE TABLE deferred_inputs (
-    run_id TEXT PRIMARY KEY REFERENCES runs(id),
-    checkpoint_id TEXT NOT NULL REFERENCES checkpoints(id),
-    requests TEXT NOT NULL, response TEXT NOT NULL,
-    actor_id TEXT NOT NULL REFERENCES principals(id)
-);
-CREATE TABLE delegations (
-    id TEXT PRIMARY KEY, parent_run_id TEXT NOT NULL REFERENCES runs(id),
-    child_run_id TEXT NOT NULL UNIQUE REFERENCES runs(id),
-    request_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
-    cancel_policy TEXT NOT NULL, notify INTEGER NOT NULL,
-    delivery_input_id TEXT REFERENCES inputs(id), delivery_error TEXT,
-    UNIQUE(parent_run_id,request_id)
-);
-CREATE TABLE forks (
-    actor_id TEXT NOT NULL REFERENCES principals(id), request_id TEXT NOT NULL,
-    fingerprint TEXT NOT NULL, thread_id TEXT NOT NULL REFERENCES threads(id),
-    PRIMARY KEY(actor_id,request_id)
-);
-CREATE TABLE recoveries (
-    actor_id TEXT NOT NULL REFERENCES principals(id), request_id TEXT NOT NULL,
-    fingerprint TEXT NOT NULL, run_id TEXT NOT NULL REFERENCES runs(id),
-    PRIMARY KEY(actor_id, request_id)
-);
-CREATE TABLE audit (
-    sequence INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, subject_id TEXT NOT NULL,
-    detail TEXT NOT NULL, created_at TEXT NOT NULL
-);
-CREATE TABLE targets (
-    id TEXT PRIMARY KEY, thread_id TEXT NOT NULL REFERENCES threads(id), generation TEXT NOT NULL,
-    definition TEXT NOT NULL, provider_state TEXT, status TEXT NOT NULL, operation_id TEXT,
-    error TEXT, updated_at TEXT NOT NULL, UNIQUE(thread_id, generation)
-);
-CREATE TABLE assets (
-    id TEXT PRIMARY KEY, thread_id TEXT NOT NULL REFERENCES threads(id),
-    run_id TEXT REFERENCES runs(id), actor_id TEXT NOT NULL REFERENCES principals(id),
-    request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, kind TEXT NOT NULL,
-    name TEXT NOT NULL, media_type TEXT NOT NULL, size INTEGER NOT NULL,
-    sha256 TEXT NOT NULL, created_at TEXT NOT NULL, content BLOB NOT NULL,
-    UNIQUE(actor_id,request_id)
-);
-"""
-    + _THREAD_CREATIONS
-    + "PRAGMA user_version = 2;"
-)
-
 
 class Store:
     def __init__(self, path: Path, *, initial_mode: str = "per_channel"):
         self.path = path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connection() as db:
-            db.execute("PRAGMA journal_mode=WAL")
-            version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version == 0:
-                # A single startup owner applies the initial schema atomically.
-                db.executescript("BEGIN IMMEDIATE;\n" + _SCHEMA + "\nCOMMIT;")
-            elif version == 1:
-                db.executescript(
-                    "BEGIN IMMEDIATE;\n" + _THREAD_CREATIONS + "\nPRAGMA user_version = 2;\nCOMMIT;"
-                )
-            elif version not in {2, 3, 4, 5}:
-                raise ClawError(
-                    "schema_incompatible", "This database requires another Claw version"
-                )
-            if version < 3:
-                db.executescript(
-                    "BEGIN IMMEDIATE;\n" + COORDINATION_SCHEMA + "\nPRAGMA user_version=3;\nCOMMIT;"
-                )
-            if version < 5:
-                db.executescript(
-                    "BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS configuration_state ("
-                    "id INTEGER PRIMARY KEY CHECK(id=1), path TEXT NOT NULL, "
-                    "revision TEXT NOT NULL, document TEXT NOT NULL);"
-                    "PRAGMA user_version=5; COMMIT;"
-                )
-            if version == 0:
-                db.execute("UPDATE coordination SET mode=? WHERE id=1", (initial_mode,))
+        DatabaseMigrator(path).upgrade()
+        with self._transaction() as db:
+            db.execute(
+                "INSERT INTO coordination(id,mode) VALUES (1,?) ON CONFLICT(id) DO NOTHING",
+                (initial_mode,),
+            )
         self.coordination = Coordination(self)
 
     @contextmanager
@@ -676,6 +546,7 @@ class Store:
     def _receipt(row: sqlite3.Row) -> InputReceipt:
         values = dict(row)
         values.pop("fingerprint")
+        values.pop("automatic")
         values["attachment_ids"] = json.loads(values["attachment_ids"])
         return InputReceipt.model_validate(values)
 

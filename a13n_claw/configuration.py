@@ -22,7 +22,6 @@ from a13n_claw.domain import (
     ResourceId,
     SkillDefinition,
     Value,
-    canonical,
 )
 from a13n_claw.messaging import Messaging
 from a13n_claw.storage import Store
@@ -268,9 +267,9 @@ def load_projection(
             db.execute("ROLLBACK TO configuration_validation")
         else:
             db.execute(
-                "INSERT INTO configuration_state VALUES (1,?,?,?) ON CONFLICT(id) DO UPDATE SET "
-                "path=excluded.path,revision=excluded.revision,document=excluded.document",
-                (str(path), revision, canonical(document.model_dump(mode="json"))),
+                "INSERT INTO configuration_state(id,path,revision) VALUES (1,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET path=excluded.path,revision=excluded.revision",
+                (str(path), revision),
             )
         db.execute("RELEASE configuration_validation")
         return changes

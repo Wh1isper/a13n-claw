@@ -105,7 +105,9 @@ Live `reload` reads the **server's** selected file; it never uploads a local doc
 
 ### Migrate an existing pre-file Instance
 
-Stop the server and back up its data and workspace. If an existing database has resource or Channel configuration but its selected file is missing, startup asks for explicit migration:
+This command exports configuration from a database supported by the current migration history; it does not convert the retired `user_version` schemas. Those require a fresh development data root as described in [backup and restart](./operations.md#backup-and-restart).
+
+Stop the server and back up its data and workspace. If a supported database has resource or Channel configuration but its selected file is missing, startup asks for explicit migration:
 
 ```bash
 uv run a13n-claw config migrate --offline \

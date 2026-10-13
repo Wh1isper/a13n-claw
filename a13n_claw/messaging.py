@@ -135,16 +135,26 @@ class Messaging:
             if prior:
                 if prior["fingerprint"] != fingerprint:
                     raise ClawError("request_conflict", "External event identity was reused")
-                import json
-
-                return json.loads(prior["receipt"])
+                if prior["input_id"] is not None:
+                    accepted = db.execute(
+                        "SELECT id AS input_id,run_id,thread_id FROM inputs WHERE id=?",
+                        (prior["input_id"],),
+                    ).fetchone()
+                    return dict(accepted)
+                if prior["inbox_id"] is not None:
+                    item = db.execute(
+                        "SELECT id AS inbox_id,main_id AS thread_id FROM inbox WHERE id=?",
+                        (prior["inbox_id"],),
+                    ).fetchone()
+                    return dict(item)
+                return {"event_id": message.event_id, "disposition": "ignored"}
             if message.sender not in policy.allowed_senders or (
                 policy.group and policy.require_addressed and not message.addressed
             ):
                 ignored = {"event_id": message.event_id, "disposition": "ignored"}
                 db.execute(
-                    "INSERT INTO ingress VALUES (?,?,?,?)",
-                    (channel_id, message.event_id, fingerprint, canonical(ignored)),
+                    "INSERT INTO ingress(channel_id,event_id,fingerprint) VALUES (?,?,?)",
+                    (channel_id, message.event_id, fingerprint),
                 )
                 return ignored
             state = self.coordination.state(db)
@@ -221,8 +231,15 @@ class Messaging:
                     "thread_id": thread_id,
                 }
             db.execute(
-                "INSERT INTO ingress VALUES (?,?,?,?)",
-                (channel_id, message.event_id, fingerprint, canonical(receipt)),
+                "INSERT INTO ingress(channel_id,event_id,fingerprint,input_id,inbox_id) "
+                "VALUES (?,?,?,?,?)",
+                (
+                    channel_id,
+                    message.event_id,
+                    fingerprint,
+                    receipt.get("input_id"),
+                    receipt.get("inbox_id"),
+                ),
             )
             return receipt
 

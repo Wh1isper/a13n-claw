@@ -101,6 +101,7 @@ def reset_operator(data_root: Path) -> Path:
     from a13n_claw.storage import Store
 
     with InstanceLease(data_root):
+        store = Store(data_root / "claw.sqlite3", initial_mode="one_thread")
         token = secrets.token_urlsafe(32)
         path = data_root / "operator.token"
         # Publish the file first. A crash before the DB update is a visible startup
@@ -110,9 +111,7 @@ def reset_operator(data_root: Path) -> Path:
             temporary.flush()
             os.fsync(temporary.fileno())
         os.replace(temporary.name, path)
-        Store(data_root / "claw.sqlite3", initial_mode="one_thread").reset_operator(
-            token_hash(token)
-        )
+        store.reset_operator(token_hash(token))
         return path
 
 

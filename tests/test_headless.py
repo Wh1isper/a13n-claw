@@ -2,7 +2,6 @@
 
 import io
 import json
-import sqlite3
 from unittest.mock import patch
 
 import pytest
@@ -133,12 +132,9 @@ def test_fresh_default_and_existing_mode_survive_restart(console, tmp_path):
         assert client.get("/api/instance").json()["conversation_mode"] == "per_channel"
 
 
-def test_v3_migration_preserves_mode_and_threads(runtime_store):
+def test_reopening_preserves_mode_and_threads(runtime_store):
     store = runtime_store
     thread = store.create_thread("operator", "Retained", "default")
-    with sqlite3.connect(store.path) as db:
-        db.execute("DROP TABLE configuration_state")
-        db.execute("PRAGMA user_version=3")
     upgraded = Store(store.path, initial_mode="one_thread")
     assert upgraded.coordination.mode() == "per_channel"
     assert upgraded.thread("operator", thread.id).active

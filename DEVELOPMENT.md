@@ -16,6 +16,12 @@ Use Harness public primitives for execution, checkpoint serialization, decisions
 
 An Instance has one process owner and one shared workspace, separate from its protected data root. Captured definitions govern admitted work while current grants can revoke authority. Recovery must not replay unknown external effects. Target mutation must settle before its ownership lock is released. Treat Local shell as host-account authority, not a sandbox.
 
+## Database schema
+
+SQLAlchemy Core metadata in `a13n_claw/database/schema.py` owns the current schema; package-owned Alembic revisions own its evolution. Generate revisions through `make db-migrate`, review them, and keep one linear history. Published revisions retain their historical definitions. Runtime startup uses migrations, not inline DDL, `create_all`, or version-specific branches in Store. Application reads and writes continue to use short `sqlite3` transactions.
+
+Migrate under the Instance lease before application state is loaded. Schema changes, data transformations, and the revision marker commit atomically; SQLite table rebuilds must preserve references and pass foreign-key validation before commit. Test metadata parity, populated upgrades, rollback, and repeated startup. Unknown revisions fail explicitly; downgrading requires a pre-upgrade backup.
+
 ## Documentation and frontend
 
 Keep user content in portable Markdown under `docs/content/`, with front matter and `meta.json` navigation. The private Fumadocs application uses Next.js static export. Its build checks internal links and anchors. Avoid duplicated documentation sources and external font requests at build time. Use Mermaid for diagrams when needed; ensure the site renderer supports any introduced syntax.

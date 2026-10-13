@@ -39,6 +39,10 @@ Choose local checks by the changed surface and risk. Do not repeat unaffected ch
 
 `make build` owns the source-to-distribution pipeline. A direct `uv build` requires a prior `make console-build`; missing assets fail explicitly. The sdist includes frontend source and prebuilt assets, so rebuilding its wheel requires only Python tooling. Run `make console-install` after console lockfile changes before `make console-dev` or `make console-check`. `make serve` runs the backend with the last built assets, not Vite hot reload. `make console-dev` proxies `/api` to the backend on port 8080. Tests include loopback HTTP provider/MCP and real local shell execution. Opt into Docker lifecycle acceptance with `CLAW_TEST_DOCKER_IMAGE=python:3.13-slim-bookworm uv run pytest tests/test_environments.py`; this creates and removes disposable test-owned containers.
 
+## Database changes
+
+Edit the canonical metadata in `a13n_claw/database/schema.py`, then run `make db-migrate msg="describe the change"`. The generator upgrades a disposable database and generates an Alembic revision; it never opens an Instance data root. Review generated operations, add required data transformations, and test upgrades with populated state. See the [migration workflow](docs/content/development.md#sqlite-migrations) for formatting and validation commands.
+
 ## Changes and reviews
 
 Use GitHub Issues for unresolved product, architecture, security, and scope decisions. Small fixes can go straight to a pull request. Write accepted contracts in `spec/`, not proposals or progress reports.
