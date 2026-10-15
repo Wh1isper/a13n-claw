@@ -33,7 +33,7 @@ jobs:
             count=$(gh run list --workflow "$workflow" --branch main --commit "$(git rev-parse HEAD)" --status success --json databaseId --jq length)
             test "$count" -gt 0 || { echo "No successful $workflow for tagged commit"; exit 1; }
           done
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.13"
       - name: Inject release version
@@ -69,7 +69,7 @@ jobs:
         with:
           name: python-dist
           path: dist
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - name: Publish distributions
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
