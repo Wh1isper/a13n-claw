@@ -22,17 +22,18 @@ Host lifecycle names and state transitions are not redefined here. The frontend 
 
 ## Claw Concepts
 
-| Concept               | Durable meaning and owner                                                                                 |
-| --------------------- | --------------------------------------------------------------------------------------------------------- |
-| Instance              | One Claw deployment, its selected embedded Host context, and product settings                             |
-| Connection            | One configured messaging account or installation and its adapter policy                                   |
-| Channel               | An external conversation qualified by platform and connection                                             |
-| Binding               | Product routing and participant/destination policy referencing Host identities                            |
-| Inbox item            | Retained external content or product attention requiring an explicit processing disposition               |
-| Dispatch attempt      | A record that Claw may have called the Host for particular business work; not a Run or an execution claim |
-| Delivery              | Explicit retained content, origin, destination, and transport outcome                                     |
-| Automation definition | Authorized intent to request work under stated timing and scope rules                                     |
-| Occurrence            | One identified firing or workflow step opportunity, independent of Host execution                         |
+| Concept                 | Durable meaning and owner                                                                                                              |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Instance                | One Claw deployment, its selected embedded Host context, and product settings                                                          |
+| Connection              | One configured messaging account or installation and its adapter policy                                                                |
+| Channel                 | An external conversation qualified by platform and connection                                                                          |
+| Binding                 | Product routing and participant/destination policy referencing Host identities                                                         |
+| Interaction correlation | Association of a platform message or action with its authorized Host Thread, operation, or decision; not a separate decision lifecycle |
+| Inbox item              | Retained external content or product attention requiring an explicit processing disposition                                            |
+| Dispatch attempt        | A record that Claw may have called the Host for particular business work; not a Run or an execution claim                              |
+| Delivery                | Explicit retained content, origin, destination, and transport outcome                                                                  |
+| Automation definition   | Authorized intent to request work under stated timing and scope rules                                                                  |
+| Occurrence              | One identified firing or workflow step opportunity, independent of Host execution                                                      |
 
 The [Inbox contract](10-one-thread-mode.md#durable-inbox) owns processing dispositions. [Recovery](04-persistence-and-recovery.md#dispatch-evidence) owns dispatch evidence. [Delivery](07-bridges-and-clients.md#egress-and-reconciliation) owns send outcomes. These are independent facts, not one generic task state machine.
 
@@ -49,14 +50,14 @@ flowchart LR
     Attempt -->|Reference only| Target
     Main[Canonical Main reference] --> Coordinator[Host Coordinator Thread]
     Coordinator -->|Host-owned relationship| Workers[Host Worker Threads]
-    Target --> Project[Optional Host Project]
+    Target --> Project[Selected Host Project]
     Inbox --> Delivery
     Occurrence --> Delivery
 ```
 
-Main is a Claw-selected Host Coordinator Thread, not a new conversation type. Claw persists its canonical reference; the Host owns its role and worker relationships. Claw discovers workers through Host queries instead of copying their ownership graph. Per-Channel and per-trigger bindings map each qualified Channel to a stable Host Project; conversation and task Threads select that Project. One Thread uses Main's shared Project across Channels. [Memory](09-memory.md) owns scope selection. Non-Channel Console and automation Threads may select or omit Projects under Host rules. Project and Channel identities remain distinct; Claw retains their association without copying Host resource definitions.
+Main is a Claw-selected Host Coordinator Thread, not a new conversation type. Claw persists its canonical reference; the Host owns its role and worker relationships. Claw discovers workers through Host queries instead of copying their ownership graph. Per-Channel and per-trigger bindings map each qualified Channel to a stable Host Project; conversation and task Threads select that Project. One Thread uses Main's shared Project across Channels. [Memory](09-memory.md) owns scope selection. Non-Channel operator and automation Threads may select or omit Projects under Host rules. Project and Channel identities remain distinct; Claw retains their association without copying Host resource definitions.
 
-A Channel can be rebound for future events without rewriting retained origins or destinations. Channels sharing Main explicitly share Agent context; per-Channel and per-trigger modes keep distinct Channel Project associations. Console-created Threads and automation can exist without a Channel. A single Host operation can receive attention for several business items; an Inbox item can require several separate operations before settlement.
+A Channel can be rebound for future events without rewriting retained origins or destinations. Channels sharing Main explicitly share Agent context; per-Channel and per-trigger modes keep distinct Channel Project associations. Operator-created Threads and automation can exist without a Channel. A single Host operation can receive attention for several business items; an Inbox item can require several separate operations before settlement.
 
 ## Identity and Completion Boundaries
 
@@ -68,7 +69,7 @@ Creation, initial prompt submission, and worker ownership follow the Host's sepa
 
 ## Authority
 
-Claw records whether work originated from a human, an external event, automation, or a product notification. The Host binds the actual executing Thread and configuration; model text cannot choose that identity. Source attribution does not grant permission to read other Inbox items, answer decisions, change Host configuration, or publish externally.
+Claw records the actor and transport separately: a human message can arrive through an external platform, while automation and product notices have their own business cause. Platform interaction correlation retains the selected target and original source, not approval authority. The Host binds the actual executing Thread and configuration; model text cannot choose that identity. Source attribution does not grant permission to read other Inbox items, answer decisions, change Host configuration, or publish externally.
 
 Claw's participant and destination policy complements Host execution controls. Separate Threads do not imply isolated memory, working files, or host-account execution. [Access](06-api-console-and-access.md) owns those disclosure and permission boundaries.
 

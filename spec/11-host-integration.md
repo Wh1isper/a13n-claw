@@ -4,7 +4,7 @@
 
 Claw depends on the `a13n-harness-ui` Python package and composes one `HarnessUiApp` through supported construction and lifecycle operations. The integration is a concrete application dependency, not a generic Host abstraction or a remote transport. Claw does not require the stock WebUI listener, terminal renderer, or frontend bundle to serve its own API.
 
-This document defines the library capabilities Claw requires. It does not declare that every required extension point already exists in a released package. A selected dependency version must demonstrate these contracts before the embedded implementation is supported. Missing general-purpose embedding hooks belong at the Host boundary; Inbox, scheduling, and delivery remain Claw concerns.
+This document defines the library behavior required by the IM product. Implementation starts with existing public App operations and native Capabilities, validated against a published package. An upstream change is justified only by a concrete required interaction that cannot be implemented correctly through that surface. Inbox, platform presentation, source attribution, scheduling, and delivery remain Claw concerns.
 
 ## Dependency and Compatibility
 
@@ -23,12 +23,11 @@ These are semantic requirements, not proposed Python signatures or HTTP endpoint
 | App construction and lifetime   | Open the selected configuration and data locations, initialize supported embedding features, enter and close one App without starting a stock UI listener |
 | Configuration                   | Discover resources, inspect accepted state and diagnostics, and mutate source through the owning validation and revision rules                            |
 | Threads and roles               | Create, inspect, select, fork, and archive through supported operations; expose Coordinator/worker ownership and partial creation outcomes                |
-| Input                           | Submit human input and product-origin input with truthful provenance; preserve Host start/steer, conflict, and pending-decision semantics                 |
+| Input                           | Submit attributed content and steer an exact active operation; preserve Host conflict and pending-decision semantics                                      |
 | Controls                        | Inspect and act on exact available operations and decisions; expose unavailable control rather than reacquiring old authority                             |
 | Observation                     | Obtain detached saved/current views and bounded subscriptions with a refetch path after loss; preserve available correlation and unknown state            |
 | Files, environments, and memory | Expose supported operations without granting access through private storage or provider objects                                                           |
 | Product extension               | Bind native Claw Capabilities to real execution identity and trusted product services, with a supported lifetime                                          |
-| Automatic admission policy      | Allow Claw's Main pause and unresolved-work gate to cover product-triggered and integrated collaboration starts without replacing the Host coordinator    |
 
 Subscriptions are hints for refetch and reconciliation, not durable queues. If a saved view cannot prove the outcome of a specific product dispatch, the correct result is unknown. No required interface promises durable Host input acceptance, cross-store atomicity, exactly-once execution, or recovery of active OS processes.
 
@@ -38,15 +37,17 @@ Claw owns the implementations of bounded Inbox reads, disposition changes, deliv
 
 Model arguments specify the requested business target, never the caller's identity or authority. Product services validate current policy, Main-only publication, authorized content scope, and mutation preconditions. Trusted service references are not exposed as serialized credentials or native execution objects to the model or frontend.
 
-Native Host collaboration, subagent, file, and memory tools retain their owners. Claw does not wrap them with competing copies. Mode-specific memory uses existing Global and Project scopes: Channel Projects for per-Channel/per-trigger routing, and one shared Main Project for One Thread. This mapping requires no Host memory extension or cross-Project memory access. Missing resource catalog or lifecycle hooks are addressed in the Host before dependent Claw behavior is enabled. Business tool execution commits only its own records; Host checkpoint publication is a separate boundary.
+Native Host collaboration, subagent, file, and memory tools retain their owners. Claw does not wrap them with competing copies. Mode-specific memory uses existing Global and Project scopes: Channel Projects for per-Channel/per-trigger routing, and one shared Main Project for One Thread. This mapping requires no Host memory extension or cross-Project memory access. Trusted service binding can use the public Capability registration and execution context; it need not introduce a new generic service-injection framework. Business tool execution commits only its own records; Host checkpoint publication is a separate boundary.
 
 ## Input and Wake Semantics
 
-The embedding distinguishes direct human input, attributed external messages, automation, and content-light product notices. Reusing a human submission method with a fabricated human label is not compliant. Claw does not need browser drafts, presence, or MCP App UI context for a product wake.
+Claw records the actual source and renders it clearly in submitted content. Human IM messages use ordinary human input semantics. A product notice or automation request identifies its business cause; it does not fabricate a user instruction. Source attribution can live in Claw records and supported input content without becoming a new Host resource or authority field. Claw needs no browser draft, presence, or fabricated WebUI surface for a wake.
+
+Product notices and automation use public root submission where its observable behavior preserves the actual source and Host controls. Automation targets Main or an independent root; managed-worker creation uses native collaboration. Automated first input must not produce an owner notification falsely attributing that task to a human. This compatibility check applies to that entry path, not to unrelated IM input or product wakes.
 
 The Host remains responsible for the atomic execution-admission decision. Claw may gate its requests and serialize its product dispatch attempts; it cannot acquire a private Host lock or create a second queue of Host Runs. Active steering and idle admission expose their own actual outcomes, including races and rejection.
 
-For Main, there is one effective automatic admission gate. Claw controls product pause and uncertainty. Any enabled native coordinator follow-up or worker-to-Main automatic start must pass an equivalent supported gate; otherwise that start path stays disabled. Explicit authorized human controls remain available through their own semantics and cannot falsify prior business evidence.
+Native coordinator follow-up and worker messages retain their Host behavior. Claw serializes its Inbox dispatch attempts and checks business eligibility at product operations; it adds neither a global pause switch nor a universal admission gate. Native starts may proceed while particular business items await reconciliation. Product tools expose those items as blocked, and no start path grants permission to repeat their uncertain effects. Host decisions and execution controls remain authoritative.
 
 ## Lifetime and Isolation
 
@@ -65,7 +66,7 @@ Before an embedded implementation is considered available, tests demonstrate:
 03. Direct human submission and product wake have truthful source attribution and preserve decision/control restrictions.
 04. Busy, preparing, waiting, completion-race, and shutdown paths preserve actual admission outcomes without an uncertain fallback start.
 05. Injected product tools receive trusted caller identity; a worker, child, or supplied ID cannot acquire Main publication rights.
-06. Product pause and dispatch-uncertainty gates cover all automatic Main-start paths enabled by the integration.
+06. Native worker reports and auto-follow-up coexist with Inbox drain. Competing submissions receive actual Host outcomes, and unresolved business work remains excluded from actionable Inbox even in a natively started Main operation.
 07. Subscriptions can be lost and recreated using supported views; missing receipt or insufficient correlation is reported as unknown, not replayed.
 08. Crashes before and after a Host call preserve business intent and conservatively block unresolved attempts; a committed product settlement is not undone by failed Host publication.
 09. Host-native worker creation/ownership, environment selection, and Global/Project memory are reused without private persistence access.
@@ -74,5 +75,9 @@ Before an embedded implementation is considered available, tests demonstrate:
 12. Per-Channel routing reuses its conversation Thread; per-trigger routing preserves the Channel's Project memory across fresh Threads. Different Channels select distinct Project scopes and the same Global scope.
 13. One Thread routes Channels to Main with shared Global/Main Project memory and native same-Project workers, without Channel memory partitions or cross-Project memory APIs. Mode changes preserve retained memory without implicit transfer.
 14. Mentions-only filtering works independently in all three routing modes; ignored events create neither task Threads nor execution context.
+15. Targeted IM continuation steers the selected active operation or submits to the selected idle Thread. Stale stop/steer actions never control a replacement operation, and an ambiguous target requires selection.
+16. Approvals and structured questions retain exact Host correlation, response kinds, and batch semantics. Duplicate, stale, wrong-actor, and cross-Channel callbacks cannot answer a different request.
+17. Progress, failures, results, and files reach only authorized destinations. Shared Main history and worker output are not streamed to every participating Channel; interrupted or unknown delivery is reconciled without inference replay.
+18. Messaging, controls, setup, and recovery work without a runtime browser UI. Unsupported adapter interactions have a concrete CLI/API alternative or an explicit unavailable result, not a link to a placeholder Console.
 
-These tests establish the boundary, not compatibility with arbitrary future Host releases. The spec-only redesign changes neither the Host package nor Claw runtime code; concrete upstream work and the supported version are determined during implementation against this contract.
+Runtime acceptance establishes compatibility for the selected package and implemented adapter features. Optional Host and platform features are reported independently so their absence does not block unrelated IM interactions.

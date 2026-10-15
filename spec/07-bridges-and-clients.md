@@ -2,7 +2,7 @@
 
 ## Design Position
 
-Messaging adapters run inside the Claw process. They own platform connection and representation; Claw owns sender policy, routing, retained business input, and delivery. Execution belongs to the embedded Host. A new adapter adds no Thread store, Agent loop, or bridge-to-Host HTTP service.
+Messaging adapters bring Harness UI's interactive work model to IM: send a task, add context while it runs, inspect progress, answer questions and approvals, stop an operation, and receive results and files. Adapters run inside the Claw process and own platform connection and representation. Claw owns sender policy, routing, retained business input, and delivery; the embedded Host owns execution.
 
 Lark, Discord, WhatsApp, and Telegram remain adapter targets, not a claim that all are implemented or feature-equivalent. Each adapter reports its actual authentication, mention, attachment, reply, and decision capabilities.
 
@@ -70,11 +70,31 @@ Transport acknowledgement is not execution completion. Essential attachments are
 
 In One Thread mode, Main receives a content-light notice and reads selected Inbox content through Claw's Capability. In per-Channel and per-trigger modes, the retained message is submitted to its selected conversation or task Thread through supported Host operations. All three modes use [dispatch evidence](04-persistence-and-recovery.md#dispatch-evidence); retained input does not imply that the Host durably consumed it. Rejected work can remain pending, and uncertain work blocks replay.
 
+## Interactive IM Behavior
+
+Normal messages follow routing and mention policy. Explicit interactions use a retained association with a Thread, operation, Inbox item, or pending request; platform buttons and commands are representations of those actions, not another execution model.
+
+| User action                        | Product behavior                                                                                                                             |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Send a task or attachment          | Apply sender/filter policy, retain the eligible event, and route under the selected mode                                                     |
+| Add ordinary context               | One Thread adds an Inbox item and Main attention; per-Channel steers its active conversation when supported; per-trigger starts a fresh task |
+| Continue a specific task or worker | Resolve an explicit authorized Thread selection and use Host submission or exact-operation steering                                          |
+| Stop                               | Address the selected current operation and report native cancellation acceptance and observed outcome                                        |
+| Inspect progress                   | Present authorized Host observations and business status for the selected work                                                               |
+| Answer a question or approval      | Present and respond to the exact Host request under the decision contract                                                                    |
+| Receive a result or file           | Use an explicit authorized destination and the delivery contract                                                                             |
+
+Adapters retain enough platform-message/control correlation to distinguish several active tasks in a Channel. A normal quoted reply remains a normal message under mode rules; a dedicated continue/control action explicitly selects the earlier task. Missing, stale, or ambiguous targets are reported or offered for selection. A stale operation control never falls through to a replacement Run. A Thread ID in user text is a selection request, not authority.
+
+Claw promptly distinguishes retained, admitted, running, awaiting a decision, blocked, failed, cancelled, and delivered using the responsible owner's evidence. These are presentation labels, not a new Run state machine. Status checks do not start model inference. Platforms may use message edits, cards, commands, or separate bounded updates; token streaming and rich cards are optional. Unsupported actions expose a usable authorized CLI/API path or say they are unavailable. They do not send the user to a nonfunctional Console.
+
 ## Decisions and Controls
 
-Adapters present only interactions supported by both platform capability and caller authority. A response identifies the exact Host pending request and external actor. Button delivery, ordinary chat, repeated callbacks, and quoted approval text cannot authorize execution.
+Adapters present only interactions supported by both platform capability and caller authority. A callback identifies the external actor, original conversation, selected Thread, and exact Host request/continuation. Claw verifies that association and current permission before forwarding the native response. Button delivery, ordinary chat, repeated callbacks, and quoted approval text cannot authorize execution.
 
-Claw forwards an authorized response through the Host decision boundary and reports its actual outcome. It does not retain a second approval engine or synthesize recovery answers. Unsupported interactions direct the user to an authorized capable frontend without weakening the decision.
+Approvals and structured questions preserve request kind, choices, and Host response/batch rules. Repeated or stale callbacks report the known outcome or require refetch; they cannot answer a later request. Claw may retain callback correlation but keeps no second decision engine. Loss of a response is reconciled under [execution controls](03-execution-lifecycle.md#decisions-and-controls).
+
+A shared Main request or worker request has no automatically safe Channel destination. It is presented only where the requesting context and operator policy permit disclosure and response; otherwise it remains available to an authorized operator through CLI/API. One Thread access does not let every participant cancel shared Main, inspect workers, or approve tools. Each control requires its corresponding grant.
 
 ## Egress and Reconciliation
 
@@ -84,7 +104,9 @@ In One Thread mode only canonical Main can request Agent-originated external sen
 
 Before dispatch, Claw checks current connection and destination authority. Adapters distinguish confirmed success, definite non-send failure, and unknown outcomes. A usable platform idempotency key or status query can support safe retry. A possibly successful send without such evidence remains unknown; an operator resolution records its evidence or acknowledged duplication risk. There is no exactly-once promise for arbitrary platforms.
 
-Retry delivery from saved content, never by rerunning the Agent. Inbox settlement and Host completion do not imply delivery success. Streamed presentation is optional and cannot replace retained send intent. Secrets, hidden reasoning, unrelated history, and unauthorized files are excluded from platform output.
+Retry delivery from saved content, never by rerunning the Agent. Inbox settlement and Host completion do not imply delivery success. Agent-content streaming follows the same destination and retained-intent rules as final delivery. In One Thread mode raw Main or worker streams are not forwarded to Channels; operator-visible Host activity is not automatically Channel-safe output. Bounded product acknowledgements, status updates, and exact decision prompts are service interactions, not alternate worker publication paths. Explicit authorized history/result queries are read operations under the caller's access grants; they do not enable unsolicited worker publication.
+
+Outgoing files are read through supported Host operations or already authorized product attachments, then retained as deliverable content with their origin. Adapter size/type limits and partial uploads are explicit. A Host path or file-browser link is not automatically accessible from IM and is not a substitute for an authorized upload or usable protected download. Platform output excludes secrets, hidden reasoning, unrelated history, and unauthorized files.
 
 ## Invariants
 

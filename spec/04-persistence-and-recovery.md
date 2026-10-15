@@ -8,16 +8,16 @@ There is no cross-owner transaction between business acceptance, Host admission,
 
 ## Storage Ownership
 
-| State                                                                               | Owner and access                     |
-| ----------------------------------------------------------------------------------- | ------------------------------------ |
-| Host resources and accepted configuration generations                               | Host configuration APIs              |
-| Thread metadata, roles, worker relationships, execution summaries, and continuation | Host commands and detached queries   |
-| Environment associations, Thread files, memory, and organization state              | Host-supported resource operations   |
-| Connections, bindings, canonical Main reference, and automatic-processing settings  | Claw business store                  |
-| Inbox content, dispositions, dependencies, and dispatch evidence                    | Claw business store                  |
-| Automation definitions, occurrences, and business workflow progress                 | Claw business store                  |
-| Delivery content, destination, and transport evidence                               | Claw business store                  |
-| Live operation handles and event subscriptions                                      | Process-local; not restart authority |
+| State                                                                                 | Owner and access                     |
+| ------------------------------------------------------------------------------------- | ------------------------------------ |
+| Host resources and accepted configuration generations                                 | Host configuration APIs              |
+| Thread metadata, roles, worker relationships, execution summaries, and continuation   | Host commands and detached queries   |
+| Environment associations, Thread files, memory, and organization state                | Host-supported resource operations   |
+| Connections, bindings, canonical Main reference, and platform interaction correlation | Claw business store                  |
+| Inbox content, dispositions, dependencies, and dispatch evidence                      | Claw business store                  |
+| Automation definitions, occurrences, and business workflow progress                   | Claw business store                  |
+| Delivery content, destination, and transport evidence                                 | Claw business store                  |
+| Live operation handles and event subscriptions                                        | Process-local; not restart authority |
 
 Physical database placement does not change ownership. Claw migrations never edit Host tables, immutable objects, checkpoint selectors, or memory bookkeeping. A copied Host receipt remains a reference whose later availability follows the Host contract. Retained product evidence records what was observed, not a competing live execution state.
 
@@ -39,6 +39,8 @@ A generic exception, missing receipt, idle Thread, newer unrelated checkpoint, o
 
 An authorized operator may record a resolution: settle or discard the obligation, confirm it was not applied using available evidence, or explicitly authorize a new attempt acknowledging possible repetition. The prior attempt and reason remain inspectable. This resolves product policy only; it does not modify Host execution history, clear a Host decision, or prove an external process stopped.
 
+Uncertainty belongs to the affected attempt, obligations, and effects. They stay out of actionable processing until resolved, including when Main starts through native collaboration. Unrelated work and Host-native controls remain available. If the evidence cannot delimit which items an attempt may have affected, Claw conservatively retains that affected set for reconciliation; it does not invent a global Host execution gate. These exceptional cases do not add a confirmation step to ordinary accepted messages.
+
 ## Restart Flow
 
 ```mermaid
@@ -57,7 +59,7 @@ Claw scans pending obligations on startup, Host settlement signals, barrier rele
 
 The Host decides whether a saved Thread can continue, whether a decision is available, and what saved execution state means. Claw does not rewrite foreign running markers, reacquire old receipt authority, replay deferred answers, or synthesize interrupted Runs. A graceful Host restart feature is usable only when the embedding lifecycle explicitly supports it; it is not a crash-recovery guarantee.
 
-For One Thread mode, an explicitly settled Inbox item remains settled even if the later Host checkpoint failed. Other pending items on an ambiguously affected Thread remain blocked until safe continuation is established. Delivery uncertainty is reconciled separately. Worker dependency discovery uses saved Host facts; missing transient reports are not reconstructed as successful work.
+For One Thread mode, an explicitly settled Inbox item remains settled even if the later Host checkpoint failed. Unsettled items that an ambiguous attempt may have affected remain blocked until reconciled; a new native Main operation is not proof that those items are safe to repeat. Delivery uncertainty is reconciled separately. Worker dependency discovery uses saved Host facts; missing transient reports are not reconstructed as successful work.
 
 ## Upgrades and Existing Data
 

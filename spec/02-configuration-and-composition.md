@@ -23,7 +23,7 @@ Host resources retain the Host's multi-file organization and source-mutation rul
 
 Setup can offer reviewed Host-native starter resources and a default working context, plus Claw connection settings. Publication is explicit and uses the owning validation boundary. Reopening setup must not overwrite existing resources, credentials, or Thread selections.
 
-The Claw frontend and CLI use supported Host operations for Host-owned settings and Claw operations for product settings. A file save, accepted configuration generation, current operation's captured configuration, and provider connectivity are different facts. The UI exposes those distinctions and preserves a conflicting draft and its original revision. Host file observation and generation acceptance retain Host semantics; Claw adds no competing watcher or reload engine.
+Claw's CLI/API use supported Host operations for Host-owned settings and Claw operations for product settings. Setup and operation require no runtime Console. A file save, accepted configuration generation, current operation's captured configuration, and provider connectivity are different facts. Clients expose those distinctions and preserve a conflicting draft and its original revision. Host file observation and generation acceptance retain Host semantics; Claw adds no competing watcher or reload engine.
 
 A change spanning both owners does not claim one atomic transaction. Each part reports its outcome, and affected routing remains unavailable until references resolve. Invalid or removed Host selections produce an actionable blockage rather than silent substitution. Product configuration publication validates references against an accepted Host view; use-time validation still handles later changes.
 
@@ -35,13 +35,13 @@ Claw selects product defaults by referring to Host resources. Creating a Thread 
 
 Product conversation mode selects One Thread, per-Channel, or per-trigger routing. Group filtering is configured separately and supports mentions-only in each mode. Per-Channel and per-trigger bindings retain a stable Channel-to-Project reference; per-trigger creation uses that Project's ordinary Thread creation defaults. One Thread uses Main's fixed shared Project. Setup publishes required Projects through Host-native configuration operations, records product associations separately, and enables routing only after both resolve. These mappings follow [routing](07-bridges-and-clients.md#qualified-identity-and-routing) and [memory](09-memory.md#scopes-and-sharing), without a new Host memory setting.
 
-An Inbox item or automation occurrence retains its business source and intended routing, not an invented frozen Agent composition. The Host captures effective execution configuration when it admits the actual operation. Therefore a product item waiting before dispatch can use newer accepted Host resource content. The UI must not present business-acceptance time as Host composition-capture time.
+An Inbox item or automation occurrence retains its business source and intended routing, not an invented frozen Agent composition. The Host captures effective execution configuration when it admits the actual operation. Therefore a product item waiting before dispatch can use newer accepted Host resource content. Clients must not present business-acceptance time as Host composition-capture time.
 
 Steering and decision responses use the Host's captured operation semantics. Claw cannot change an active Model, environment, or capability set by attaching new product metadata. Requests combining configuration mutation and execution use an explicitly supported Host operation or remain separate; Claw does not synthesize an atomic combination.
 
 ## Capabilities and Trust
 
-Claw supplies native product Capabilities for Inbox access, business settlement, and delivery through the [embedding contract](11-host-integration.md#product-capabilities). Host composition determines their availability; Claw rechecks current product authority at the operation boundary. In One Thread mode, publication additionally requires the actual canonical Main identity.
+Claw supplies native product Capabilities for Inbox access, business settlement, and delivery through the [embedding contract](11-host-integration.md#product-capabilities). Native collaboration and coordinator auto-follow-up keep their Host configuration and meaning. Host composition determines their availability; Claw rechecks current product authority at the operation boundary. In One Thread mode, publication additionally requires the actual canonical Main identity.
 
 Installed Python packages and trusted extensions are executable operator choices. Neither a Channel payload nor an Agent-selected configuration field can install code or expand the trusted catalog. A selected Agent, stored credential, or successful configuration save does not prove readiness or grant new product authority.
 
