@@ -2,7 +2,9 @@
 
 ## Product Position
 
-Claw turns an embedded Harness UI Host into an operator-controlled assistant for ongoing work. Its frontend, messaging connections, Inbox, and automation are product surfaces over one Host, not another Agent runtime. The frontend is optional for background progress and independent of the stock Harness UI WebUI.
+Claw brings Harness UI's interactive Agent experience to messaging platforms. Users send work, add context during execution, answer questions and approvals, stop a selected operation, collaborate with workers, and receive results and files in IM. Claw adapts those interactions to each platform while the embedded Host keeps its native execution and collaboration semantics.
+
+IM is the primary conversation surface; CLI/API provide setup, inspection, and operations. The runtime frontend is a Hello World placeholder in this replacement scope. Neither a full Console nor a workflow engine is required for the messaging path.
 
 Claw deploys as one process with one embedded `HarnessUiApp`. Direct Python calls connect product services to the App. The supported dependency is the `a13n-harness-ui` package; Harness remains its execution foundation. There is no internal HTTP hop or separately managed Harness UI service.
 
@@ -55,13 +57,13 @@ Host Projects and configuration selections are retained as Host concepts. In per
 
 1. An adapter authenticates an external event; Claw checks sender, group filter, and qualified event identity.
 2. Claw retains the eligible message and routing context before acknowledging business acceptance.
-3. The product scheduler checks pending work, current policy, and Host availability. It records a dispatch attempt before calling the Host.
-4. The Host owns admission, start-or-steer behavior, composition, decisions, execution, and checkpoint publication. Claw observes through supported queries and subscriptions.
+3. Product dispatch checks actionable work, current policy, and Host availability, then records an attempt before calling the Host. This happens without a separate human Inbox approval step.
+4. Claw selects public submission or exact-operation steering; the Host owns admission, composition, decisions, execution, and checkpoint publication. Claw presents supported observations and exact controls back through the adapter.
 5. In One Thread mode, Main reads and explicitly settles Inbox work through Claw Capabilities. Host completion alone does not settle an item.
 6. An authorized send creates a separate delivery record. Adapter failure is reconciled from that record, without rerunning the Agent.
-7. After restart, Claw rediscovers business backlog and checks Host state. Ambiguous prior dispatch or effects remain blocked rather than being replayed.
+7. After restart, Claw rediscovers business backlog and checks Host state. Ambiguously affected items or effects remain blocked rather than being replayed; unrelated native interaction remains available.
 
-Direct human conversation uses the Host interaction model without a durable Claw prompt queue. Automation retains occurrences as business intent and uses the same product-to-Host boundary. The different acceptance promises are explicit to clients.
+Explicitly targeted human conversation uses the Host interaction model without a durable Claw prompt queue. Ordinary IM messages use the selected mode's retained ingress. Native worker messages and coordinator follow-up coexist with Inbox drain under the [execution contract](03-execution-lifecycle.md). Automation retains occurrences as business intent and uses the same product-to-Host boundary. [Bridges](07-bridges-and-clients.md#interactive-im-behavior) owns the IM action mapping and feedback.
 
 ## Lifetime
 
