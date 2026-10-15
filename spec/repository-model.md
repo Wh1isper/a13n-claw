@@ -2,44 +2,48 @@
 
 ## Product and Implementation Boundary
 
-[The specification index](README.md) defines the target runtime and the owners of its high-level contracts. The target includes persistent execution, an API-driven console, environment management, bridges, automation, and memory. These contracts guide runtime development; their presence does not make those features available in the current package.
+[The specification index](README.md) defines Claw as a product layer over an embedded Harness UI Host. The target is one process, one package-embedded App, Claw's own frontend/API, and Claw-owned messaging and automation state. The Host owns configuration, Threads, execution, continuation, environments, collaboration, and memory.
 
 ### Source Implementation and Release Availability
 
-A13n Claw is an independent, public project built on published a13n Harness primitives. The source implements an authenticated application API, managed resource configuration, durable Thread and Run state, decisions and recovery, Run-scoped delegation, retained files, Local/Docker environment management, and an API-driven Console. `a13n-claw serve` hosts that application and binds to `127.0.0.1:8080` by default, with explicit host and port options. Unknown CLI arguments fail rather than pretending to perform work.
+The current source remains the earlier standalone runtime built directly on Harness. It implements its own Profile catalog, durable input and Run state, decisions/recovery, Local/Docker target management, retained files, Console, YAML configuration and CLI, One Thread coordination, workers, Inbox/drain, and generic HTTP ingress/egress. Those implementations are not evidence that package embedding or the new ownership boundary is available.
 
-The CLI supports explicit YAML configuration publication, offline administration under exclusive Instance ownership, and authenticated operational commands. Serving the API does not require Console assets. One Thread mode, the default for new Instances, implements canonical Main ownership, persistent workers and native collaboration, durable Inbox/attention dispositions, level-triggered drain with pause/backoff and recovery barriers, and generic HTTP ingress plus explicit Main-only egress with delivery reconciliation. The Console exposes those saved states and direct worker conversations. Global and Thread-private file memory with organization, vendor-specific embedded platform bridges, and general automation remain target contracts rather than available source capabilities. Release artifacts reflect their tagged source, not every accepted specification or later change on the development branch; source implementation does not imply publication of a new package version.
+This specification-only redesign leaves executable code, dependencies, existing database revisions, tests, and user setup commands unchanged. User documentation continues to describe the standalone source until implementation changes. Vendor-specific embedded bridges and general automation remain unavailable source capabilities. Published artifacts reflect their tagged source; a new specification does not publish a runtime release.
 
-Configuration, API, and persisted state compatibility require explicit contracts in this repository. Harness integration consumes published public APIs with bounded version requirements, not a neighboring source checkout.
+The replacement implementation must satisfy the [Host integration contract](11-host-integration.md) against a tested published `a13n-harness-ui` version. Existing internal App capabilities are useful evidence, not a guarantee that all required third-party embedding hooks are already supported. This repository cannot declare another package's implementation complete.
 
-## Content ownership
+## Compatibility Boundary
 
-| Surface           | Owner                                           |
-| ----------------- | ----------------------------------------------- |
-| `a13n_claw`       | Python package and CLI                          |
-| `console`         | Private React console source and build tooling  |
-| `tests`           | Offline behavioral and release-tooling tests    |
-| `scripts`         | Release preparation and artifact validation     |
-| `docs/content`    | User documentation and navigation               |
-| `docs`            | Private Fumadocs static site and Worker config  |
-| `spec`            | Accepted product and architecture contracts     |
-| GitHub Issues     | Proposals and open decisions                    |
-| `deploy/docker`   | Non-root distribution image                     |
-| `CONTRIBUTING.md` | Setup, validation, and release procedure        |
-| `DEVELOPMENT.md`  | Engineering standards                           |
-| `AGENTS.md`       | Concise coding-agent guidance                   |
-| `.agents/skills`  | Repository-local agent workflows and references |
+The target deliberately replaces Claw-owned execution and resource semantics with Host semantics. In particular, the old single-file Profile catalog, durable direct-prompt queue, independent Run recovery, custom target lifecycle, and Thread-private memory contract are not preserved as wrappers around the Host. Claw retains business acceptance and explicit uncertainty handling.
 
-The console and documentation are independent frontends. `console/` builds into generated `a13n_claw/static/console/` assets; `docs/` never becomes runtime console content. The Console issues authenticated application commands and reconciles saved API state. Unknown paths and missing assets return HTTP 404 rather than falling back to the console HTML. Static file serving is limited to the packaged console directory; authorized application file access has its own API boundary.
+Existing standalone data is not silently opened as Host state. A fresh embedded Instance or any future import requires an explicit operator path and validation. No automatic schema conversion, history migration, or deletion is authorized by this specification. Changing the implementation requires updating source-facing guides and reporting the precise migration limitations.
 
-This is a single-package repository: `a13n_claw/` lives at the repository root, with no `src/` wrapper. Repository skills are contributor tooling, not runtime package data.
+Host versions own their resource and saved-state compatibility; Claw owns its product API, configuration, business schema, and binding compatibility. Requirements are bounded and locked against published distributions. A neighboring checkout is reference material, never a build or runtime dependency.
 
-This repository owns its dependency resolution, validation, and release lifecycle. Its build and checks do not require a neighboring source checkout. A local checkout's placement does not make it part of another repository's workspace.
+## Content Ownership
+
+| Surface           | Owner                                                           |
+| ----------------- | --------------------------------------------------------------- |
+| `a13n_claw`       | Python product package, embedded Host integration, CLI, and API |
+| `console`         | Private Claw frontend source and build tooling                  |
+| `tests`           | Product behavior, Host integration, and release tests           |
+| `scripts`         | Release preparation and artifact validation                     |
+| `docs/content`    | Available-behavior documentation and navigation                 |
+| `docs`            | Private Fumadocs documentation site and Worker configuration    |
+| `spec`            | Accepted target product and architecture contracts              |
+| GitHub Issues     | Proposals and unresolved decisions                              |
+| `deploy/docker`   | Non-root distribution image                                     |
+| `CONTRIBUTING.md` | Setup, validation, and release procedure                        |
+| `DEVELOPMENT.md`  | Engineering standards                                           |
+| `AGENTS.md`       | Concise contributor guidance                                    |
+| `.agents/skills`  | Repository-local contributor workflows                          |
+
+This remains an independent single-package repository with `a13n_claw/` at its root. Claw does not vendor Harness UI internals or extract another generic Host package as part of this design. Missing Host embedding features are implemented and released by their owner, not copied into Claw.
 
 ## Distribution
 
-The source version remains `0.0.0`. Release tags define the version of Python artifacts and the container image. The runtime reports installed distribution metadata. Frontend tooling has no independent release identity. Generated assets and dependencies are not committed.
+The source version remains `0.0.0`; release tags define artifact versions. Claw's wheel and sdist contain its own built Console assets, and its image installs the same wheel. Installing a wheel, rebuilding from an sdist, and serving require no Node.js. Source frontend builds require their toolchain. Neither frontend is an independent npm release.
 
-The wheel and sdist both contain the built console. Building from a source checkout requires the frontend toolchain and a console build; a missing bundle fails the distributable build explicitly. Editable installs can omit assets until console development begins. Installing a wheel, rebuilding a wheel from its sdist, and serving either require no Node.js. The container installs the same wheel, not a separately built frontend.
+Embedding the Python Host does not require serving its bundled WebUI assets or modifying its distribution merely to remove unused assets. Claw starts no separate Harness UI server and exposes only its own selected API and frontend. The stock Host CLI, page-presence, and browser-draft contracts are not Claw public API dependencies.
 
-Cloudflare Workers Static Assets serves public documentation only. The image runs as a non-root user; its default command prints help and exits. An explicit `serve --host 0.0.0.0` serves the runtime and Console on container port 8080. Runtime APIs require application authority; serving static Console assets does not grant it. Protected application data and the shared workspace have separate storage boundaries.
+The documentation site remains independent of the runtime frontend. Cloudflare hosts documentation only. The distribution image runs as a non-root user and starts the application only through an explicit serve command. Static assets convey no API authority. Operator-selected Host state, Claw business state, configuration, memory, and working data retain the ownership and backup rules in [persistence](04-persistence-and-recovery.md).

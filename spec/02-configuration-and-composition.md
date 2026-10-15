@@ -1,74 +1,53 @@
-# Configuration and Run Composition
+# Configuration and Host Composition
 
 ## Design Position
 
-Claw owns the configuration consumed by its API-driven product. A Profile is a reusable application definition, not an executable runtime object. The backend validates and accepts configuration; the console edits and selects it through the same application boundary used by other authorized clients.
+Harness UI owns Agent configuration and execution composition. Claw uses its native resource formats, identities, validation, accepted generations, and selection rules. Claw owns only product settings and references to those resources. A simpler frontend does not imply a second configuration language or a second source of truth.
 
-Mutable defaults and fixed Run compositions have separate lifecycles. One operator-selected configuration file owns desired definitions and launch settings. The database retains the last successfully loaded definitions and the compositions captured for accepted work; it is a derived execution view, not a separately editable configuration catalog.
+## Two Configuration Owners
 
-## Headless Configuration
+| Configuration                                                                                                 | Owner                      |
+| ------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| Models, authentication sources, Agents, MCP servers, Skills, extensions, Projects, and execution environments | Harness UI                 |
+| Thread defaults, per-operation selections, and captured execution composition                                 | Harness UI                 |
+| Memory and organization settings                                                                              | Harness UI                 |
+| Listener and frontend settings, selected Host configuration/data locations                                    | Claw process bootstrap     |
+| Messaging connections, sender filters, Channel bindings, conversation mode, and delivery policy               | Claw product configuration |
+| Schedules, heartbeat definitions, and workflow policy                                                         | Claw automation            |
 
-An operator can configure and administer an Instance without a browser. Startup validates and loads the selected file before dispatching work. Runtime file edits take effect through explicit reload, without a file watcher. Launch settings select the listener, data root, workspace, concurrency, Console availability, and optional conversation-mode override; changing these fields requires restart.
+The operator explicitly selects a Host configuration root and data location for the embedded Instance. Claw does not accidentally open the operator's personal Harness UI store because both applications are installed. Sharing a configuration root, and therefore its configured resources and memory scopes, is an explicit choice. The embedded store has one live owner.
 
-The file describes the complete desired catalog. Omitted resources retire and omitted Channels disable, preserving history and captured compositions. An explicit retirement marker can retain an inactive definition in the file. Runtime-generated resource versions stay in the database; operators do not author them in configuration. Exports preserve the selected source and credential references, never managed secret values. An existing database without a configuration file requires explicit migration; startup cannot silently erase its catalog.
+Host resources retain the Host's multi-file organization and source-mutation rules. Claw neither flattens them into the old single-file Profile catalog nor mirrors accepted resources into its business database. Product settings may reference Host Agent, Project, and Thread IDs but cannot redefine their content or use filesystem paths as substitute identities.
 
-Saving the file and loading it have separate completion boundaries. A managed save validates the candidate and checks the exact source revision the editor read before replacing the file. It preserves comments and unrelated fields during structured edits. Identical retries are harmless; conflicting writes preserve the draft and report the conflict. External text editors need not honor application locks, so source drift remains observable. Reload validates the resulting active Profile graph and Channel policies, then atomically publishes their loaded state. A failed reload leaves the previous loaded state intact even when the file has already changed. A source revision identifies file bytes; it is distinct from resource versions and from provider readiness.
+## Setup and Editing
 
-Offline initialization and configuration require exclusive Instance ownership. They use the same application validation and persistence boundary without dispatching work or reconciling interrupted execution. Operations against a running owner use authenticated APIs and cannot fall back to offline database access on a network failure. Definition validation does not assert provider connectivity. Credentials use a separate protected input path rather than command-line values or ordinary configuration exports.
+Setup can offer reviewed Host-native starter resources and a default working context, plus Claw connection settings. Publication is explicit and uses the owning validation boundary. Reopening setup must not overwrite existing resources, credentials, or Thread selections.
 
-## Definition Boundaries
+The Claw frontend and CLI use supported Host operations for Host-owned settings and Claw operations for product settings. A file save, accepted configuration generation, current operation's captured configuration, and provider connectivity are different facts. The UI exposes those distinctions and preserves a conflicting draft and its original revision. Host file observation and generation acceptance retain Host semantics; Claw adds no competing watcher or reload engine.
 
-A Profile expresses intended agent behavior and selections for models, instructions, capabilities, tools, skills, delegation, and execution environments. Shared resources retain their own identity and lifecycle. Claw uses Harness public concepts where they already own execution semantics rather than inventing parallel model, tool, or capability types.
+A change spanning both owners does not claim one atomic transaction. Each part reports its outcome, and affected routing remains unavailable until references resolve. Invalid or removed Host selections produce an actionable blockage rather than silent substitution. Product configuration publication validates references against an accepted Host view; use-time validation still handles later changes.
 
-Definition, availability, authorization, and readiness are separate:
+Headless setup remains supported. Offline operations require exclusive Instance ownership and supported owner APIs; failed communication with a running Instance never falls back to direct database edits. Host model credentials stay in Host authentication stores; platform connection credentials remain protected Claw adapter inputs. Ordinary exports and diagnostics contain references, not secret values.
 
-- A resource can be known without being enabled for this Instance.
-- A valid definition can refer to a service that is temporarily unavailable.
-- A caller may read a resource without being allowed to use or change it.
-- Saving credentials or a connection does not prove successful connectivity.
+## Defaults and Capture
 
-Provider credentials and privileged integration configuration remain protected backend state. Captured compositions retain the necessary references and provenance, not reusable secret values or live clients.
+Claw selects product defaults by referring to Host resources. Creating a Thread uses Host creation rules; changing a default does not rewrite existing selections. Main is a Host Coordinator Thread, and worker creation follows native Host ownership and Project rules.
 
-## Defaults and Effective Behavior
+Product conversation mode selects One Thread, per-Channel, or per-trigger routing. Group filtering is configured separately and supports mentions-only in each mode. Per-Channel and per-trigger bindings retain a stable Channel-to-Project reference; per-trigger creation uses that Project's ordinary Thread creation defaults. One Thread uses Main's fixed shared Project. Setup publishes required Projects through Host-native configuration operations, records product associations separately, and enables routing only after both resolve. These mappings follow [routing](07-bridges-and-clients.md#qualified-identity-and-routing) and [memory](09-memory.md#scopes-and-sharing), without a new Host memory setting.
 
-Instance and Profile defaults initialize Thread selections. Changing a default affects newly resolved work; it does not silently reset an existing Thread's explicit selections. Applying changed defaults to an existing Thread is an explicit operation.
+An Inbox item or automation occurrence retains its business source and intended routing, not an invented frozen Agent composition. The Host captures effective execution configuration when it admits the actual operation. Therefore a product item waiting before dispatch can use newer accepted Host resource content. The UI must not present business-acceptance time as Host composition-capture time.
 
-The Instance selects its exclusive conversation mode at startup under [One Thread mode](10-one-thread-mode.md#instance-mode-and-lifetime). This is an Instance-level routing and authority choice, not a per-Channel, Profile, or model-selected override. Main identity, worker ownership, and automatic-processing pause are durable application state, not prompt conventions.
+Steering and decision responses use the Host's captured operation semantics. Claw cannot change an active Model, environment, or capability set by attaching new product metadata. Requests combining configuration mutation and execution use an explicitly supported Host operation or remain separate; Claw does not synthesize an atomic combination.
 
-The Instance owns its one workspace root and the memory/automatic-organization settings. Thread or Profile selections cannot introduce another workspace root or another Thread's private memory. A memory-enabled ordinary Run captures Global and its own private scope according to [memory](09-memory.md); environment selection exposes the [shared workspace](05-workspaces-and-environments.md), not a Project selection.
+## Capabilities and Trust
 
-Claw distinguishes editing a shared resource from selecting a different resource. Work that resolves that shared resource after an accepted edit can use the new content; work already accepted retains its captured content. Historical Runs remain explainable even if a resource is renamed or retired.
+Claw supplies native product Capabilities for Inbox access, business settlement, and delivery through the [embedding contract](11-host-integration.md#product-capabilities). Host composition determines their availability; Claw rechecks current product authority at the operation boundary. In One Thread mode, publication additionally requires the actual canonical Main identity.
 
-A submitted configuration change checks the source revision the editor actually read. Resource-oriented compatibility operations also check their resource version and route through the same file owner. Conflicting edits fail visibly without discarding local input. A combined configuration change and work submission either accepts the intended combination or rejects it; it never executes against an accidental mixture.
-
-## Capture Flow
-
-```mermaid
-sequenceDiagram
-    participant Caller
-    participant Claw
-    participant Definitions as Accepted definitions
-    participant Work as Accepted work
-    Caller->>Claw: Submit input and explicit selections
-    Claw->>Definitions: Resolve one coherent effective composition
-    Claw->>Claw: Validate scope, authority, and dependencies
-    Claw->>Work: Retain input and captured composition
-    Claw-->>Caller: Accepted work reference
-```
-
-A Run's captured composition is fixed when that Run is durably admitted, before queueing or environment preparation. Ordinary messages that join or steer an existing Run use its captured composition; they do not capture a second configuration or apply edited defaults to active work. A request combining input with a different composition must explicitly request a separate Run or be rejected, never disguised as a configuration-changing steer. Waiting in a queue does not silently adopt later Profile edits. Selecting the latest permitted Thread checkpoint at execution start is a separate operation owned by [execution](03-execution-lifecycle.md); configuration capture must not freeze a stale history for queued work.
-
-Current permission and credential validity are checked again when work uses them. A captured definition is not a permanent authorization grant. If its required component becomes unavailable or disallowed, Claw reports the blockage or failure instead of substituting a different model, tool, or environment.
-
-## Change and Retirement
-
-Retiring a resource prevents new selection according to its policy while preserving historical descriptions. It does not rewrite accepted compositions. Destructive removal must not leave retained checkpoints or accepted work silently pointing to missing dependencies.
-
-Provider implementations are trusted installation choices. A Profile, imported document, chat message, or bridge payload cannot register executable code or expand the installed provider catalog.
+Installed Python packages and trusted extensions are executable operator choices. Neither a Channel payload nor an Agent-selected configuration field can install code or expand the trusted catalog. A selected Agent, stored credential, or successful configuration save does not prove readiness or grant new product authority.
 
 ## Invariants
 
-1. Every accepted Run has an inspectable effective composition independent of later edits.
-2. Mutable defaults, shared resource content, and captured execution behavior remain distinguishable.
-3. Configuration changes never replace or reset Thread history implicitly.
-4. All clients use one file authority and validation boundary; file save, runtime load, launch settings, and current readiness are separate facts.
+1. Host resources have one format, validation owner, and accepted-generation authority.
+2. Claw retains product configuration, not a second Agent catalog or captured composition.
+3. Business acceptance and Host configuration capture occur at separate boundaries.
+4. Configuration editing remains usable without the Claw frontend and never implies credential or provider readiness.

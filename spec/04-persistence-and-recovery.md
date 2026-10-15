@@ -2,93 +2,81 @@
 
 ## Design Position
 
-Claw separates small mutable application heads, immutable captured values and continuation checkpoints, independently owned working data, and disposable live observations. This contract does not select a database engine, storage layout, or persistence library.
+Claw durably retains business obligations. Harness UI owns its configuration and saved execution state, with its native local-continuation guarantees. Embedding does not make Host receipts, pending inputs, deferred responses, or active operating-system processes recoverable durable jobs.
 
-Accepted work and pending delivery are durable application facts. External clients and unattended automation cannot depend on a browser or process-local receipt remaining alive.
+There is no cross-owner transaction between business acceptance, Host admission, a tool's external effect, and Host checkpoint publication. Claw records uncertainty at those boundaries instead of maintaining a second execution log or promising exactly-once execution.
 
-## Durable Truth
+## Storage Ownership
 
-| State                           | Durability responsibility                                                                                                                                            |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Definitions and selection heads | Preserve accepted resource content, current defaults, and versions needed to detect conflicting edits                                                                |
-| Threads                         | Preserve identity, relationships, configuration selections, and the selected complete continuation                                                                   |
-| Accepted work                   | Preserve each input's identity, origin, ordering, Run association and consumption disposition, plus Run composition, decisions, and outcome                          |
-| Immutable values                | Retain captured compositions, complete Harness continuation, and referenced input/output artifacts                                                                   |
-| Environment associations        | Retain intended selection and last confirmed provider state without treating cached liveness as current truth                                                        |
-| Bridge and automation state     | Retain conversation mappings, accepted event identities, occurrences, result destinations, and unresolved delivery                                                   |
-| One Thread coordination         | Retain canonical Main identity, worker ownership, Inbox content and dispositions, attention dependencies, pause/block/backoff state, and unresolved wake obligations |
-| Working files                   | Preserve the Instance's shared workspace independently of Thread and container removal                                                                               |
-| File memory                     | Preserve Global and Thread-private files, scope-keyed cursors, and organization state independently of workspace and conversation checkpoints                        |
-| Live observations               | May be lost; do not decide acceptance, completion, permission, or recoverability                                                                                     |
+| State                                                                               | Owner and access                     |
+| ----------------------------------------------------------------------------------- | ------------------------------------ |
+| Host resources and accepted configuration generations                               | Host configuration APIs              |
+| Thread metadata, roles, worker relationships, execution summaries, and continuation | Host commands and detached queries   |
+| Environment associations, Thread files, memory, and organization state              | Host-supported resource operations   |
+| Connections, bindings, canonical Main reference, and automatic-processing settings  | Claw business store                  |
+| Inbox content, dispositions, dependencies, and dispatch evidence                    | Claw business store                  |
+| Automation definitions, occurrences, and business workflow progress                 | Claw business store                  |
+| Delivery content, destination, and transport evidence                               | Claw business store                  |
+| Live operation handles and event subscriptions                                      | Process-local; not restart authority |
 
-Native runtime objects, live credentials, connection handles, process-local locks, stream subscribers, and shell observation handles are not restorable execution authority. Saved references must be validated before use.
+Physical database placement does not change ownership. Claw migrations never edit Host tables, immutable objects, checkpoint selectors, or memory bookkeeping. A copied Host receipt remains a reference whose later availability follows the Host contract. Retained product evidence records what was observed, not a competing live execution state.
 
-## Schema Compatibility
+## Dispatch Evidence
 
-Startup applies forward schema migrations under exclusive Instance ownership before loading application state, reconciling work, or dispatching execution. Each upgrade preserves accepted work and commits schema, transformed data, and revision identity together. A failed upgrade leaves the prior committed state available for correction and retry. An unknown revision blocks startup without resetting data or claiming compatibility.
+For each Inbox wake, per-Channel input, per-trigger task creation/submission, or automation occurrence, Claw distinguishes:
 
-The current development baseline replaces the earlier pre-migration schemas; those disposable databases require a fresh data root. From this baseline onward, schema evolution preserves existing data through appended migrations. Returning to an older application requires a matching pre-upgrade backup. Configuration files and independently owned working data retain their own lifecycles.
+| Evidence                                                     | Meaning and next action                                                          |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| No dispatch attempt                                          | Business work is retained and eligible for a first attempt after policy checks   |
+| Attempt recorded, no conclusive response                     | The Host may have accepted work; block automatic retry                           |
+| Explicit rejection before acceptance                         | Work remains pending; retry may be scheduled if its cause is safely resolved     |
+| Host acceptance observed                                     | Retain available references; inspect rather than resubmit                        |
+| Exact saved outcome or explicit business settlement observed | Apply the owning business rule; do not infer unrelated tool or delivery outcomes |
 
-## Checkpoint Publication
+Claw commits the attempt marker before invoking the Host and records the response afterward. A crash in between can conservatively block work even if the call never happened. This is an accepted availability trade-off. It avoids silently repeating an action without requiring a durable Host admission protocol.
 
-Claw retains complete Harness continuation, including referenced content required to load it. Rendered Items, summarized history, partial streams, and usage displays cannot substitute for a checkpoint.
+A generic exception, missing receipt, idle Thread, newer unrelated checkpoint, or absent final reply is not evidence of rejection. Correlation requires exact Host references or explicit business evidence. Where the supported Host view cannot establish the original outcome, the item stays visibly blocked for operator review. Matching prompt text or timing is not a substitute.
 
-Publishing an immutable checkpoint and selecting it as the Thread's current continuation form one observable completion boundary: readers never select a partial value. The selected value must belong to that Thread and to the execution owner still permitted to advance it. An unselected candidate is not evidence that history advanced.
-
-For waiting work, the saved pending request and selected continuation must agree. For completed work, the committed outcome identifies the checkpoint it published. Historical configuration remains associated with the work that actually used it.
-
-Environment-state publication, external effects, and checkpoint selection remain separate. A failed checkpoint write does not imply that a command, file write, container start, or message send did not happen.
+An authorized operator may record a resolution: settle or discard the obligation, confirm it was not applied using available evidence, or explicitly authorize a new attempt acknowledging possible repetition. The prior attempt and reason remain inspectable. This resolves product policy only; it does not modify Host execution history, clear a Host decision, or prove an external process stopped.
 
 ## Restart Flow
 
 ```mermaid
 flowchart TD
-    Start[Instance starts] --> Load[Read durable application state]
-    Load --> Reconcile[Reconcile prior execution and target ownership]
-    Reconcile --> Queue[Retain eligible queued work]
-    Reconcile --> Wait[Restore valid waiting decisions]
-    Reconcile --> Lost[Mark lost active execution interrupted]
-    Reconcile --> Deliver[Reconcile pending result delivery]
-    Reconcile --> Inbox[Rediscover One Thread actionable backlog]
-    Inbox --> Drain[Admit eligible Main work or expose barrier]
-    Queue --> Admit[Resume dispatch under current policy]
-    Wait --> Answer[Await exact authorized response]
-    Lost --> Review[Expose saved checkpoint and uncertain effects]
-    Review --> Recover[Explicit recovery creates new work]
+    Start[Start exclusive Instance owner] --> Open[Open each owner's state through its lifecycle]
+    Open --> Host[Read supported Host saved views and availability]
+    Host --> Scan[Scan pending business work and delivery]
+    Scan --> Fresh[No previous attempt: eligible dispatch]
+    Scan --> Known[Exact evidence: apply business rule]
+    Scan --> Unknown[Uncertain attempt or effect: visible block]
+    Known --> Drain[Check remaining eligible Inbox and occurrences]
+    Fresh --> Drain
 ```
 
-Dispatch resumes only after Claw has excluded an old writer from publishing or continuing conflicting work. A saved running marker is not proof of liveness, and an empty in-memory registry is not proof that an external process stopped. If ownership cannot be established, affected work remains blocked and visible.
+Claw scans pending obligations on startup, Host settlement signals, barrier release, and bounded reconciliation opportunities. Live events only accelerate discovery. A lost Run-end callback cannot erase pending business work; an ambiguous dispatch can still prevent automatic execution until resolved.
 
-Pending, held, steered, incorporated, unapplied, and uncertain input dispositions survive restart independently of live Harness handles. A known-undelivered input remains available for the routing rules in [execution](03-execution-lifecycle.md); a message that may already have been consumed is not automatically replayed. Reconnecting adapters reconcile saved event dispositions before admission resumes, including events ignored by the group filter.
+The Host decides whether a saved Thread can continue, whether a decision is available, and what saved execution state means. Claw does not rewrite foreign running markers, reacquire old receipt authority, replay deferred answers, or synthesize interrupted Runs. A graceful Host restart feature is usable only when the embedding lifecycle explicitly supports it; it is not a crash-recovery guarantee.
 
-Already accepted work that demonstrably never started can proceed after current authority and readiness checks. Work that may have executed is not automatically replayed from its initial input. Complete waiting checkpoints can restore their decision without inventing a new question or reusing a stale answer.
+For One Thread mode, an explicitly settled Inbox item remains settled even if the later Host checkpoint failed. Other pending items on an ambiguously affected Thread remain blocked until safe continuation is established. Delivery uncertainty is reconciled separately. Worker dependency discovery uses saved Host facts; missing transient reports are not reconstructed as successful work.
 
-One Thread recovery also checks the durable [Inbox and attention condition](10-one-thread-mode.md#wake-and-drain). It must recover the need for Main work after acceptance or Run completion even if no live notification or Run-end hook ran. Notice delivery and reading do not settle processing. Deferred dependencies and automatic retry times remain discoverable; pending work blocked by pause, decisions, or unresolved effects remains visible without bypassing those barriers.
+## Upgrades and Existing Data
 
-## Failure Semantics
+Each owner applies its own forward migrations before its operations become available. A Host upgrade failure blocks Host use; a Claw business migration failure blocks product dispatch. Neither failure resets the other owner's state. Compatibility failures remain actionable and preserve retained data.
 
-| Failure boundary                               | Observable recovery behavior                                                                   |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Before durable acceptance                      | No accepted-work promise; retry uses the original request identity to check for a raced commit |
-| After acceptance, before dispatch              | Accepted work remains discoverable and can wait, proceed, or be cancelled                      |
-| During execution, before a complete checkpoint | Preserve last committed history and mark uncommitted progress or effects as uncertain          |
-| During checkpoint publication                  | Keep the prior selected continuation until the new complete boundary is safely selected        |
-| After outcome commit, before client reply      | Return the saved outcome and reconcile delivery; do not execute again to reproduce a reply     |
-| Missing or incompatible saved content          | Keep retained history inspectable where possible and block continuation explicitly             |
+The old standalone Claw database is not a Harness UI store. This redesign promises no automatic conversion of its Profile, Run, checkpoint, environment, or private-memory semantics. An embedding implementation must reject incompatible roots and offer an explicit fresh-instance or separately specified import path. This specification authorizes no deletion or in-place reinterpretation of existing data.
 
-A newer Harness version, changed Profile, or lost environment is not permission to reset a conversation to empty state. Compatibility failures identify the unusable component or saved boundary for operator action.
+## Retention and Backup
 
-## Retention and Removal
+Archiving a Host Thread, removing a Channel, deleting business records, deleting memory, and destroying an environment are distinct operations under their owners. Removing a referenced Host resource leaves a visible blocked product reference unless an authorized action explicitly resolves the affected obligations. It never silently routes old work to a replacement Thread.
 
-Archiving affects visibility and new-work admission; it does not delete history or stop external resources by implication. Deleting conversation records, purging artifacts, stopping a target, and deleting working data are different operations.
+Retain content needed by unsettled items, workflow dependencies, and deliveries. Product deletion coordinates with active product calls and does not bypass Host retention rules. Saved outgoing content can be delivered without reconstructing or rerunning the Agent.
 
-Retention cannot silently remove content referenced by retained continuations, waiting decisions, accepted work, or unresolved delivery. Shared data remains until its owning scope permits removal. Explicit deletion reports the data and dependencies affected and cannot leave active work with a valid-looking but broken continuation.
-
-A recoverable backup must cover a coherent set of application heads and the values they reference. Memory files are part of the recoverable application data set; ordinary conversation checkpoints alone do not include them. Workspace data and external service state may require separate retention; copying only application records does not promise restoration of those resources or reverse external effects.
+A recoverable backup covers the Host store and its referenced files, selected configuration and memory, and Claw business state at a coordinated quiescent boundary. Copying two live databases independently is not an atomic application snapshot. Working directories, containers, and external systems have their own retention; restoring a backup does not reverse external effects.
 
 ## Invariants
 
-1. Durable application truth, complete continuation, working data, and live observations are not interchangeable.
-2. Recovery restores state, not old process authority or unverified liveness.
-3. Publication cannot select partial, incompatible, wrong-Thread, or stale-writer continuation.
-4. A saved result can be delivered again without rerunning the agent.
+1. Retained business work survives restart without implying durable Host execution admission.
+2. Unknown dispatch or effects block replay until an explicit safe resolution or risk-acknowledged new attempt.
+3. Claw never edits Host persistence to manufacture liveness, completion, or recovery authority.
+4. Inbox settlement and delivery evidence survive independently of Host checkpoint publication.
+5. Recovery may leave work blocked; it must not silently lose it or repeat it to manufacture progress.

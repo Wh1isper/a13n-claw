@@ -1,78 +1,61 @@
-# Application API, Console, and Access
+# Claw API, Frontend, and Access
 
 ## Design Position
 
-Claw exposes one application boundary for management, conversation, observation, and execution control. API handlers and embedded bridges invoke that authority within the same server; only external clients need a network API. The console is an API frontend over that boundary. It owns navigation, forms, local drafts, and presentation; the backend owns validation, authorization, accepted work, and saved outcomes.
+Claw owns its HTTP and realtime API and its independently designed frontend. The backend composes supported Harness UI App operations with Claw product operations in-process. It does not proxy or mount the complete stock Harness UI WebUI API, start another Host per request, or depend on browser-specific drafts and page presence to execute work.
 
-The CLI supports headless configuration and operational intervention through the same authority. The server can run with the Console disabled or its assets unavailable; browser availability is not a prerequisite for execution. The Console is an optional management and inspection surface, while external messaging remains the primary conversation entry point.
-
-This document defines operation semantics and trust boundaries, not endpoint paths, authentication protocols, frontend components, or generated client types.
+The frontend owns navigation, forms, local drafts, and presentation. The Host owns execution and saved conversation; Claw owns business policy and obligations. A browser is optional for background messaging and automation.
 
 ## Application Surfaces
 
-| Surface                 | Observable responsibility                                                                                                          |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Definitions             | Inspect and change reusable resources, defaults, and current availability                                                          |
-| Threads                 | Create and navigate work, inspect history and relationships, continue or fork, and archive                                         |
-| Runs and decisions      | Submit messages with always-steer routing, inspect input disposition, cancel work, and answer authorized pending requests          |
-| Environments            | Inspect selected working contexts and perform authorized management operations                                                     |
-| Automation and memory   | Manage background intent, inspect its resulting work, and access explicitly scoped knowledge                                       |
-| Bridges                 | Manage connections and bindings; inspect event admission, delivery, and readiness independently                                    |
-| One Thread coordination | Inspect Main and owned workers, converse directly with workers, inspect Inbox and delivery, and control automatic-processing pause |
-| Operations              | Show Instance readiness, blocked work, recovery needs, and retained diagnostic evidence                                            |
+| Surface                                                       | Authority behind the Claw API                                      |
+| ------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Models, Agents, Projects, and shared resources                | Supported Host configuration operations                            |
+| Threads, history, execution, decisions, workers, and children | Supported Host commands, queries, and controls                     |
+| Environments, files, and memory                               | Supported Host resource operations, restricted by product exposure |
+| Connections, Channels, Inbox, and delivery                    | Claw product services                                              |
+| Schedules, occurrences, and workflows                         | Claw automation services                                           |
+| Readiness, pause, blockage, and reconciliation                | Clearly distinguished Host observations and Claw business facts    |
 
-Commands produce application outcomes or accepted-work references. Queries return authoritative saved views plus clearly identified live observations. A client must be able to distinguish accepted, running, waiting, interrupted, and completed work without inferring state from a transport connection.
+The API need not reproduce every Host feature. Missing capabilities are reported explicitly rather than reconstructed through private modules. Payloads may reuse detached Host values where suitable; Claw does not publish native execution objects, credentials, storage sessions, or raw checkpoint internals.
+
+The CLI remains a headless product surface over the same owners. Offline administration uses exclusive ownership and supported library operations. A failed network call never authorizes offline mutation of a running Host store.
 
 ## Access Boundary
 
-The Instance is a trusted operator's application, not an organization tenancy system. Administration and participation are nevertheless different authorities. The operator controls reusable configuration, credentials, environment management, integrations, and grants. A delegated API client or external participant receives only the actions and scopes explicitly permitted for it.
+Claw is an operator-controlled application, not a multi-tenant service. Its authenticated administrative frontend belongs to trusted operators. External participants and delegated product clients can receive narrower Channel or action grants, but those grants do not create isolation inside the Host or undo knowledge already shared with an Agent.
 
-Every application operation checks caller identity, target scope, action, and current policy. Being connected to a bridge or allowed to submit a prompt does not grant access to arbitrary Threads, stored artifacts, other users' conversations, resource editing, or Docker lifecycle operations. Tool approvals cannot exceed the authority of the approving caller or captured work.
+Every exposed operation checks the caller, target, action, and current product policy before invoking the relevant owner. A Channel sender cannot inspect arbitrary Host Threads, edit Agent resources, answer another conversation's decision, or invoke environment management merely because Claw can call those methods in-process.
 
-Global memory and the Instance workspace are deliberately shared across Threads. Participation grants must account for information available to the agent through those surfaces; private Thread history and memory are not a promise of isolated working files. The [memory contract](09-memory.md) owns private-scope binding and disclosure, including shared-Thread participation.
+Claw filters both queries and realtime subscriptions before exposing them to a restricted caller. Model-facing Host collaboration scope and human/API grants are different boundaries. The Host's unrestricted trusted-human surface is not automatically suitable for an external participant; unsupported restricted operations remain unavailable rather than bypassing checks.
 
-Bindings and identifiers are routing information, not bearer authority. A configured credential is not proof that an external sender is trusted. Group membership, model-generated instructions, and imported workspace content cannot expand permissions.
+Host-bound execution identity governs Claw product tools. Main-only egress is enforced when accepting send intent, and destination authority is checked again when sending. Host composition and approvals remain in force; a product grant cannot add a missing tool or bypass a decision. A model-supplied Thread ID or role claim is never caller identity.
 
-Secrets remain backend-owned and are excluded from ordinary projections, captured compositions, browser persistence, bridge payloads, and diagnostics. Files and output fetched through a client are subject to the same scope checks as the conversation that exposes them. Retained content is rendered as untrusted content, not executed as console application code.
+Shared Main history, Host Global/Project memory, and shared working roots have disclosure consequences. Binding several Channels to that context requires explicit operator acknowledgement. Separate Thread IDs are not a promise of private memory or filesystem isolation. Broad host-account execution and trusted extensions remain outside model-tool isolation guarantees.
 
-In [One Thread mode](10-one-thread-mode.md), model-facing collaboration tools are bound to the actual Main or Worker Thread and its persistent ownership. This does not replace human/API grants. Only Main has agent-originated external publication authority; workers cannot gain it by selecting a Channel, changing a Profile, or supplying a different caller identity. Sharing Main context across Channels requires explicit disclosure, not a grant to browse all Inbox or history through a Channel.
+Secrets remain with their owner and are excluded from ordinary browser state, product projections, outgoing content, and diagnostics. Returned messages and files are untrusted content, not executable frontend code. Serving static assets conveys no API authority.
 
-## Command and Reconnect Flow
+## Conversation and Observation
 
-```mermaid
-sequenceDiagram
-    participant Browser as Console or API client
-    participant Claw
-    Browser->>Claw: Submit identified command
-    Claw-->>Browser: Accepted work or explicit rejection
-    Browser->>Claw: Observe work
-    Note over Browser,Claw: Client connection is lost
-    Claw->>Claw: Continue accepted work
-    Browser->>Claw: Reconnect and query saved state
-    Claw-->>Browser: Outcome, pending decisions, and available observations
-```
+Direct conversation submission exposes Host admission semantics, not the former durable Claw prompt queue. The client distinguishes its unsent draft, Host acceptance, available saved output, and unknown outcome. A lost response is reconciled using available original references; the browser never silently sends a new prompt to reproduce a missing reply.
 
-Reconnect does not repeat a mutation automatically. If the original response was lost, the client reconciles the original request before offering a new submission. Concurrent edits and decisions retain their original preconditions; refreshing a view cannot silently change the version a form is overwriting.
+Claw relays Host observations through its own realtime surface. It retains bounded presentation state only as needed by the transport. Disconnects, sequence gaps, and process restarts cause supported snapshot refetch, not inference that execution finished. A saved execution summary is not current control authority; an unavailable receipt is not evidence that work was never accepted.
 
-Live observations can be incomplete. Clients reconcile with saved Run and Thread state on reconnect or a detected gap. A stream ending is not completion, and absence of live output is not proof of inactivity. Saved output and current work state remain usable without replaying every transient event.
+Inbox acceptance and automation occurrence views show their stronger business-retention guarantee separately. Dispatch uncertainty, pending decisions, product pause, and delivery failure are distinct visible conditions. A successful Host operation cannot turn all related Inbox items green automatically.
 
-## Console Behavior
+## Frontend Behavior
 
-The console presents Thread conversations, configuration, environment, bridge, automation, and memory views over the same product, without a Session or Project selector. Its observation-only memory view follows [memory](09-memory.md#completion-and-observation) rather than exposing maintenance Threads as ordinary chats. An execution view shows its source, captured composition, working context, pending decisions, outcome, and delivery status where applicable. Historical settings are distinguishable from next-Run defaults.
+The frontend centers on Main, workers, Inbox, connections, automation, settings, and operations. It can offer a simple default context while showing the actual selected Host Agent, Project, working roots, and memory scopes where they affect behavior. It does not invent a Claw Profile editor over a second resource catalog.
 
-Configuration forms and advanced YAML share one source draft. The Console distinguishes unsaved edits, saved-but-unloaded source, loaded definitions, and launch settings requiring restart. Validation and change previews do not load configuration. Save and reload are explicit actions; a failed or ambiguous response preserves the original draft and preconditions for reconciliation. Refreshing status or receiving a late save response cannot overwrite newer typing. Invalid externally edited YAML remains available for source repair. Credentials and client grants remain separate protected administration surfaces.
+Configuration forms preserve the owning source revision and local draft. Host source files, accepted generations, next-operation selections, current captured configuration, and connectivity remain distinguishable. Late responses or background refresh cannot silently overwrite newer typing. Cross-owner edits report each outcome instead of displaying fictitious all-or-nothing success.
 
-The conversation composer submits ordinary messages through [always-steer admission](03-execution-lifecycle.md#conversation-message-admission). It does not have to guess whether to start or steer from a stale liveness indicator. The view distinguishes receipt, held input, steering delivery, and incorporation; it does not label an accepted message as executed. Explicit Run controls remain separately targeted.
+Authorized users can inspect and converse with Host workers directly. Main attention about that interaction references already-submitted work; it is not a duplicate task. Exact Host decisions use their native control contract. The Console provides separate controls for stopping an operation and pausing automatic business processing.
 
-One Thread mode distinguishes Main, its persistent workers, Inbox processing state, external delivery, and automatic-processing controls. Users may inspect and directly chat with authorized workers; accepted human changes also create Main attention without duplicating the worker input. Run completion or an empty live stream cannot label pending Inbox work as processed. Stopping a Main Run and pausing future automatic Inbox processing are distinct controls, with backlog and blocking reasons visible.
-
-Client-side selection does not change backend routing. Switching a page neither cancels work nor redirects a bridge reply. Closing the last page has no effect on accepted work. Unsaved drafts remain drafts; they are not recovered or executed as if submitted.
-
-A management action describes its scope and destructive impact. Busy, unavailable, unauthorized, and missing are distinct conditions. Unsupported operations remain explicit rather than creating fake successful state. Console access to working files follows [workspace authority](05-workspaces-and-environments.md), not an implicit server-wide file browser or terminal.
+Changing pages, losing the last browser connection, or dismissing a notification does not cancel Host work or settle business obligations. Viewing memory or history does not itself request inference. Destructive actions describe scope and retained dependencies.
 
 ## Invariants
 
-1. Every client uses the same authoritative command, validation, and permission boundary.
-2. Client liveness is independent of Run ownership and application progress.
-3. A browser cache or stream cannot overrule saved state or current authorization.
-4. Error recovery preserves the distinction between retrying delivery and accepting new work.
+1. Claw's API composes two explicit owners without creating a second execution authority.
+2. Product access checks cover queries, commands, subscriptions, and file exposure.
+3. Browser transport state never replaces Host saved facts or Claw business state.
+4. Human clients see the actual acceptance and recovery limits of the operation they requested.

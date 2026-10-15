@@ -1,6 +1,6 @@
 # Repository Guide
 
-A13n Claw is an independent, single-node agent runtime built on published a13n Harness primitives. The Python application owns durable work, access, configuration, and environment management; the React Console is its API frontend.
+A13n Claw is an independent, single-node assistant product. The accepted replacement architecture embeds one Harness UI App as a Python library and keeps Claw messaging, automation, API, and frontend responsibilities above that Host. The current source still implements the standalone Harness-based runtime. Read [the implementation boundary](spec/repository-model.md#source-implementation-and-release-availability) before treating target contracts as available behavior; spec-only changes do not authorize runtime replacement or data conversion.
 
 ## Sources of truth
 

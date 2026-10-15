@@ -10,13 +10,21 @@ The runtime contains an authenticated API, durable SQLite work state, fresh Harn
 
 Use Python 3.13, typed public interfaces, Ruff, Pyright, and deptry. Use `isinstance` for type-based branching. Tests are function-style pytest tests, offline by default. The installed distribution metadata owns the version; do not duplicate release versions in source modules.
 
-## Runtime ownership
+## Target Host integration
+
+The [replacement specification](spec/README.md) adopts one package-embedded Harness UI App. New embedding work uses its supported lifecycle, configuration, Thread, execution, environment, collaboration, and memory boundaries. Claw owns product state and Capabilities, not a second runtime. Follow the [required library contract](spec/11-host-integration.md); do not import private coordinators, edit Host persistence, or add a parallel HTTP backend. Missing Host features remain explicit integration requirements rather than copied implementations.
+
+## Current standalone implementation
+
+Until replacement is implemented, existing runtime maintenance follows the invariants below. These describe the current source, not obligations to reproduce its execution engine in the embedded architecture.
 
 Use Harness public primitives for execution, checkpoint serialization, decisions, tools, and environments. Claw owns admission, current authority, durable outcomes, and target lifecycle rather than forking Harness. SQLite transactions run in short worker-thread operations; never retain a transaction across execution, external I/O, or waits. Publish the full checkpoint, Thread head, Run outcome, and input incorporation proof atomically. Live events cannot replace saved facts.
 
 An Instance has one process owner and one shared workspace, separate from its protected data root. Captured definitions govern admitted work while current grants can revoke authority. Recovery must not replay unknown external effects. Target mutation must settle before its ownership lock is released. Treat Local shell as host-account authority, not a sandbox.
 
 ## Database schema
+
+The following migration workflow applies to Claw-owned current source state. The replacement architecture assigns Host state and migrations exclusively to Harness UI and limits Claw schema ownership to business state. Existing standalone data is not a Host database and cannot be silently reinterpreted or deleted.
 
 SQLAlchemy Core metadata in `a13n_claw/database/schema.py` owns the current schema; package-owned Alembic revisions own its evolution. Generate revisions through `make db-migrate`, review them, and keep one linear history. Published revisions retain their historical definitions. Runtime startup uses migrations, not inline DDL, `create_all`, or version-specific branches in Store. Application reads and writes continue to use short `sqlite3` transactions.
 
