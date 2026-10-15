@@ -8,13 +8,14 @@ The embedded Host is the sole execution owner. It serializes Thread advancement,
 
 ## Entry Paths and Acceptance
 
-| Entry path                              | Claw responsibility                                                         | Execution acceptance                                           |
-| --------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| Direct Console or CLI conversation      | Authenticate, authorize, and forward the intended human input               | Host admission; no separate durable Claw input queue           |
-| One Thread external message             | Durably retain an Inbox item; request content-light Main attention          | Host accepts the notification separately from Inbox acceptance |
-| Per-Channel external message            | Retain event identity, content, and target; request delivery to that Thread | Host admission or steering, with product dispatch evidence     |
-| Automation occurrence                   | Retain occurrence and declared target; apply timing and overlap policy      | Host operation under current allowed selections                |
-| Worker collaboration or delegated child | Use native Host operations and relationships                                | Native Host admission and control semantics                    |
+| Entry path                              | Claw responsibility                                                          | Execution acceptance                                             |
+| --------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Direct Console or CLI conversation      | Authenticate, authorize, and forward the intended human input                | Host admission; no separate durable Claw input queue             |
+| One Thread external message             | Durably retain an Inbox item; request content-light Main attention           | Host accepts the notification separately from Inbox acceptance   |
+| Per-Channel external message            | Retain event identity, content, and target; request delivery to that Thread  | Host admission or steering, with product dispatch evidence       |
+| Per-trigger external message            | Retain event and Channel Project; create and correlate one fresh task Thread | Host creation and admission are separate, with dispatch evidence |
+| Automation occurrence                   | Retain occurrence and declared target; apply timing and overlap policy       | Host operation under current allowed selections                  |
+| Worker collaboration or delegated child | Use native Host operations and relationships                                 | Native Host admission and control semantics                      |
 
 Human input, external content, automation, and notifications retain their actual provenance. Product-triggered work must not be mislabeled as a direct human instruction. A method whose contract is limited to human submission cannot be reused for automated wake merely because its parameter accepts text.
 

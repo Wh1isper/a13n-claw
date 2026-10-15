@@ -23,7 +23,7 @@ Physical database placement does not change ownership. Claw migrations never edi
 
 ## Dispatch Evidence
 
-For each Inbox wake, per-Channel input, or automation occurrence, Claw distinguishes:
+For each Inbox wake, per-Channel input, per-trigger task creation/submission, or automation occurrence, Claw distinguishes:
 
 | Evidence                                                     | Meaning and next action                                                          |
 | ------------------------------------------------------------ | -------------------------------------------------------------------------------- |

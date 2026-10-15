@@ -47,9 +47,9 @@ Claw stores references to Host Threads and observable operations. It does not mi
 
 ## Product Modes
 
-[One Thread mode](10-one-thread-mode.md) is the default for new Instances: eligible external messages enter a durable Inbox for one canonical Main Host Thread. Main uses Host-native workers and explicitly publishes external messages through Claw. Per-Channel mode remains an explicit alternative, routing each Channel to its configured Host Thread.
+[One Thread mode](10-one-thread-mode.md) is the default for new Instances: eligible external messages enter a durable Inbox for one canonical Main Host Thread. Main uses Host-native workers and explicitly publishes external messages through Claw. Per-Channel mode reuses one conversation Thread per Channel; per-trigger mode creates a fresh task Thread for each eligible event. Both are explicit alternatives. Mentions-only is an independent admission filter for all three modes.
 
-Host Projects and configuration selections are retained as Host concepts. They need not dominate the Claw frontend. A default working context can make initial setup simple without introducing a second Project model, making Channels into Projects, or prohibiting Host-supported selections. Memory follows Host scopes rather than a separate Claw Thread-private store.
+Host Projects and configuration selections are retained as Host concepts. In per-Channel and per-trigger modes, each Channel maps to a stable Host Project so its Threads share Channel memory plus Global memory. One Thread mode uses Main's shared Project and Global memory across all participating Channels, without Channel memory partitions or a Host memory extension. [Memory](09-memory.md) owns the mapping and transition rules; Claw adds no separate memory store.
 
 ## End-to-End Work Path
 

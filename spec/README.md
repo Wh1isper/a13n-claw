@@ -14,7 +14,7 @@ Business acceptance, Host admission, saved continuation, business settlement, an
 
 These documents define the accepted replacement architecture. The current source still implements the earlier standalone Harness-based runtime. This specification change does not implement embedding, change dependencies, convert existing data, or make an upstream embedding API available. [Repository boundaries](repository-model.md#source-implementation-and-release-availability) owns source and release status. [Host integration](11-host-integration.md) defines the library contract required before implementation can claim conformance.
 
-The specifications retain product requirements for One Thread and per-Channel routing, embedded messaging adapters, and automation. They replace the old Claw-owned execution, configuration, workspace lifecycle, and Thread-private memory contracts with Host ownership. Deployment and wire-format details belong to implementation documentation; required observable behavior and ownership belong here.
+The specifications retain One Thread and per-Channel routing and add per-trigger task Threads, with mentions-only filtering independent of all three modes. Per-Channel and per-trigger modes map Channels to stable Host Projects for memory; One Thread uses shared Main Project memory across Channels. Embedded messaging adapters and automation remain product requirements. They replace the old Claw-owned execution, configuration, workspace lifecycle, and Thread-private memory contracts with Host ownership. Deployment and wire-format details belong to implementation documentation; required observable behavior and ownership belong here.
 
 ## Reading Order and Ownership
 
@@ -29,7 +29,7 @@ The specifications retain product requirements for One Thread and per-Channel ro
 | [06 — API, console, and access](06-api-console-and-access.md)             | Claw frontend/API, trust, and observation semantics                          |
 | [07 — Bridges and clients](07-bridges-and-clients.md)                     | Qualified ingress, filtering, routing, and external delivery                 |
 | [08 — Automation](08-automation.md)                                       | Schedule occurrences and business orchestration through Host execution       |
-| [09 — Memory](09-memory.md)                                               | Adoption of Host memory scopes and maintenance                               |
+| [09 — Memory](09-memory.md)                                               | Mode-specific Project mapping, Host memory scopes, and maintenance           |
 | [10 — One Thread mode](10-one-thread-mode.md)                             | Main selection, worker integration, Inbox dispositions, and drain            |
 | [11 — Host integration](11-host-integration.md)                           | Required embeddable library boundary, extension rules, and conformance tests |
 | [Repository boundaries](repository-model.md)                              | Source status, packaging, compatibility, and repository ownership            |

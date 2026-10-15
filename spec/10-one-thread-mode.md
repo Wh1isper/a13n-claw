@@ -8,11 +8,11 @@ One Thread centralizes external conversation handling in one canonical Main Host
 
 ## Instance Mode and Lifetime
 
-New Instances default to One Thread mode. Per-Channel mode remains an explicit alternative. The mode is selected for the whole Instance at startup; an existing saved selection is not changed by a new default. Per-Channel mode routes retained external input to its bound Host Thread, while One Thread mode retains messages for selective Main processing.
+New Instances default to One Thread mode. Per-Channel and per-trigger modes remain explicit alternatives under the [routing contract](07-bridges-and-clients.md#qualified-identity-and-routing). The mode is selected for the whole Instance at startup; an existing saved selection is not changed by a new default. Per-Channel mode reuses the Channel's conversation Thread; per-trigger mode creates a fresh task Thread for each eligible event. One Thread mode retains messages for selective Main processing. Mentions-only is an independent admission filter for every mode.
 
-Claw retains exactly one canonical Main reference. Main is a Host Coordinator root established through supported Host operations. Ordinary create, fork, archive, or worker operations do not silently replace it. If its reference, role, or required context is unavailable, product dispatch blocks rather than creating a new coordinator automatically.
+Claw retains exactly one canonical Main reference. Main is a Host Coordinator root established through supported Host operations in one fixed shared Project. Main and its native workers use Global plus that Project's memory across all participating Channels, without Channel partitions or Channel-specific memory restrictions. This mode requires no per-Channel Projects or cross-Project memory extension. Ordinary create, fork, archive, or worker operations do not silently replace it. If its reference, role, or required context is unavailable, product dispatch blocks rather than creating a new coordinator automatically.
 
-A mode switch or Main reset requires explicit operator action after stopping automatic dispatch and accounting for active Host work and unresolved effects. It does not merge histories, retarget old pending items, or erase uncertainty. Retained old-mode work is explicitly left inactive or resolved; destructive removal is a separate authorized action.
+A mode switch or Main reset requires explicit operator action after stopping automatic dispatch and accounting for active Host work and unresolved effects. It does not merge histories or memory, retarget old pending items, or erase uncertainty. Memory selection and retained Channel Project references follow the [memory transition rules](09-memory.md#configuration-and-updates). Retained old-mode work is explicitly left inactive or resolved; destructive removal is a separate authorized action.
 
 ## Persistent Worker Collaboration
 

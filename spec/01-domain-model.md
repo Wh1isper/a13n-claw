@@ -6,17 +6,17 @@ Claw owns assistant-product concepts and refers to Host concepts by their existi
 
 ## Host Concepts Used Directly
 
-| Concept                | Meaning in Claw                                                                        |
-| ---------------------- | -------------------------------------------------------------------------------------- |
-| Host                   | The one embedded Harness UI App serving this Instance                                  |
-| Project                | A Host-owned working context and configuration selection, not a Channel or tenant      |
-| Agent and Model        | Host resource selections; Claw defines no parallel Profile catalog                     |
-| Thread                 | A Host conversation and continuation identity; no separate Claw Thread ID              |
-| Run or operation       | Host-owned execution and control; a process-local receipt is not a durable work ticket |
-| Checkpoint             | Host-owned complete continuation, accessed only through supported Host operations      |
-| Pending decision       | A Host-owned request with its exact response and continuation rules                    |
-| Worker                 | A Host root Thread owned by a Host Coordinator, distinct from a delegated child        |
-| Environment and memory | Host-selected execution resources and knowledge scopes                                 |
+| Concept                | Meaning in Claw                                                                                      |
+| ---------------------- | ---------------------------------------------------------------------------------------------------- |
+| Host                   | The one embedded Harness UI App serving this Instance                                                |
+| Project                | A Host-owned working context, creation configuration, and memory scope referenced by product routing |
+| Agent and Model        | Host resource selections; Claw defines no parallel Profile catalog                                   |
+| Thread                 | A Host conversation and continuation identity; no separate Claw Thread ID                            |
+| Run or operation       | Host-owned execution and control; a process-local receipt is not a durable work ticket               |
+| Checkpoint             | Host-owned complete continuation, accessed only through supported Host operations                    |
+| Pending decision       | A Host-owned request with its exact response and continuation rules                                  |
+| Worker                 | A Host root Thread owned by a Host Coordinator, distinct from a delegated child                      |
+| Environment and memory | Host-selected execution resources and knowledge scopes                                               |
 
 Host lifecycle names and state transitions are not redefined here. The frontend can simplify presentation while preserving the difference between saved facts, current observations, and unknown state.
 
@@ -42,7 +42,8 @@ The [Inbox contract](10-one-thread-mode.md#durable-inbox) owns processing dispos
 flowchart LR
     Channel --> Binding
     Binding -->|One Thread| Inbox[Main Inbox]
-    Binding -->|Per-Channel| Target[Host Thread]
+    Binding -->|Per-Channel: reuse| Target[Host conversation or task Thread]
+    Binding -->|Per-trigger: create| Target
     Inbox --> Attempt[Dispatch attempt]
     Occurrence --> Attempt
     Attempt -->|Reference only| Target
@@ -53,9 +54,9 @@ flowchart LR
     Occurrence --> Delivery
 ```
 
-Main is a Claw-selected Host Coordinator Thread, not a new conversation type. Claw persists its canonical reference; the Host owns its role and worker relationships. Claw discovers workers through Host queries instead of copying their ownership graph. Host Projects may be selected or omitted according to Host rules. Claw does not manufacture one Project per Channel or treat a shared Project as private conversation isolation.
+Main is a Claw-selected Host Coordinator Thread, not a new conversation type. Claw persists its canonical reference; the Host owns its role and worker relationships. Claw discovers workers through Host queries instead of copying their ownership graph. Per-Channel and per-trigger bindings map each qualified Channel to a stable Host Project; conversation and task Threads select that Project. One Thread uses Main's shared Project across Channels. [Memory](09-memory.md) owns scope selection. Non-Channel Console and automation Threads may select or omit Projects under Host rules. Project and Channel identities remain distinct; Claw retains their association without copying Host resource definitions.
 
-A Channel can be rebound for future events without rewriting retained origins or destinations. Several Channels sharing Main or another Thread explicitly share Agent context. Console-created Threads and automation can exist without a Channel. A single Host operation can receive attention for several business items; an Inbox item can require several separate operations before settlement.
+A Channel can be rebound for future events without rewriting retained origins or destinations. Channels sharing Main explicitly share Agent context; per-Channel and per-trigger modes keep distinct Channel Project associations. Console-created Threads and automation can exist without a Channel. A single Host operation can receive attention for several business items; an Inbox item can require several separate operations before settlement.
 
 ## Identity and Completion Boundaries
 

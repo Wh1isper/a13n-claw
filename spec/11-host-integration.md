@@ -38,7 +38,7 @@ Claw owns the implementations of bounded Inbox reads, disposition changes, deliv
 
 Model arguments specify the requested business target, never the caller's identity or authority. Product services validate current policy, Main-only publication, authorized content scope, and mutation preconditions. Trusted service references are not exposed as serialized credentials or native execution objects to the model or frontend.
 
-Native Host collaboration, subagent, file, and memory tools retain their owners. Claw does not wrap them with competing copies. Missing resource catalog or lifecycle hooks are addressed in the Host before dependent Claw behavior is enabled. Business tool execution commits only its own records; Host checkpoint publication is a separate boundary.
+Native Host collaboration, subagent, file, and memory tools retain their owners. Claw does not wrap them with competing copies. Mode-specific memory uses existing Global and Project scopes: Channel Projects for per-Channel/per-trigger routing, and one shared Main Project for One Thread. This mapping requires no Host memory extension or cross-Project memory access. Missing resource catalog or lifecycle hooks are addressed in the Host before dependent Claw behavior is enabled. Business tool execution commits only its own records; Host checkpoint publication is a separate boundary.
 
 ## Input and Wake Semantics
 
@@ -70,5 +70,9 @@ Before an embedded implementation is considered available, tests demonstrate:
 08. Crashes before and after a Host call preserve business intent and conservatively block unresolved attempts; a committed product settlement is not undone by failed Host publication.
 09. Host-native worker creation/ownership, environment selection, and Global/Project memory are reused without private persistence access.
 10. Installed package execution works outside both repositories, and missing required integration capability fails explicitly without resetting data or switching backends.
+11. Two distinct eligible triggers in one Channel create distinct fresh task Threads in the same Project; a duplicate event and an exact decision callback create no additional task. Unknown creation/admission blocks recreation.
+12. Per-Channel routing reuses its conversation Thread; per-trigger routing preserves the Channel's Project memory across fresh Threads. Different Channels select distinct Project scopes and the same Global scope.
+13. One Thread routes Channels to Main with shared Global/Main Project memory and native same-Project workers, without Channel memory partitions or cross-Project memory APIs. Mode changes preserve retained memory without implicit transfer.
+14. Mentions-only filtering works independently in all three routing modes; ignored events create neither task Threads nor execution context.
 
 These tests establish the boundary, not compatibility with arbitrary future Host releases. The spec-only redesign changes neither the Host package nor Claw runtime code; concrete upstream work and the supported version are determined during implementation against this contract.
