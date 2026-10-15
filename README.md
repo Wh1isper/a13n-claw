@@ -2,7 +2,9 @@
 
 [![CI](https://github.com/Wh1isper/a13n-claw/actions/workflows/ci.yml/badge.svg)](https://github.com/Wh1isper/a13n-claw/actions/workflows/ci.yml)
 
-A fresh, local-first agent runtime project targeting [a13n Harness](https://github.com/converge-ai-labs/agent-foundation), inspired by [YA Claw](https://github.com/Wh1isper/ya-mono/tree/main/packages/ya-claw).
+A local-first assistant project in the [a13n ecosystem](https://github.com/converge-ai-labs/agent-foundation), inspired by [YA Claw](https://github.com/Wh1isper/ya-mono/tree/main/packages/ya-claw).
+
+**Architecture direction:** the [replacement specification](spec/README.md) defines Claw as a product layer embedding one Harness UI App from its Python package, with Claw-owned messaging, automation, API, and frontend. The current source and instructions below still describe the standalone runtime; package embedding and data conversion are not implemented by the specification change. Start with the [architecture](spec/00-overview.md) and [required Host integration boundary](spec/11-host-integration.md).
 
 **Current source scope: a single-node runtime and real conversation Console.** Run agents through Harness with durable Threads, inputs, checkpoints, decisions, cancellation/recovery, delegated work, and checkpoint forks. Manage versioned Profiles, model credentials, skills, MCP servers, scoped clients, reusable Local/Docker targets, and retained files through authenticated APIs and the Console. All Threads share one explicitly selected workspace.
 

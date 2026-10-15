@@ -1,73 +1,50 @@
-# File Memory and Background Organization
+# Host File Memory
 
 ## Design Position
 
-Memory is intentionally retained knowledge for later work, distinct from message history, Harness checkpoints, diagnostics, and ordinary workspace files. Claw stores memory as application-owned plain files using Harness's public file-memory Capability and directory-backed store. Harness owns scoped file tools, bounded untrusted projection, content versions, and conflict-aware mutations. Claw owns scope binding, retention, cursor persistence, and background organization.
+Claw adopts Harness UI's file-memory model instead of implementing another memory subsystem. Harness supplies file-memory tools, bounded untrusted projection, and conflict-aware mutations. Harness UI owns binding, configuration, cursor persistence, files, and automatic organization. Claw exposes supported settings and views and explains their sharing consequences.
 
-## Scopes and Authority
+The former Claw Global plus Thread-private design is replaced by Host Global plus Project scopes. There is no Claw memory database, private scope per Channel or Thread, independent projection cursor, or separate organizer.
 
-There are exactly two kinds of foreground memory scope:
+## Scopes and Sharing
 
-| Scope          | Owner and visibility                                                                                                    |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Global         | One Instance-wide scope deliberately shared by all memory-enabled Threads                                               |
-| Thread-private | One scope keyed by its owning Thread identity, available only to that Thread's foreground work and its scoped organizer |
+| Host scope            | Product meaning                                                    |
+| --------------------- | ------------------------------------------------------------------ |
+| Global                | Shared by conversations using the selected Host configuration root |
+| Project               | Shared by conversations capturing the same Host Project identity   |
+| Projectless execution | Uses Global memory without a Project scope                         |
 
-A memory-enabled ordinary Run binds Global and its own Thread-private scope with writable memory tools. It cannot select another Thread's private scope. Channel, participant, Profile, workspace path, and parent relationship do not change scope identity. There is no Project scope or arbitrary scope picker. New Threads, including children and forks, start with empty private memory and use the current Global files; copied history is not permission to copy or mount the source Thread's private files.
+Thread history and memory have different identities. Main and workers in the same Project share Project memory under Host rules; distinct Thread IDs do not establish private knowledge stores. A Channel binding does not create a memory scope or authorize another Project's memory. Claw does not manufacture Projects merely to emulate its retired Thread-private model.
 
-[One Thread mode](10-one-thread-mode.md) does not add memory scopes: Main and each worker have distinct private memory, and Main ownership does not mount worker-private files. Sharing Main context across Channels shares that Thread's memory context; selective Inbox retrieval is not a promise of knowledge isolation. Internal maintenance Threads are not persistent workers.
+The operator sees the actual memory sharing before enabling a Channel or selecting Main context. One Thread mode deliberately shares Main knowledge across participating Channels. Selective Inbox reading limits what is retrieved now; it cannot isolate knowledge already read, remembered, or copied into conversation history.
 
-Global sharing is deliberate, not an operator-only private store. Granting participation in a memory-enabled Thread permits that work to use Global knowledge, which can appear in replies. All participants sharing a Thread also share its private memory context. Binding another Channel or allowing another participant must account for that disclosure. A foreground agent can explicitly retain reusable facts in Global memory when appropriate; private content is not automatically promoted there. Secrets do not belong in either memory scope.
+Memory is historical context, not policy or current proof. It cannot authorize a sender, grant a tool, change routing, or override current instructions. Secrets do not belong in memory. Broad Host file authority and trusted extensions retain their existing scope; file-memory scoping is not a tenant sandbox.
 
-Memory storage is separate from the shared working directory and execution containers. Ordinary workspace mounts do not expose its backing files; memory requires no shell or Docker access. Changing the workspace directory or recreating a container neither moves nor deletes memory. Scope binding is an application boundary, not hostile-tenant isolation against trusted extensions, the operator, or separately granted broad host authority.
+## Configuration and Updates
 
-Memory content is input, not execution policy. It cannot enable tools, replace a Profile, authorize a sender, or grant filesystem access. Current user instructions take precedence over remembered preferences. Guidance preserves conditions, chronology, ownership, and uncertainty rather than turning one-off requests or agent proposals into standing decisions.
+Host-native memory settings determine enablement, bound scopes, projection limits, and organization. Claw uses supported Host source operations; it does not translate them into a second product schema. A configuration change affects execution according to Host capture rules and does not silently delete retained files.
 
-## Foreground Context and Updates
+Foreground edits use the Host/Harness conflict-aware operations. They persist independently of Agent checkpoint success and are not rolled back by cancellation. Claw neither stages replacement directories nor retries an uncertain mutation without checking the owner's current evidence.
 
-Memory and automatic organization have separate Instance switches, both enabled by default. Disabling organization leaves foreground memory usable; disabling memory omits its Capability from later Runs without deleting files. [Captured composition](02-configuration-and-composition.md) fixes whether foreground memory is enabled and the bound scope identities. Steering cannot add another scope. Content remains mutable, so configuration capture is not a snapshot of knowledge.
-
-Each reconstructed execution receives fresh file-memory collaborators bound only to its captured scopes. Each scope always projects `MEMORY.md` when present, with the index and other context subject to Harness limits. Projection is bounded historical context, not proof of current truth or an exhaustive dump. Authorized tools can read omitted content; limits and unavailable content remain explicit.
-
-Claw persists projection cursors separately from Harness continuation, keyed by scope identity. Resuming the same Thread can restore matching cursors; a fork does not reuse the source private scope's positions. Cursors suppress repeated projection, not access, version checks, or organization dirty detection. They do not prove the model read every entry.
-
-A direct edit or agent update identifies its source and target scope. Mutations use Harness's current-content or version preconditions; conflicts cannot silently discard another writer's changes. Writes persist immediately and independently of checkpoint success. Cancellation does not roll them back, and several edits do not imply a whole-scope transaction. An uncertain write is reconciled against current files before retrying.
+Memory storage and lifecycle remain separate from working directories, execution containers, and Claw Inbox records. A change to a Channel, workspace, or container is not a memory migration. New Thread creation, fork, and Project selection follow the Host's memory binding semantics.
 
 ## Background Organization
 
-Organization consolidates existing scope files; it is not transcript extraction or another knowledge scope. Foreground work remains responsible for deciding what to remember. The organizer preserves supported facts, corrections, conditions, and uncertainty, respects deletions, checks index references, and makes the smallest useful change. No-op completion is valid. Custom guidance cannot expand its evidence or authority.
+Where supported by the selected embedded Host mode, automatic organization remains a Host-owned feature with its existing scope locks, budgets, opportunity triggers, retry rules, and fresh-context behavior. Claw does not start a duplicate organizer, sweep scopes with its scheduler, or supply conversation transcripts as an extraction pipeline.
 
-An input-bearing new ordinary Run admission offers a nonblocking organization opportunity for its captured Global and Thread-private scopes. Console, API, bridge, and automation admissions use the same boundary. A message joining or steering an existing Run, a decision response, recovery, page viewing, or elapsed idle time is not an opportunity. Bridge filtering precedes this boundary; rejected messages cannot become memory evidence. One Thread Inbox acceptance, notice delivery, and Inbox reading are not separate organization opportunities. An input-bearing Main or Worker Run admission follows the same rule, while drain checks alone do not trigger organization. Maintenance does not sweep other Threads or delay or reject foreground admission.
+Embedding must explicitly enable the intended Host capabilities through supported lifecycle options. A feature that is currently mode-specific in Harness UI is not assumed to exist merely because Claw has a web frontend. If the supported package cannot expose organization in embedding mode, the feature is visibly unavailable until the Host integration supports it; foreground memory remains independently described.
 
-At most one organizer runs per scope, and pending opportunities are bounded. Disabled, unavailable, empty, unchanged, busy, or cooling-down scopes make no model request. Success cooldown is one hour; failure, cancellation, or crash imposes a fifteen-minute retry backoff. Another eligible admission is required for retry. The retry gate is durable before inference.
+Organization history and files are read through supported Host queries. Viewing memory does not trigger inference or turn an internal maintenance Thread into an ordinary chat. Maintenance failure is shown without retroactively failing unrelated Inbox processing.
 
-Each attempt captures the organization Model override, or otherwise the Instance's default Profile's Model, plus optional organization guidance. It does not inherit the foreground Model override or the default Profile's other composition. An unavailable Model makes maintenance unavailable without blocking foreground memory. The attempt uses a fresh model context, only the target scope's file-memory tools, at most twelve model requests, and a five-minute execution deadline. It receives no conversation transcripts, other memory scopes, workspace tools, MCP servers, skills, delegation, or bridge access. In particular, a Global organizer cannot read private memory, and a private organizer cannot publish into Global.
+## Retention
 
-Each scope has one internal maintenance Thread for observable attempts, history, outcomes, and usage. Maintenance uses the shared Run execution and persistence infrastructure, not a separate agent loop. Its target scope remains owned by Global or the original ordinary Thread, never by the maintenance Thread. Maintenance Threads have no Channel binding or their own private memory and create no recursive organization opportunities. They are excluded from ordinary conversation lists and controls. Saved maintenance history is for observation only: each attempt starts fresh rather than continuing the prior model conversation.
+Deleting a Channel, archiving a Thread, removing a Project, and deleting memory have separate effects under their owners. Claw must not delete shared knowledge as part of business-record cleanup. A product reference cannot keep an otherwise removed Host scope valid by itself; missing references are reported.
 
-Foreground inputs do not cancel an active organizer. Disabling memory or organization cancels active maintenance; changing its Model or guidance affects later attempts. Shutdown cancels maintenance and settles its execution ownership before releasing scope exclusion. Interrupted maintenance is not automatically resumed or replayed after restart.
-
-## Completion and Observation
-
-The durable organization state records the last successfully accounted file-version manifest and the next eligible attempt time, separately from observation history. The organizer edits current files with the same conflict-aware operations as foreground work; there is no staged directory replacement or rollback. It verifies a consolidation destination before deleting a source.
-
-Success requires completed execution and a final file listing matching the initial versions plus the organizer's accounted mutations. A concurrent change remains dirty, even if the organizer later read it. Failure, cancellation, deadline, or unconfirmed effects retain partial changes and the previous successful manifest. A later eligible attempt inspects current files in fresh context, without replaying stale tool calls. Changes after successful confirmation remain detectable against the manifest.
-
-The console's memory view observes authorized Global or Thread-private files and their maintenance history, with current content distinguished from historical observations. Viewing it never triggers inference. It is not an ordinary conversation composer or a manual control path into the maintenance Thread. Foreground file-memory tools remain usable independently of that observation-only surface. Maintenance failure is visible but does not retroactively fail foreground work.
-
-## Lifecycle
-
-Archiving a Thread, deleting its history, deleting its private memory, and deleting the shared workspace are distinct operations. Global memory survives ordinary Thread removal; removing it is an Instance-wide action. Deletion coordinates with active foreground writers and organizers and cannot leave an admitted attempt writing into a removed scope.
-
-Rebinding a Channel selects the destination Thread's memory for new work; it does not copy the previous Thread's private files. Forked history and already delivered replies can contain previously read knowledge: private-file separation does not retract those copies. Memory deletion likewise cannot retract retained history or external messages.
-
-Unavailable memory at preparation is reported explicitly. Claw does not substitute another Thread's scope or silently create an empty replacement under a retained identity. Memory files and organization state participate in application backup independently of workspace or container retention.
+Backups include the selected Host configuration's memory locations and required Host metadata, not only Claw's business database. Removing memory cannot retract knowledge already present in saved history or external messages.
 
 ## Invariants
 
-1. Every memory-enabled ordinary Run binds only Global and its own Thread-private memory.
-2. Reusable knowledge cannot replace complete continuation or grant execution authority.
-3. Memory files are not part of the shared workspace or a container's writable layer.
-4. Writes and maintenance outcomes are independent of conversation checkpoint success.
-5. Organization reads and writes only its target scope, never extracts transcripts or promotes private knowledge to Global.
-6. Failed or concurrent maintenance cannot falsely mark changed knowledge successfully organized.
+1. Host scope identity and memory lifecycle remain authoritative.
+2. Main, worker, and Channel labels do not create private-memory guarantees.
+3. Claw adds no duplicate projection, persistence, or maintenance machinery.
+4. Frontend availability and memory-feature availability are separate facts.

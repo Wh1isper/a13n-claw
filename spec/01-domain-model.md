@@ -2,83 +2,78 @@
 
 ## Design Position
 
-This document owns the shared vocabulary. Identities distinguish independent lifecycles; possession of an identifier does not grant access. These are conceptual relationships, not database entities or serialized schemas.
+Claw owns assistant-product concepts and refers to Host concepts by their existing identities. A reference provides correlation, not authority. These are conceptual models, not prescribed tables or wire schemas.
 
-## Core Concepts
+## Host Concepts Used Directly
 
-| Concept              | Meaning                                                                                                 | Authority                                                   |
-| -------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Instance             | One operator-controlled Claw application and its durable operational context                            | Claw operator                                               |
-| Channel              | One external conversation scope qualified by platform and connection                                    | Platform identity, Claw routing policy                      |
-| Thread               | One independently advancing agent history, selected continuation, and private memory identity           | Harness history identity, Claw persistence and selection    |
-| Run                  | One execution lifecycle advancing exactly one Thread, possibly incorporating several inputs             | Claw                                                        |
-| Accepted input       | One retained submission with its own origin, identity, routing, and consumption disposition             | Claw                                                        |
-| Item                 | A semantic presentation unit within a Run, such as a message, tool activity, decision, or error         | Claw projection of execution observations                   |
-| Profile              | A reusable definition of agent behavior and default resource selections                                 | Claw configuration                                          |
-| Captured composition | The effective, fixed configuration selected for an accepted Run                                         | Claw                                                        |
-| Workspace binding    | The Instance's shared working directory exposed through a selected environment and permitted operations | Claw policy and selection                                   |
-| Managed target       | An execution environment resource whose lifetime is managed separately from a Run                       | Environment management                                      |
-| Checkpoint           | A complete saved continuation and the references needed to load it                                      | Harness supplies state; Claw selects the durable checkpoint |
-| Pending decision     | A specific unanswered execution request requiring authorized human or external input                    | Claw, constrained by the corresponding Harness continuation |
-| Conversation binding | A Channel's mode-specific routing association, with participant and delivery policy                     | Bridge policy within Claw                                   |
-| Delivery             | A separately tracked attempt to present a saved result or decision to an authorized destination         | Claw delivery policy and platform adapter                   |
+| Concept                | Meaning in Claw                                                                        |
+| ---------------------- | -------------------------------------------------------------------------------------- |
+| Host                   | The one embedded Harness UI App serving this Instance                                  |
+| Project                | A Host-owned working context and configuration selection, not a Channel or tenant      |
+| Agent and Model        | Host resource selections; Claw defines no parallel Profile catalog                     |
+| Thread                 | A Host conversation and continuation identity; no separate Claw Thread ID              |
+| Run or operation       | Host-owned execution and control; a process-local receipt is not a durable work ticket |
+| Checkpoint             | Host-owned complete continuation, accessed only through supported Host operations      |
+| Pending decision       | A Host-owned request with its exact response and continuation rules                    |
+| Worker                 | A Host root Thread owned by a Host Coordinator, distinct from a delegated child        |
+| Environment and memory | Host-selected execution resources and knowledge scopes                                 |
 
-[One Thread mode](10-one-thread-mode.md) owns the canonical Main Thread, persistent owned Worker Threads, durable Inbox processing dispositions, and coordination attention. Main and workers are roles of ordinary Threads, not different history or Run types. An Inbox item is retained external input whose processing lifecycle is independent of notice delivery, Run association, and external delivery.
+Host lifecycle names and state transitions are not redefined here. The frontend can simplify presentation while preserving the difference between saved facts, current observations, and unknown state.
 
-[Automation](08-automation.md) owns schedules, heartbeat occurrences, workflows, and autonomous follow-up. [Memory](09-memory.md) owns Global and Thread-private reusable knowledge. Neither creates a competing conversation or execution model.
+## Claw Concepts
 
-## Conversation Relationships
+| Concept               | Durable meaning and owner                                                                                 |
+| --------------------- | --------------------------------------------------------------------------------------------------------- |
+| Instance              | One Claw deployment, its selected embedded Host context, and product settings                             |
+| Connection            | One configured messaging account or installation and its adapter policy                                   |
+| Channel               | An external conversation qualified by platform and connection                                             |
+| Binding               | Product routing and participant/destination policy referencing Host identities                            |
+| Inbox item            | Retained external content or product attention requiring an explicit processing disposition               |
+| Dispatch attempt      | A record that Claw may have called the Host for particular business work; not a Run or an execution claim |
+| Delivery              | Explicit retained content, origin, destination, and transport outcome                                     |
+| Automation definition | Authorized intent to request work under stated timing and scope rules                                     |
+| Occurrence            | One identified firing or workflow step opportunity, independent of Host execution                         |
+
+The [Inbox contract](10-one-thread-mode.md#durable-inbox) owns processing dispositions. [Recovery](04-persistence-and-recovery.md#dispatch-evidence) owns dispatch evidence. [Delivery](07-bridges-and-clients.md#egress-and-reconciliation) owns send outcomes. These are independent facts, not one generic task state machine.
+
+## Relationships
 
 ```mermaid
 flowchart LR
-    Channel --> Mode[Instance conversation mode]
-    Mode -->|Per-Channel binding| Thread
-    Mode -->|One Thread ingress| Inbox[Main Inbox]
-    Inbox -->|Durable attention| Main[Main Thread]
-    Main -->|Flat persistent ownership| Workers[Worker Threads]
-    Main -.->|Thread role| Thread
-    Workers -.->|Thread role| Thread
-    Thread --> Runs[Runs]
-    Runs --> Items[Items]
-    Thread --> Selected[Selected checkpoint]
-    Thread --> Private[Thread-private memory]
-    Thread -->|Explicit relationship| Child[Child or forked Thread]
-    Thread --> Global[Global memory]
-    Child --> Global
-    Thread --> Workspace[Instance shared workspace]
-    Child --> Workspace
+    Channel --> Binding
+    Binding -->|One Thread| Inbox[Main Inbox]
+    Binding -->|Per-Channel| Target[Host Thread]
+    Inbox --> Attempt[Dispatch attempt]
+    Occurrence --> Attempt
+    Attempt -->|Reference only| Target
+    Main[Canonical Main reference] --> Coordinator[Host Coordinator Thread]
+    Coordinator -->|Host-owned relationship| Workers[Host Worker Threads]
+    Target --> Project[Optional Host Project]
+    Inbox --> Delivery
+    Occurrence --> Delivery
 ```
 
-Claw has no Session or Project entity. A room, direct chat, or platform reply thread can define a Channel according to the adapter's routing semantics. In per-Channel mode, a binding routes one Channel directly to one current Thread; sharing that Thread across several Channels requires an explicit sharing decision. One Thread mode deliberately centralizes eligible Channels in the canonical Main Thread's Inbox while preserving their qualified origins and destinations. Console, API, and automation work can use Threads without a Channel; only explicit Main creation establishes worker ownership.
+Main is a Claw-selected Host Coordinator Thread, not a new conversation type. Claw persists its canonical reference; the Host owns its role and worker relationships. Claw discovers workers through Host queries instead of copying their ownership graph. Host Projects may be selected or omitted according to Host rules. Claw does not manufacture one Project per Channel or treat a shared Project as private conversation isolation.
 
-An accepted conversation input is not synonymous with a Run. Several messages can join or steer one Run; a receipt identifies the input and its current Run association without claiming that the agent has consumed it. [Execution](03-execution-lifecycle.md) owns routing and reconciliation. A Run belongs to exactly one Thread.
+A Channel can be rebound for future events without rewriting retained origins or destinations. Several Channels sharing Main or another Thread explicitly share Agent context. Console-created Threads and automation can exist without a Channel. A single Host operation can receive attention for several business items; an Inbox item can require several separate operations before settlement.
 
-Resuming continues a Thread. Independently advancing delegated children have distinct Thread identities and recorded parent relationships. Persistent worker ownership is a separate Thread-lifetime relationship, not a dependency on the creating Main Run. Forking creates a new Thread from an identified checkpoint and leaves the source unchanged. Forking history does not copy private memory, credentials, pending work, delivery destinations, or backing containers. New Threads start with their own empty private memory and can use current Global memory. They see the same Instance workspace, not a cloned filesystem, under explicitly selected current authority.
+## Identity and Completion Boundaries
 
-Claw keeps its work identity distinct from a process-local Harness execution. A Run can span preparation and a persisted wait before completing; answering that wait can start another Harness execution without creating a different Claw Run. A new request to recover an interrupted Run creates new work with a reference to the interrupted source, not a rewrite of the source outcome.
+An external event identity is scoped to its platform and connection. Identical redelivery returns the prior product disposition; conflicting reuse fails. Dispatch attempts and deliveries keep their own identities. Host receipt identities remain subject to Host lifetime and query guarantees even when copied into a product record.
 
-## Independent State Boundaries
+Business acceptance means Claw retained the item or occurrence. Host admission means the Host accepted a current operation. Saved execution means the Host published the corresponding facts. Business settlement means an authorized actor recorded the item's disposition. Delivery confirmation means the external transport supplied the required evidence. None implies the next.
 
-- Thread configuration selects future behavior; the selected checkpoint carries continuation, not configuration authority.
-- The captured composition describes intended behavior for a Run; it is not a snapshot of all external files or remote services.
-- A managed target can stop while its durable working data and owning Thread remain retained.
-- A Run can finish while its result delivery is pending or failed.
-- The Main Thread can have actionable Inbox work after a Run finishes; only explicit processing dispositions settle that work.
-- A Channel can disconnect without ending a Thread or cancelling work.
-- A saved Item is a view of execution, not a resumable agent state.
+Creation, initial prompt submission, and worker ownership follow the Host's separate completion boundaries. A created Thread remains identifiable when subsequent admission fails. Claw must not promise atomic create-and-run or retry creation merely because a receipt was lost.
 
-The Instance uses one shared workspace rooted at its startup directory or configured folder. Threads do not select Projects or independent workspace roots. Separate histories and private memory do not imply filesystem isolation: working files and Global memory are deliberately shared, while Thread-private memory is bound only to its owner. [Environment management](05-workspaces-and-environments.md) and [memory](09-memory.md) own those distinct data boundaries.
+## Authority
 
-## Sources and Authority
+Claw records whether work originated from a human, an external event, automation, or a product notification. The Host binds the actual executing Thread and configuration; model text cannot choose that identity. Source attribution does not grant permission to read other Inbox items, answer decisions, change Host configuration, or publish externally.
 
-Each accepted input retains its origin: direct caller, bridge event, automation occurrence, or delegated work. A source records why work was requested; Claw policy decides what it may do. External account, conversation, message, and user identities stay qualified by their connection and platform scope. Equal display names do not identify the same person or authorize shared history.
-
-A conversation binding routes work; it does not itself authorize every participant in an external room. A Profile selects behavior; it does not expand the caller's permissions. The [access contract](06-api-console-and-access.md) owns those checks.
+Claw's participant and destination policy complements Host execution controls. Separate Threads do not imply isolated memory, working files, or host-account execution. [Access](06-api-console-and-access.md) owns those disclosure and permission boundaries.
 
 ## Invariants
 
-1. Channel, Thread, Run, and managed target identities are not interchangeable.
-2. Exactly one execution owner can advance a given Thread at a time, including across persisted waits.
-3. History, execution configuration, workspace lifecycle, memory ownership, and output delivery have separate authorities.
-4. A child or fork cannot overwrite its parent's continuation or inherit authority merely by copying history.
-5. All ingress paths retain enough origin information to explain accepted work and to reconcile repeated submission.
+1. Every execution reference identifies Host-owned state; Claw has no competing Thread, Run, or checkpoint authority.
+2. Product intent, dispatch evidence, business settlement, and external delivery remain independently inspectable.
+3. Worker relationships and Project membership are queried from the Host, never inferred from titles or copied history.
+4. A lost process-local receipt cannot be converted into proof that execution never happened.

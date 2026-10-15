@@ -1,34 +1,37 @@
 # A13n Claw Specification
 
-A13n Claw is a local-first, self-hosted agent application built on a13n Harness. It combines persistent conversations and background work with an API-driven console, managed execution environments, and external messaging clients.
-
-These specifications define the accepted target product and its high-level contracts, not a claim that every feature is available. The source implements the authenticated API, durable Thread and Run execution, managed Local/Docker environments, headless YAML configuration and CLI operations, an optional API-driven Console, and default One Thread coordination with persistent workers, durable Inbox processing, and generic HTTP ingress/egress. File memory, vendor-specific embedded bridges, and general automation remain target contracts. [Repository boundaries](repository-model.md) distinguish source implementation from release availability.
+A13n Claw is a local-first assistant product built on the embedded Harness UI Host. One Claw process composes one `HarnessUiApp` from the `a13n-harness-ui` Python package, Claw messaging and automation services, and Claw's own API and frontend. Harness UI owns the Agent Host; Claw owns the product built around it.
 
 ## Design Boundary
 
-Claw owns application state, admission, execution ownership, recovery, environment management, and client delivery. Harness owns agent execution and portable continuation. The console and bridges are clients of the same application authority, not alternative agent runtimes.
+The dependency direction is Claw product services → Harness UI App → Harness. Claw uses an in-process library boundary, not the Harness UI WebUI HTTP protocol, a second server, or a switchable local/remote backend framework. The stock Harness UI browser and terminal adapters are not required to run Claw.
 
-The design is single-node and operator-controlled, with one server hosting the API, console, embedded bridges, automation, and environment manager. Direct conversation messages use always-steer admission; One Thread external ingress first retains a durable Inbox item and requests Main attention. Group-message filtering precedes either route. It does not introduce a hosted multi-tenant platform or a distributed worker scheduler. Configuration, APIs, and saved state follow this project's own contracts.
+Harness UI owns configuration resources, Projects, Threads, execution composition, root and child execution, decisions, continuation, environments, file memory, and native collaboration. Claw retains Channel routing, durable Inbox and automation intent, external delivery, product access policy, and its frontend. Claw refers to Host identities and observations instead of maintaining a second execution store or state machine.
 
-The Instance selects one conversation mode at startup: per-Channel routing directly to Threads, or One Thread routing external messages through one canonical Main Thread's Inbox with persistent owned workers. Neither mode introduces Session or Project entities. The Instance shares one startup or configured workspace directory across all Threads. Memory uses Global and Thread-private plain-file scopes with optional background organization; neither workspace nor memory requires a Project catalog.
+Business acceptance, Host admission, saved continuation, business settlement, and external delivery are distinct boundaries. Retained Inbox work survives restart; Host receipts and unsaved execution input do not become durable merely because Claw embeds the Host. Uncertain submissions and effects block automatic replay. [Persistence and recovery](04-persistence-and-recovery.md) owns this deliberate reliability boundary.
 
-These documents specify responsibilities, relationships, observable lifecycles, and key flows. Database products, tables, physical file layouts, class hierarchies, endpoint schemas, transport choices, and deployment recipes are outside this design level.
+## Specification and Source Status
+
+These documents define the accepted replacement architecture. The current source still implements the earlier standalone Harness-based runtime. This specification change does not implement embedding, change dependencies, convert existing data, or make an upstream embedding API available. [Repository boundaries](repository-model.md#source-implementation-and-release-availability) owns source and release status. [Host integration](11-host-integration.md) defines the library contract required before implementation can claim conformance.
+
+The specifications retain product requirements for One Thread and per-Channel routing, embedded messaging adapters, and automation. They replace the old Claw-owned execution, configuration, workspace lifecycle, and Thread-private memory contracts with Host ownership. Deployment and wire-format details belong to implementation documentation; required observable behavior and ownership belong here.
 
 ## Reading Order and Ownership
 
-| Document                                                                        | Owns                                                                                                      |
-| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| [00 — Overview](00-overview.md)                                                 | Product scope, architectural boundaries, and the end-to-end work path                                     |
-| [01 — Domain model](01-domain-model.md)                                         | Shared vocabulary, identities, relationships, and ownership                                               |
-| [02 — Configuration and composition](02-configuration-and-composition.md)       | Reusable definitions, defaults, and the configuration captured for work                                   |
-| [03 — Execution lifecycle](03-execution-lifecycle.md)                           | Admission, serialized continuation, decisions, cancellation, and delegation                               |
-| [04 — Persistence and recovery](04-persistence-and-recovery.md)                 | Durable truth, checkpoint publication, restart, and retention                                             |
-| [05 — Workspaces and environment management](05-workspaces-and-environments.md) | Working context, managed targets, Docker lifecycle, and data boundaries                                   |
-| [06 — API, console, and access](06-api-console-and-access.md)                   | Application command/query boundary, console behavior, and caller authority                                |
-| [07 — Bridges and clients](07-bridges-and-clients.md)                           | Platform-neutral ingress, conversation bindings, interaction, and delivery                                |
-| [08 — Automation](08-automation.md)                                             | Schedules, heartbeat, workflows, and bounded autonomous follow-up                                         |
-| [09 — Memory](09-memory.md)                                                     | Global and Thread-private file memory, projection, organization, and retention                            |
-| [10 — One Thread mode](10-one-thread-mode.md)                                   | Exclusive Instance mode, persistent worker collaboration, durable Inbox, drain, and Main-only publication |
-| [Repository boundaries](repository-model.md)                                    | Source surfaces, distribution, compatibility, and current implementation boundary                         |
+| Document                                                                  | Owns                                                                         |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [00 — Overview](00-overview.md)                                           | Product architecture, ownership, and end-to-end flow                         |
+| [01 — Domain model](01-domain-model.md)                                   | Product concepts, references to Host concepts, and identity boundaries       |
+| [02 — Configuration and composition](02-configuration-and-composition.md) | Host resource authority and separate Claw settings                           |
+| [03 — Execution lifecycle](03-execution-lifecycle.md)                     | Product-to-Host submission, controls, and business progress                  |
+| [04 — Persistence and recovery](04-persistence-and-recovery.md)           | Separate storage ownership, dispatch uncertainty, restart, and retention     |
+| [05 — Workspaces and environments](05-workspaces-and-environments.md)     | Host-managed working context and product exposure                            |
+| [06 — API, console, and access](06-api-console-and-access.md)             | Claw frontend/API, trust, and observation semantics                          |
+| [07 — Bridges and clients](07-bridges-and-clients.md)                     | Qualified ingress, filtering, routing, and external delivery                 |
+| [08 — Automation](08-automation.md)                                       | Schedule occurrences and business orchestration through Host execution       |
+| [09 — Memory](09-memory.md)                                               | Adoption of Host memory scopes and maintenance                               |
+| [10 — One Thread mode](10-one-thread-mode.md)                             | Main selection, worker integration, Inbox dispositions, and drain            |
+| [11 — Host integration](11-host-integration.md)                           | Required embeddable library boundary, extension rules, and conformance tests |
+| [Repository boundaries](repository-model.md)                              | Source status, packaging, compatibility, and repository ownership            |
 
-Start with 00 and 01. For the main user path, continue through 02–04, then 06–07. For unattended work, read 05 and 08–09 with the execution and recovery contracts. For centralized conversation handling, read 10 with 03–04 and 07. A concept's owning document takes precedence over summaries elsewhere.
+Start with 00, 01, and 11 for the architecture. Read 03–04 for the execution and reliability boundary, then 07 and 10 for the main messaging path. Read 02, 05, and 09 together to understand the Host concepts Claw adopts. A concept's owning document takes precedence over summaries elsewhere.

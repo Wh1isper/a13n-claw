@@ -1,116 +1,75 @@
-# Execution and Interaction Lifecycle
+# Product Submission and Host Execution
 
 ## Design Position
 
-Claw owns work acceptance and durable outcomes. Harness owns process-local agent execution and produces continuation candidates. An API response, observed model output, checkpoint publication, and external reply are different facts.
+The embedded Host is the sole execution owner. It serializes Thread advancement, resolves composition, runs Harness, manages decisions and children, publishes continuation, and exposes operation controls. Claw decides which business work needs attention and invokes that boundary; it does not define another Run lifecycle.
 
-## Admission and Ordering
+[Host integration](11-host-integration.md) owns the required library surface. [Persistence](04-persistence-and-recovery.md) owns evidence when a call or its result is uncertain. No product lock or dispatch record grants the right to advance Host history directly.
 
-All work sources use the same admission authority. Before acknowledging an input, Claw retains its content, origin, destination Thread, routing disposition, and identity needed to reconcile retries. When admission creates a Run, it also captures that Run's composition; an input joining existing work uses the existing composition. Required input attachments must be retained or explicitly unavailable; a short-lived external download link alone does not satisfy acceptance.
+## Entry Paths and Acceptance
 
-A repeat of the same identified request returns the same input receipt with its current disposition and Run association. Reusing that identity with different content or scope is a conflict. A timeout does not establish rejection: the caller first checks whether the original work exists.
+| Entry path                              | Claw responsibility                                                         | Execution acceptance                                           |
+| --------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Direct Console or CLI conversation      | Authenticate, authorize, and forward the intended human input               | Host admission; no separate durable Claw input queue           |
+| One Thread external message             | Durably retain an Inbox item; request content-light Main attention          | Host accepts the notification separately from Inbox acceptance |
+| Per-Channel external message            | Retain event identity, content, and target; request delivery to that Thread | Host admission or steering, with product dispatch evidence     |
+| Automation occurrence                   | Retain occurrence and declared target; apply timing and overlap policy      | Host operation under current allowed selections                |
+| Worker collaboration or delegated child | Use native Host operations and relationships                                | Native Host admission and control semantics                    |
 
-Only one Run owns advancement of a Thread at a time. Ordinary conversation messages follow the always-steer path below rather than creating a Run for every message. Separately requested work, such as an automation occurrence, can create a queued Run in an observable order. A waiting Run retains its position; later prompts do not bypass an unanswered decision. Independent Threads can execute concurrently, subject to their declared access to shared resources.
+Human input, external content, automation, and notifications retain their actual provenance. Product-triggered work must not be mislabeled as a direct human instruction. A method whose contract is limited to human submission cannot be reused for automated wake merely because its parameter accepts text.
 
-At execution start, Claw selects the Thread's current complete checkpoint under exclusive advancement ownership. It uses the composition fixed at admission, verifies current authority, and prepares the required environment. This allows queued work to follow committed conversation progress without changing its accepted behavior.
+## Submission and Active Work
 
-## Conversation Message Admission
+Claw uses a supported Host start-or-steer operation where available. It does not decide from a stale status read that a new writer is safe. A successful receipt indicates Host admission, not durable input incorporation or business completion.
 
-Always-steer is the behavior for direct Console/API conversation messages, collaboration messages, and per-Channel bridge input, not a per-platform choice. In [One Thread mode](10-one-thread-mode.md), external messages first enter the durable Inbox; content-light Main attention uses this admission boundary while message bodies are selectively retrieved. An Inbox receipt is not proof of incorporation into a Run. The caller need not inspect liveness or choose between submit and steer. Claw serializes the routing decision with Thread ownership:
+A busy or preparing Host, pending decision, shutdown, unavailable dependency, or rejected steer leaves retained business work pending with a reason. If the selected operation ends during a steer, Claw records the actual rejection or uncertainty. It never silently retargets an uncertain control call to a new operation. A later, demonstrably safe attempt can be scheduled under the recovery rules.
 
-| Thread condition                                       | Disposition of a new eligible message                                                  |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| No active or queued Run                                | Create a Run and capture its composition                                               |
-| Next Run is queued or preparing, with no running owner | Append the message to that Run's pending input in receipt order                        |
-| A Run is running                                       | Retain the message for steering into that Run at a supported Harness input boundary    |
-| A Run is waiting on a decision                         | Retain the message as held input for that Run; do not resume it or answer the decision |
-| Execution or prior input consumption is unresolved     | Keep the input blocked until reconciliation; do not create a competing execution       |
+Direct human clients see the Host's actual rejection, control availability, and input semantics. Claw does not preserve the former standalone runtime's promise that every direct prompt is durably queued across restart. Retained external work remains inspectable even when the Host cannot currently accept it.
 
-Joining work preserves each message's identity, sender, attachments, and disposition even when several messages are presented together. A later message cannot overwrite an earlier pending prompt. Accepted messages do not replace the Run's captured model, tools, workspace, memory selection, or permissions. A caller lacking permission to contribute to the selected Run is rejected rather than creating parallel work.
+A product dispatch serializes attempts for its target and rechecks product eligibility before crossing the Host boundary. Host admission remains authoritative when direct human interaction or native collaboration races with it. Business records are committed before a potentially effectful call; no business transaction remains open across execution or a wait.
 
-Held input becomes eligible for steering only after the exact decision response allows the waiting Run to continue. If that Run is cancelled, fails, or is interrupted, remaining input stays inspectable as unapplied or uncertain; it is not automatically used to restart work past the decision.
-
-## Work Lifecycle
-
-The names below describe observable phases, not a wire-format enum.
-
-```mermaid
-stateDiagram-v2
-    [*] --> Queued: Durable acceptance
-    Queued --> Running: Ownership and preparation succeed
-    Queued --> Failed: Required preparation cannot succeed
-    Queued --> Cancelled: Cancellation accepted
-    Running --> Waiting: Complete checkpoint and decision saved
-    Waiting --> Running: Exact authorized response accepted
-    Running --> Completed: Outcome and continuation committed
-    Running --> Failed: Failure committed
-    Running --> Cancelled: Execution stopped and outcome committed
-    Waiting --> Cancelled: Waiting work cancelled
-    Running --> Interrupted: Execution ownership lost
-    Completed --> [*]
-    Failed --> [*]
-    Cancelled --> [*]
-    Interrupted --> [*]
-```
-
-Queued work can expose a preparation or dependency blockage without pretending to be running. Preparation is part of the accepted Run and cannot become an invisible competing execution. A cancellation during preparation follows the same ownership and completion checks as cancellation during execution.
-
-An interrupted Run is retained with its last known progress and selected checkpoint. Recovery creates a new Run on the same Thread with an explicit source reference after [reconciliation](04-persistence-and-recovery.md); it does not resurrect the old Run or silently replay uncertain side effects.
-
-## Normal Execution Flow
+## Main Processing Flow
 
 ```mermaid
 sequenceDiagram
     participant Source
     participant Claw
-    participant State as Durable state
-    participant Harness
-    Source->>Claw: Submit message to idle Thread
-    Claw->>State: Retain input and new Run composition
-    Claw-->>Source: Input receipt and associated Run
-    Claw->>State: Select current Thread continuation
-    Claw->>Harness: Execute with fresh authority
-    Harness-->>Claw: Live observations
-    Harness-->>Claw: Outcome and complete state candidate
-    Claw->>State: Publish checkpoint and commit outcome
-    Claw-->>Source: Saved outcome available
+    participant Business as Business store
+    participant Host
+    Source->>Claw: Qualified external event
+    Claw->>Business: Retain Inbox item
+    Claw-->>Source: Business acceptance
+    Claw->>Business: Record dispatch attempt
+    Claw->>Host: Request Main attention with source context
+    Host-->>Claw: Admission or explicit rejection
+    Claw->>Business: Record available dispatch evidence
+    Host->>Claw: Bound capability reads Inbox
+    Host->>Claw: Bound capability records disposition or send intent
+    Claw->>Business: Commit product mutation
+    Host->>Host: Publish execution and continuation
+    Claw->>Host: Inspect saved outcome after notification
 ```
 
-A Run is not reported as successfully completed until its required result and continuation boundary are durable. Failure to deliver a notification afterwards cannot change that outcome. A failed or cancelled execution can still leave a valid checkpoint or changed external data; Claw reports those facts rather than implying rollback.
+The product mutation and Host publication are separate commits. A saved handled disposition or delivery is not rolled back if later Host publication fails. A completed Host operation does not imply that an Inbox item was handled. Claw checks backlog again under [drain](10-one-thread-mode.md#wake-and-drain), respecting uncertainty and decisions.
 
-In One Thread mode, a terminal Main Run does not settle the Inbox. Claw checks durable actionable backlog and admits eligible successor work under [wake and drain](10-one-thread-mode.md#wake-and-drain), including after restart if the Run-end notification never ran. This creates or reuses work without rewriting the completed Run or bypassing a decision or recovery barrier.
+## Decisions and Controls
 
-## Human Decisions
+Pending decisions belong to the Host. Claw presents exact requests and forwards authorized answers with their original correlation and preconditions. Ordinary prompts, Inbox notifications, timers, and workers cannot answer an approval or resume past a waiting decision by implication.
 
-A Pending decision names the exact waiting work, requested action, and continuation to which an answer applies. Claw saves the complete waiting boundary before presenting it as resumable. A question and a tool approval are distinct requests; an arbitrary new chat message is not an answer to either.
+A lost decision-response result is reconciled through the Host's available evidence, not replayed against a new request. Claw does not create a separate deferred-response store or reconstruct native answers from rendered text. A platform unable to represent the interaction directs the user to a capable authorized surface.
 
-The first valid response from an authorized client is accepted against the still-current decision. A repeated identical response can be recognized; stale or conflicting answers cannot resume work twice. Policy is checked again before continuation. Rejecting an action is not silently converted into approval through a later client or automatic retry.
+Stopping an operation invokes Host cancellation and reports its observed outcome. It does not stop every worker, undo effects, or pause future Inbox processing. Pausing automatic product dispatch is a separate durable Claw setting. Claw keeps that setting aligned with any enabled Host coordinator auto-follow-up through the supported integration boundary; a second automatic wake path must not bypass pause.
 
-Console and bridge clients may answer the same decision only when their permissions allow it. If a platform cannot express a required interaction safely, work remains waiting and the user is directed to an authorized capable surface.
+## Delegation and Persistent Workers
 
-## Steering and Cancellation
+Host-native delegated children and Coordinator-owned worker roots keep their native distinction. Claw does not recreate either mechanism, synchronize their histories into Main, or wrap them in durable Claw Runs. Creation and first-prompt admission retain their separate Host outcomes; a partial failure reports the known Thread identity.
 
-Ordinary accepted messages steer the current Run without a separate steering command. Claw distinguishes durable receipt, delivery to the executor, and incorporation into a saved continuation. Always-steer does not mean interrupting a tool call, approving an action, or immediately changing the model's current request.
-
-Routing and completion must not lose or double-apply a message. Before committing successful completion, the owner checks pending input. If an ordinary message is confirmed not delivered and execution has already closed, Claw transfers that same input once to the next pending Run, or creates a successor Run using current composition if none exists. The receipt exposes the resulting association; retrying the message cannot repeat the transfer. Confirmed incorporated input is never submitted again. If delivery or consumption is uncertain, Claw retains that uncertainty for reconciliation rather than guessing that another Run is safe.
-
-An explicit Run-targeted control request remains different from ordinary message submission: a stale steer is rejected or reported unapplied, never retargeted to another Run. Cancellation, decision responses, and separately scheduled work keep their own semantics.
-
-Cancellation records intent before reporting a final outcome. Queued work can be cancelled without execution. Active work is cancelled only after the executor has stopped or its loss has been reconciled. If completion wins the race, the completed outcome remains authoritative. Cancellation does not undo external actions already performed.
-
-## Delegation
-
-Delegated work uses a distinct Thread and Run with a recorded parent relationship and explicitly bounded authority. Inline execution does not create a new independent work owner; background execution does. Child progress and completion are visible without merging their history into the parent Thread.
-
-A parent that waits for a child can continue only from the child's saved outcome or an explicit failure condition, not merely a delegation receipt. Child-result delivery and parent continuation are tracked separately so a retry cannot append the result twice. Stopping a parent does not prove every child stopped; the requested propagation policy and actual child outcomes remain visible.
-
-[Persistent workers](10-one-thread-mode.md#persistent-worker-collaboration) use a separate Thread-lifetime ownership relation. They remain addressable across Main Runs and can receive direct human input. Run-scoped delegation receipts and child-result delivery do not by themselves establish that relation or confer worker collaboration authority.
+Claw uses saved Host views to assess results. A worker notification is a hint, not proof of success or a durable report. Business dependencies on worker results are retained separately and resolved from exact available saved evidence. Missing evidence blocks the dependency; it does not authorize rerunning the worker task.
 
 ## Invariants
 
-1. Accepted input survives client disconnect and is never silently discarded on restart.
-2. No two Runs publish competing continuation heads for the same Thread.
-3. A waiting decision cannot be bypassed by another client, later prompt, or duplicate callback.
-4. Saved terminal outcomes are not rewritten by notification failures or stale executors.
-5. Unknown effects remain explicit until reconciled; retry is not a promise of exactly-once external execution.
-6. Every accepted message remains identifiable across pending input, steering, completion races, and recovery; receipt is not proof of incorporation.
+1. Only the Host owns execution state transitions, checkpoints, and decisions.
+2. Product acceptance never implies Host acceptance or durable execution input.
+3. Direct human, external, and automated input keep distinct provenance.
+4. Rejected or uncertain control does not fall through into another operation.
+5. Product settlement, Host completion, cancellation, and external delivery remain separate outcomes.

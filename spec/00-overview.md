@@ -2,73 +2,73 @@
 
 ## Product Position
 
-Claw is an operator-controlled, single-node agent application for ongoing work. People interact through a console, API clients, or messaging platforms; accepted work is owned by Claw rather than by the lifetime of a page, connection, or messaging adapter.
+Claw turns an embedded Harness UI Host into an operator-controlled assistant for ongoing work. Its frontend, messaging connections, Inbox, and automation are product surfaces over one Host, not another Agent runtime. The frontend is optional for background progress and independent of the stock Harness UI WebUI.
 
-Persistent conversations, managed working environments, and unattended tasks share one application lifecycle. Harness supplies execution and continuation primitives; Claw defines its own durable admission, recovery, and API-first client boundary.
-
-## Scope
-
-| Area                 | Product responsibility                                                                                                     |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Conversations        | Create, continue, inspect, fork, and archive persistent work; expose pending decisions and actual outcomes                 |
-| Agent composition    | Manage reusable behavior and resource selections, capture effective configuration, and explain unavailable dependencies    |
-| Execution            | Accept work durably, advance histories without conflicting writers, control active work, and recover from interruption     |
-| Workspace            | Share one Instance working directory across Threads through authorized execution environments                              |
-| Managed environments | Inspect and control backing targets, including Docker, independently of conversation and data retention                    |
-| Background work      | Run delegated tasks, schedules, heartbeat, workflows, and bounded autonomous follow-up through the same execution boundary |
-| Memory               | Maintain Global and Thread-private file memory with bounded background organization                                        |
-| Clients              | Provide a first-party API console and platform-neutral bridges for external messaging clients                              |
-
-Lark, Discord, WhatsApp, and Telegram are adapter targets within the same client model. Listing a target defines an architectural extension point, not a claim of an implemented or feature-equivalent integration.
+Claw deploys as one process with one embedded `HarnessUiApp`. Direct Python calls connect product services to the App. The supported dependency is the `a13n-harness-ui` package; Harness remains its execution foundation. There is no internal HTTP hop or separately managed Harness UI service.
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-    Console[API-driven console] --> App
-    API[Other API clients] --> App
-    Platforms[External messaging platforms] <--> Bridges
-    subgraph Server[One Claw server]
-        Bridges[Embedded bridge adapters] --> App[Claw application authority]
-        Automation[Schedules, heartbeat, workflows] --> App
-        App --> Harness[Harness execution and continuation]
-        App --> Management[Environment management]
-        App --> Delivery[Client delivery]
-        Delivery --> Bridges
-        App --> Views[Saved views and live observations]
-        Harness --> Access[Authorized environment operations]
+    Frontend[Claw frontend and API clients] --> API
+    Platforms[Messaging platforms] <--> Bridges
+    subgraph Process[One Claw process]
+        API[Claw HTTP and realtime API] --> Product
+        API --> Host
+        Bridges[Embedded adapters] --> Product
+        Product[Inbox, routing, automation, delivery] --> Host
+        Host[Embedded HarnessUiApp] --> Harness
+        Harness[Harness execution] --> Tools[Claw product Capabilities]
+        Tools --> Product
+        Product --> Bridges
     end
-    App <--> State[Durable application state]
-    Management --> Targets[Local or reusable Docker targets]
-    Access --> Targets
-    Views --> Console
+    Host --> HostState[Host-owned configuration and saved state]
+    Product --> BusinessState[Claw-owned business state]
+    Host --> Environment[Host-managed environments and files]
 ```
 
-Claw deploys as one server process. API serving, console assets, bridge connections, automation, execution coordination, and environment management share that server's lifecycle. Bridges are internal adapters, not separately deployed services calling back into Claw over a private API. Their component boundaries do not introduce another execution owner.
-
-The server starts enabled adapters after application recovery is ready for admission and stops ingress before draining or reconciling accepted work on shutdown. An individual adapter's disconnection is visible without stopping unrelated conversations or the console. Managed execution containers are separate resources, not additional Claw servers; their reuse and retention follow [environment management](05-workspaces-and-environments.md).
+The diagram describes responsibility, not a required class hierarchy. Product tools invoke bounded Claw operations with Host-bound caller context. They do not start a nested Host, access private execution objects, or synchronously wait for another Agent to complete.
 
 ## Ownership
 
-Claw owns durable acceptance, resource configuration, Channel bindings, Thread and Run lifecycle, checkpoint selection, environment association, authorization, automation intent, Inbox attention, worker ownership, and delivery records. Harness owns the agent loop, tool execution primitives, portable Thread continuation, and its native waiting boundaries. Environment providers own operations against their targets. A bridge owns platform transport and representation, not permission to bypass Claw admission.
+| Concern                                                              | Owner                        | Claw's role                                                   |
+| -------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------- |
+| Model, Agent, MCP, Skill, extension, and Project resources           | Harness UI                   | Present and edit through supported Host operations            |
+| Thread identity, composition, execution, decisions, and continuation | Harness UI                   | Select destinations, request operations, and present results  |
+| Coordinator roles, worker ownership, and subagents                   | Harness UI                   | Select Main and integrate product attention                   |
+| Environment selection, preparation, state, and lifecycle             | Harness UI and its providers | Offer product defaults and authorized controls                |
+| File-memory scopes, projection, and organization                     | Harness UI and Harness       | Expose the supported settings and views                       |
+| Channel identity, sender filtering, and routing                      | Claw                         | Normalize external context and apply product policy           |
+| Inbox dispositions and automation occurrences                        | Claw                         | Retain business intent and decide when to request execution   |
+| External message delivery                                            | Claw and platform adapters   | Retain explicit destinations and reconcile transport outcomes |
+| Product API, frontend, and external access policy                    | Claw                         | Authenticate clients and expose only intended operations      |
 
-The Instance selects either per-Channel routing or [One Thread mode](10-one-thread-mode.md) at startup. Per-Channel bindings route directly to Threads; One Thread mode uses a canonical Main Thread, a durable Inbox, and flat persistent owned Worker Threads. There is no Session or Project layer. All Threads use one Instance workspace, selected from the configured folder or startup working directory. Global memory is shared, while each Thread has its own private file memory. Shared working files are not Thread-private storage.
+Claw stores references to Host Threads and observable operations. It does not mirror checkpoints, capture a second execution composition, implement a second worker graph, or manage a parallel environment pool. [Host integration](11-host-integration.md) owns the required embedding contract.
 
-The console provides management and conversation views over the application API. It does not read storage directly, construct an agent, decide that a Run completed from a disconnected stream, or become necessary for background progress.
+## Product Modes
+
+[One Thread mode](10-one-thread-mode.md) is the default for new Instances: eligible external messages enter a durable Inbox for one canonical Main Host Thread. Main uses Host-native workers and explicitly publishes external messages through Claw. Per-Channel mode remains an explicit alternative, routing each Channel to its configured Host Thread.
+
+Host Projects and configuration selections are retained as Host concepts. They need not dominate the Claw frontend. A default working context can make initial setup simple without introducing a second Project model, making Channels into Projects, or prohibiting Host-supported selections. Memory follows Host scopes rather than a separate Claw Thread-private store.
 
 ## End-to-End Work Path
 
-1. An authorized source submits work to an existing conversation or requests a new one.
-2. Claw resolves scope and reconciles request identity. Direct conversation messages join pending work or steer active work; an idle Thread receives a new Run with a captured composition. A bridge authorizes and filters before admission. In One Thread mode it retains eligible messages in the Inbox and requests Main attention instead of directly steering message bodies.
-3. Execution waits for the right to advance the selected Thread and for its declared environment to be usable.
-4. Harness executes against the selected continuation with fresh execution authority. Claw records pending decisions and observable progress.
-5. Claw publishes a complete continuation and commits the work outcome. Output delivery is tracked independently.
-6. A later client reconnects to saved application state; a later Run continues the saved Thread rather than reconstructing it from rendered messages. In One Thread mode, startup and Main Run settlement also check durable actionable backlog and admit eligible successor work; a lost notification or apparent model completion cannot strand pending Inbox items.
+1. An adapter authenticates an external event; Claw checks sender, group filter, and qualified event identity.
+2. Claw retains the eligible message and routing context before acknowledging business acceptance.
+3. The product scheduler checks pending work, current policy, and Host availability. It records a dispatch attempt before calling the Host.
+4. The Host owns admission, start-or-steer behavior, composition, decisions, execution, and checkpoint publication. Claw observes through supported queries and subscriptions.
+5. In One Thread mode, Main reads and explicitly settles Inbox work through Claw Capabilities. Host completion alone does not settle an item.
+6. An authorized send creates a separate delivery record. Adapter failure is reconciled from that record, without rerunning the Agent.
+7. After restart, Claw rediscovers business backlog and checks Host state. Ambiguous prior dispatch or effects remain blocked rather than being replayed.
 
-[Execution](03-execution-lifecycle.md), [recovery](04-persistence-and-recovery.md), and [bridges](07-bridges-and-clients.md) own the detailed completion boundaries.
+Direct human conversation uses the Host interaction model without a durable Claw prompt queue. Automation retains occurrences as business intent and uses the same product-to-Host boundary. The different acceptance promises are explicit to clients.
+
+## Lifetime
+
+Claw owns process startup and shutdown. It opens its business store and the embedded Host through each owner's lifecycle, validates the selected product bindings, and enables dispatch only after the required capabilities are ready. A failed Host startup prevents new execution; it does not erase retained Inbox or deliveries.
+
+Shutdown stops new ingress and automated dispatch, settles product mutations and outbound attempts, then drains or closes Host execution through its supported lifecycle before closing stores. Product services used by active tools remain available during that drain. Browser disconnection is unrelated to shutdown. Only one Claw process owns an Instance; another interactive Host process must not concurrently manage the same embedded store.
 
 ## Non-Goals
 
-Claw does not define organization tenancy, billing, cross-node scheduling, a fleet control plane, a general Docker administration product, or unrestricted remote access to the server machine. Importing configuration or saved state requires an explicit compatibility contract. The console is not the public documentation site.
-
-The design does not require every integration to arrive in one delivery. A partially implemented product must report unavailable capabilities rather than simulate them; implementation sequencing is not part of this specification.
+Claw does not implement distributed scheduling, tenant isolation, a general Host SDK framework, interchangeable local/HTTP backends, a separate execution engine, or recovery of arbitrary operating-system processes. It does not require changing Harness UI into a durable workflow service. The [source boundary](repository-model.md) distinguishes this target from current implementation and publication.

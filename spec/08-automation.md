@@ -1,81 +1,55 @@
-# Automation and Background Work
+# Automation and Business Orchestration
 
 ## Design Position
 
-Claw includes unattended work in the same product scope as interactive conversation. Schedules, heartbeat, workflows, and autonomous follow-up create or control ordinary Claw work; none owns an alternate execution or persistence engine.
+Claw owns when and why business work should be requested. The embedded Host owns how Agent execution advances. Schedules, heartbeat, workflows, and product follow-up use Host operations and never instantiate another Agent loop, child operator, or durable Run scheduler.
 
-The product remains single-node. Durable intent does not promise execution at an exact wall-clock instant, continuous availability, distributed scheduling, or exactly-once external side effects.
+Retained automation intent does not promise execution at an exact instant, continuous availability, distributed failover, or exactly-once external effects.
 
-## Automation Concepts
+## Definitions and Occurrences
 
-| Concept              | Responsibility                                                                                    |
-| -------------------- | ------------------------------------------------------------------------------------------------- |
-| Schedule             | A managed intent to request work at a time or recurrence, with an explicit target and policy      |
-| Occurrence           | One identified firing opportunity, distinct from the Runs it may create                           |
-| Heartbeat            | Periodic operational work within a declared scope and bounded purpose                             |
-| Workflow             | An orchestration instance whose steps and dependencies progress from recorded work outcomes       |
-| Autonomous follow-up | Bounded agent-directed continuation of a declared goal in response to permitted events or results |
+An automation definition identifies its authorizing operator, purpose, target Host context, permitted operations, timing, overlap policy, and output destinations. A schedule has explicit timezone and missed-occurrence policy. A heartbeat is a bounded periodic purpose, not permission to inspect every Thread or expand tools.
 
-An automation definition records who authorized it, what it may initiate, which context it uses, and where results may be delivered. Editing a definition affects later occurrences; already accepted Runs retain their captured configuration. An agent may manage automation only through explicitly granted Claw operations.
+Each firing opportunity has a stable occurrence identity. Claw records whether it is pending, skipped, blocked, or resolved, plus any [dispatch evidence](04-persistence-and-recovery.md#dispatch-evidence). These are business dispositions, not replacement Host Run states. Duplicate discovery returns the existing occurrence instead of dispatching again merely because a timer fired.
 
-## Trigger-to-Work Flow
+Editing a definition affects future occurrences. Retained occurrences preserve their authorized business request and target; Host resource content is resolved and captured at actual Host admission. Disabling a definition stops future dispatch according to policy and does not claim to cancel already accepted Host work.
 
-```mermaid
-sequenceDiagram
-    participant Trigger as Timer or authorized event
-    participant Claw
-    participant State as Durable automation state
-    participant Execution
-    Trigger->>Claw: Firing opportunity
-    Claw->>State: Reconcile occurrence and prior disposition
-    Claw->>Claw: Check enabled state, authority, and overlap policy
-    Claw->>Execution: Admit ordinary work with occurrence origin
-    Execution-->>Claw: Accepted Run or explicit disposition
-    Claw->>State: Retain occurrence outcome
-```
+## Dispatch and Restart
 
-An occurrence is not considered successfully dispatched merely because a local timer fired. Repeated discovery of the same occurrence must resolve to the same accepted work or saved skip/rejection. Failure between accepting a Run and recording a notification cannot cause another Run to be accepted for the same occurrence.
+1. Discover an occurrence under its explicit timing and catch-up rules.
+2. Retain the occurrence before attempting execution.
+3. Check enabled state, current authorization, overlap, target availability, and unresolved previous attempts.
+4. Record an attempt before calling the supported Host input boundary with automation provenance.
+5. Record the actual acceptance, explicit rejection, or uncertainty; inspect available Host results without resubmission.
 
-Schedules have explicit time interpretation, missed-occurrence, and overlap policies. These choices are visible before enablement. A restart must not silently replay every elapsed interval or start a burst of overlapping work. Queued or skipped is not equivalent to completed, and disabling future occurrences does not cancel existing work unless that action is explicitly requested.
+A restart cannot turn an attempted occurrence back into a new firing. A crash between the Host call and recording its receipt blocks automatic replay. Missing evidence requires the same operator reconciliation as Inbox work. Catch-up cannot silently create a burst of overlapping executions or bypass an unanswered decision.
 
-## Conversation and Working Context
-
-Automation can target an existing Thread or create separate work according to its definition. It must not silently inject operational prompts into a user's conversation, bypass a waiting decision, or inherit unrestricted access from a shared workspace.
-
-An occurrence directed to an existing Thread follows ordinary ordering. Explicit steering remains subject to the [active-input contract](03-execution-lifecycle.md#steering-and-cancellation). Work that requires independent progress uses another Thread instead of a second writer on the same history.
-
-Automation uses the Instance's shared workspace, not a separate Project context. Memory-enabled work receives Global and the target Thread's private memory; creating a new Thread does not inherit the initiating Thread's private store.
-
-Heartbeat uses a declared operational purpose and bounded authority. Its periodic origin does not make workspace instructions trusted policy or grant new tools. Output is retained even when no human is watching; external notification is a separate delivery choice.
-
-## Memory Maintenance
-
-[Background organization](09-memory.md#background-organization) is scoped maintenance over existing memory files, not a heartbeat, transcript extraction, or periodic sweep. It uses ordinary execution and observation infrastructure with a restricted composition and internal maintenance Thread. Its admission opportunities, retry gates, and fresh-context rule are owned by the memory contract; general automation cannot bypass those restrictions.
+An occurrence awaiting a busy Host may remain pending under its policy. It does not reserve or freeze a future Host Run. Work needing independent progress explicitly selects or creates a different Host Thread; Claw never creates a second writer for the same Thread.
 
 ## Workflow Progress
 
-A workflow owns orchestration progress; a Run owns execution progress. Each step identifies its input, dependencies, accepted work, and saved outcome. Downstream work advances only after the required durable outcome exists, not after submission or a suggestive stream message.
+A workflow retains business step dependencies and their correlated Host references or explicit product results. It is not a checkpoint store. A downstream step advances only from the required exact evidence, never from an admission receipt, quiet stream, unrelated later outcome, or process-local notification alone.
 
-A waiting decision pauses the dependent portion of the workflow. Failure, cancellation, and recovery remain explicit at both levels. Retrying a step creates identifiable new work linked to the prior result; it does not erase the previous Run or automatically repeat a possibly applied external effect.
+Waiting decisions block dependent progress. Failed, cancelled, and uncertain attempts retain their evidence. A retry is an explicit new attempt under the recovery policy, not erasure of the prior occurrence. External side effects can remain even when the Host failed to publish its outcome.
 
-Cancelling a workflow stops new step admission and requests cancellation of active work according to its policy. It is not reported as fully stopped while required child outcomes remain unknown. Unrelated work and shared resources are not cancelled as a side effect.
+Cancelling a workflow prevents new step dispatch and requests supported Host cancellation for identified active work. It reports unresolved cancellation separately and does not stop unrelated Threads or destroy shared environments.
 
-## Autonomous Follow-Up
+## Follow-Up and Product Drain
 
-An autonomous goal has a declared scope, allowed triggers, stopping conditions, and resource limits. Input observations and child completion can justify new work only within that envelope. Exhausted limits, withdrawn authority, or an unanswered decision block further admission rather than authorizing escalation.
+Agent-directed follow-up has an explicit purpose, allowed triggers, resource limits, and stopping conditions. Where the Host already owns a goal or coordinator continuation loop, Claw uses that capability or leaves it disabled; it does not install a competing loop over the same task. Product limits can stop new requests but do not grant control over unrelated Host work.
 
-Feedback delivery does not recursively authorize unlimited work. Work initiated by another automated action retains that provenance and is subject to the same loop and admission policy as direct events. An agent cannot grant itself more authority by creating a schedule, workflow, or bridge binding.
+[Inbox drain](10-one-thread-mode.md#wake-and-drain) is reconciliation of retained business obligations, not a heartbeat or optional Agent goal. It rediscovers pending items without new platform events. Pause, decisions, unresolved dispatch, revoked authority, and backoff still block execution. Limits expose a reason and preserve backlog rather than relabeling it handled.
 
-## Durable Inbox Drain Boundary
+In One Thread mode automation uses Main for Agent-originated external publication. A worker or operational Thread cannot obtain a separate send path by being timer-triggered. Platform notification remains a separately authorized delivery action.
 
-[One Thread drain](10-one-thread-mode.md#wake-and-drain) is application processing of already accepted input, not an optional autonomous goal or a heartbeat. It does not require a timer definition, a new platform event, or the model's permission to continue. Startup and Main Run settlement rediscover actionable backlog even when a prior Run claimed completion. General autonomous-follow-up limits cannot silently discard this obligation: required backoff or a safety block retains pending state and exposes why progress stopped. Pause, decisions, recovery, and unknown-effect restrictions still apply.
+## Memory and Working Context
 
-One Thread automation and worker results do not gain an alternate external publication path. Agent-originated publication remains Main-only under the messaging contract; ordinary saved operational observations are not broadcast replies.
+Automation uses its target's Host-selected working context and memory scopes. It does not mount the initiating Thread's private files, create a Claw memory namespace, or run a second memory organizer. Host-native maintenance retains its own trigger and lifecycle rules; a timer is not an alternative way to bypass them.
 
 ## Invariants
 
-1. Every automated Run has an accountable definition or triggering cause.
-2. Repeated occurrence discovery and repeated result delivery do not create duplicate execution intent.
-3. Definition edits and timer restarts do not rewrite accepted work.
-4. Workflow progress follows saved outcomes, not observation timing.
-5. Automation never bypasses Thread serialization, pending decisions, current permissions, or environment limits.
+1. Each automated request has a retained accountable business cause.
+2. Repeated occurrence discovery does not repeat an uncertain Host submission.
+3. Host execution configuration is captured at Host admission, not at timer registration or business acceptance.
+4. Workflow progress uses correlated evidence and respects Host decisions and ownership.
+5. Automation and Inbox drain cannot create a second execution or recovery engine.
