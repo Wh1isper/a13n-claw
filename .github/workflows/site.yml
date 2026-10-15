@@ -32,7 +32,7 @@ jobs:
       - run: make docs-check docs-build
       - name: Validate Worker deployment without credentials
         run: pnpm --dir docs exec wrangler deploy --dry-run --config wrangler.jsonc
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: docs-site
           path: docs/out
