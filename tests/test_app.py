@@ -43,7 +43,7 @@ def test_missing_bundle_keeps_api_available(console):
     (console / "index.html").unlink()
     with TestClient(app.create_app()) as client:
         assert client.get("/").status_code == 404
-        assert client.get("/api/instance").status_code == 401
+        assert client.get("/api/status").status_code == 401
 
 
 def test_serve_defaults(console):

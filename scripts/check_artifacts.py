@@ -14,7 +14,8 @@ from urllib.request import Request, urlopen
 
 
 def check_console(base: str) -> None:
-    deadline = time.monotonic() + 20
+    # Fresh embedded Host imports can exceed 20 seconds on Windows CI.
+    deadline = time.monotonic() + 60
     while True:
         try:
             with urlopen(base, timeout=2) as response:
@@ -50,12 +51,14 @@ def check_console(base: str) -> None:
 
 def check_authenticated(base: str, token: str) -> None:
     headers = {"Authorization": f"Bearer {token}"}
-    with urlopen(Request(base + "/api/instance", headers=headers), timeout=5) as response:
+    with urlopen(Request(base + "/api/status", headers=headers), timeout=5) as response:
         instance = json.load(response)
-        assert instance["dispatcher"] == "ready"
-        assert instance["principal"]["admin"] is True
+        assert instance["host"] == "open"
+        assert instance["instance"]["main_thread_id"]
     with urlopen(Request(base + "/api/threads", headers=headers), timeout=5) as response:
-        assert json.load(response) == []
+        page = json.load(response)
+        assert len(page["threads"]) == 1
+        assert page["threads"][0]["role"] == "coordinator"
 
 
 def check_wheel(wheel: Path, root: Path, expected: str) -> None:
@@ -92,6 +95,22 @@ def check_wheel(wheel: Path, root: Path, expected: str) -> None:
     workspace = root / "workspace"
     workspace.mkdir()
     data = root / "data"
+    environment = {**os.environ, "A13N_OFFICIAL_MODELS_AUTO_UPDATE": "0"}
+    subprocess.run(
+        [
+            str(executable),
+            "-m",
+            "a13n_claw",
+            "init",
+            "--root",
+            str(data),
+            "--workspace",
+            str(workspace),
+        ],
+        cwd=root,
+        env=environment,
+        check=True,
+    )
     with (root / "serve.log").open("w+") as log:
         process = subprocess.Popen(
             [
@@ -99,16 +118,13 @@ def check_wheel(wheel: Path, root: Path, expected: str) -> None:
                 "-m",
                 "a13n_claw",
                 "serve",
-                "--config",
-                str(root / "config.yaml"),
                 "--port",
                 str(port),
-                "--data-root",
+                "--root",
                 str(data),
-                "--workspace",
-                str(workspace),
             ],
             cwd=root,
+            env=environment,
             stdout=log,
             stderr=log,
         )

@@ -4,29 +4,27 @@
 
 Prefer direct flows, cohesive modules, and explicit ownership. Fix causes at their owner instead of adding overlapping wrappers. Add abstractions, persistence, infrastructure, and dependencies only when an implemented feature requires them. Read affected tests and specifications before editing.
 
-The standalone backend contains an authenticated API, durable SQLite work state, fresh Harness executions, and managed Local/Docker environments. The runtime frontend is a Hello World placeholder. Keep readiness specific: constructing a client or starting the dispatcher does not prove provider or MCP connectivity. Test fixtures must stay outside production entry points.
+The backend embeds one published Harness UI App, an authenticated operator API, Lark connections, and durable SQLite business state. The runtime frontend is a Hello World placeholder. Keep readiness specific: constructing a client or starting the dispatcher does not prove provider or MCP connectivity. Test fixtures must stay outside production entry points.
 
 ## Python
 
 Use Python 3.13, typed public interfaces, Ruff, Pyright, and deptry. Use `isinstance` for type-based branching. Tests are function-style pytest tests, offline by default. The installed distribution metadata owns the version; do not duplicate release versions in source modules.
 
-## Target Host integration
+## Host integration
 
 The [replacement specification](spec/README.md) adopts one package-embedded Harness UI App. New embedding work uses its supported lifecycle, configuration, Thread, execution, environment, collaboration, and memory boundaries. Claw owns product state and Capabilities, not a second runtime. Follow the [required library contract](spec/11-host-integration.md), starting with existing public operations and native Capabilities. Do not import private coordinators, edit Host persistence, or add a parallel HTTP backend. A concrete unsupported required interaction can justify a focused upstream change; optional unavailable features do not block the basic IM path. Keep native collaboration and execution controls under Host ownership.
 
-## Current standalone implementation
+## Product persistence and execution
 
-Until replacement is implemented, existing runtime maintenance follows the invariants below. These describe the current source, not obligations to reproduce its execution engine in the embedded architecture.
+An Instance has one process owner. Product services retain intent before Host dispatch or external sends and keep uncertain outcomes blocked. Host receipts are process-local; saved exact evidence, business settlement, and external delivery are independent. Native notifications remain best effort. Do not replay unknown effects or infer failure from missing receipt evidence.
 
-Use Harness public primitives for execution, checkpoint serialization, decisions, tools, and environments. Claw owns admission, current authority, durable outcomes, and target lifecycle rather than forking Harness. SQLite transactions run in short worker-thread operations; never retain a transaction across execution, external I/O, or waits. Publish the full checkpoint, Thread head, Run outcome, and input incorporation proof atomically. Live events cannot replace saved facts.
-
-An Instance has one process owner and one shared workspace, separate from its protected data root. Captured definitions govern admitted work while current grants can revoke authority. Recovery must not replay unknown external effects. Target mutation must settle before its ownership lock is released. Treat Local shell as host-account authority, not a sandbox.
+SQLite transactions run in short worker-thread operations; never retain one across execution, external I/O, or waits. Product tools bind actual execution identity and current source/destination grants. Workspace and protected Instance data are separate. Native Global/Project memory and shared working files retain their Host boundaries. Treat Local shell as host-account authority, not a sandbox.
 
 ## Database schema
 
-The following migration workflow applies to Claw-owned current source state. The replacement architecture assigns Host state and migrations exclusively to Harness UI and limits Claw schema ownership to business state. Existing standalone data is not a Host database and cannot be silently reinterpreted or deleted.
+Host state and migrations belong exclusively to Harness UI. Claw owns only business state. Existing standalone data is not a Host database and cannot be silently reinterpreted or deleted.
 
-SQLAlchemy Core metadata in `a13n_claw/database/schema.py` owns the current schema; package-owned Alembic revisions own its evolution. Generate revisions through `make db-migrate`, review them, and keep one linear history. Published revisions retain their historical definitions. Runtime startup uses migrations, not inline DDL, `create_all`, or version-specific branches in Store. Application reads and writes continue to use short `sqlite3` transactions.
+SQLAlchemy Core metadata in `a13n_claw/business_schema.py` owns the current schema; package-owned Alembic revisions own its evolution. Generate revisions through `make db-migrate`, review them, and keep one linear history. Published revisions retain their historical definitions. Runtime startup uses migrations, not inline DDL, `create_all`, or version-specific branches in BusinessStore. Application reads and writes continue to use short `sqlite3` transactions.
 
 Migrate under the Instance lease before application state is loaded. Schema changes, data transformations, and the revision marker commit atomically; SQLite table rebuilds must preserve references and pass foreign-key validation before commit. Test metadata parity, populated upgrades, rollback, and repeated startup. Unknown revisions fail explicitly; downgrading requires a pre-upgrade backup.
 

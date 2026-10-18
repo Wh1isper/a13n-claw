@@ -1,119 +1,74 @@
 ---
-title: One Thread coordination
-description: Coordinate durable Inbox work and persistent workers through one Main Thread.
+title: Routing and One Thread coordination
+description: Route messages, control exact work, and retain business obligations independently of execution.
 ---
 
 ## Choose the conversation mode
 
-One Thread mode gives the Instance one persistent **Main** Thread. External messages enter its durable Inbox; Main selectively reads them and coordinates independent workers. This is available in source builds, not in the published `0.0.2` placeholder.
+Select `mode` in `claw.yaml` before the Instance's first serve:
 
-After [configuring a Profile](./configuration.md), start the server with:
+| Mode                   | Eligible new message                                     | Memory                            |
+| ---------------------- | -------------------------------------------------------- | --------------------------------- |
+| `one_thread` (default) | Retain Inbox content; notify canonical Main              | Shared Global and Main Project    |
+| `per_channel`          | Reuse the Channel's conversation Thread; steer if active | Global and stable Channel Project |
+| `per_trigger`          | Create a fresh task Thread for each distinct event       | Global and stable Channel Project |
 
-```bash
-uv run a13n-claw serve --workspace "$HOME/claw-workspace" --mode one_thread
-```
+Duplicate events reuse their retained disposition. A quoted reply is still an ordinary message: in per-trigger mode it starts a new task. Explicit commands below select existing work. Mentions-only group filtering is independent of mode; ignored events create no Thread, download, or model call.
 
-New Instances default to `one_thread`; the explicit flag above also selects it for an existing Instance. Without an override, an existing Instance retains its saved mode. Use `--mode per_channel` for independent external conversations, each advancing its own Thread. Mode selection applies to the whole Instance at startup, not to individual Channels. Stop the server cleanly and settle active or uncertain work before switching. Old-mode histories, bindings, and work are not migrated or silently reactivated; inspect inactive Threads explicitly. Switching modes is not a recovery shortcut.
+One Thread creates canonical Main as a native Host Coordinator on startup. Main's ID is in `status`. If target creation is uncertain or Main is unavailable, Claw preserves the reference and leaves the recovery API available. Ordinary Thread creation never replaces it.
 
-Run `a13n-claw main init --profile PROFILE_ID`, or open **Coordination**, select Main's starting Profile, and choose **Initialize Main**. Its identity and worker ownership survive Runs and restarts. Repeating initialization returns the existing Main; ordinary Thread creation or forking does not create another coordinator. Open Main to give instructions. Direct Console messages still use ordinary durable admission, independently of external Inbox processing.
-
-## Work with persistent workers
-
-Ask Main to create a worker for a bounded task. Main can inspect its owned workers and send further instructions across Runs. A worker can inspect itself and its owner and send Main a question or report; it cannot adopt unrelated Threads, inspect siblings, or create more persistent workers. These are independent Threads, not Run-scoped delegation results.
-
-Open a worker card to inspect saved outcomes or converse directly. Human input is admitted once to that worker and records Main attention. Main must reconcile the change rather than assign the task again. Worker outcomes retain references to their saved Runs; cancellation, failure, and inactivity are not success. Stopping Main does not stop its workers.
-
-Collaboration receipts prove acceptance, not reading or completion. A worker message to Main is durably retained first, then admitted exactly once as ordinary input when Main's automatic-processing barriers permit. Its saved `input_id` links that admission. Worker history is not merged into Main history.
-
-In this mode, configured MCP integrations and Claw's external messaging tools are available only to Main, not workers or other ordinary Threads. Profile permissions and current application grants still apply. This does not isolate knowledge already shared with Main, and broad Local shell authority remains trusted host-account access, not a sandbox.
+Changing saved mode or Main Project is currently rejected. Initialize another root for a different mode and preserve the original data. There is no automatic history or memory transfer.
 
 ## Bind an external conversation
 
-The current transport is generic authenticated HTTP ingress and explicit HTTP egress. Vendor-specific embedded adapters, platform login flows, and platform-native decision cards are not included. An integration must verify the platform event and normalize its sender, addressed status, and stable event identity before calling Claw.
+Follow [Lark setup](./getting-started.md#connect-lark-or-feishu). A binding authorizes exact connection/chat/topic and sender identities. One Thread shares context across Channels; `shared_context_acknowledged: true` is mandatory. Per-Channel and per-trigger bindings require distinct existing native Projects, as shown in the [reference](./configuration-reference.md#native-resources).
 
-1. Create a dedicated client in **Settings → Access** for the integration. It can have empty ordinary actions, Profile IDs, and Thread IDs; ownership of an ingress binding does not grant Main history access.
-2. In **Settings → Configuration → Channels**, add a stable binding ID and edit its policy using the form or YAML.
-3. Set the exact platform/account/conversation identity, integration client ID, execution principal, and explicit sender allowlist. For groups, keep `require_addressed` enabled unless unaddressed messages are intentionally eligible.
-4. Set `shared_context_acknowledged` only when all participating conversations are authorized to share Main's context. This is required in One Thread mode.
-5. Validate and preview the complete configuration, save the file, then load it. Inspect the loaded binding in **Coordination → Channels**.
+Authorized input is committed before transport acknowledgement. Attachments are collected afterward, before dispatch: at most eight files, 10 MiB each, 20 MiB combined, and a 15-second collection budget per event. Failed downloads and Host-rejected image formats are explicitly unavailable. Retained files remain accessible through scoped Claw tools and native Environment files. Ignored events retain no message body.
 
-For example, an inbound-only binding named `release-room` can use:
+## IM commands
 
-```json
-{
-  "platform": "http",
-  "account": "team",
-  "channel": "release-room",
-  "ingress_actor_id": "bridge",
-  "execution_actor_id": "operator",
-  "allowed_senders": ["alice"],
-  "enabled": true,
-  "inbound": true,
-  "outbound": false,
-  "group": true,
-  "require_addressed": true,
-  "shared_context_acknowledged": true
-}
+`operators` grants the selected allowed senders control of work associated with that Channel. Commands need no bot mention. They are processed without invoking a model. Use `/claw tasks` to obtain retained Inbox IDs:
+
+```text
+/claw help
+/claw tasks
+/claw status <inbox-id>
+/claw continue <inbox-id> <text>
+/claw steer <inbox-id> <receipt-id> <text>
+/claw cancel <inbox-id> <receipt-id>
+/claw decisions <inbox-id>
+/claw answer <inbox-id> <complete DecisionResponseBatch JSON>
 ```
 
-The execution principal needs current submit authority on Main. Existing bindings cannot be retargeted to another qualified conversation; create a new binding instead. Configuration saves use the viewed whole-file revision and reject stale changes; loading activates the policy. See [Configuration and CLI](./configuration.md) for conflicts and reload behavior.
+`continue` requires an idle Thread without pending decisions. `steer` and `cancel` require the exact currently active receipt. A stale receipt never controls a replacement operation. `decisions` returns the native pending batch and correlation; `answer` preserves the complete native JSON shape. Oversized responses direct the operator to CLI/API rather than truncating decision JSON. Cards and automatic token streaming are not implemented.
 
-With the integration client's Bearer token in the Authorization header, submit to `POST /api/channels/release-room/messages`:
+A Channel binding is not permission to inspect every Thread. Commands select work originally associated with that same Channel and recheck current sender/operator grants. In One Thread, control of associated work addresses shared Main. Its decisions may reflect shared context; grant `operators` accordingly. Worker history and direct worker conversations use the trusted operator CLI/API.
 
-```json
-{
-  "event_id": "platform-event-123",
-  "sender": "alice",
-  "text": "Review the release readiness.",
-  "addressed": true,
-  "attachment_ids": [],
-  "unavailable_attachments": []
-}
-```
+## Work with persistent workers
 
-The successful receipt contains `inbox_id` and `thread_id`, not an agent result. Retry the same event identity with the identical body after a lost response; conflicting reuse returns HTTP 409. Sender/group-filtered messages return HTTP 200 with `event_id` and `disposition: "ignored"`; Claw retains only the fingerprint and minimal receipt, not their body or an Inbox obligation. Changing filters later does not turn a duplicate ignored event into new work. Disabled bindings or unauthorized callers are rejected instead.
+Main creates and manages workers through native Host collaboration. Workers can report and ask their owner; ownership and same-Project scope remain Host-owned. Native notifications and auto-follow-up are best effort. They can overlap with product attention and are not a durable message bus.
 
-Attachment IDs must already be retained on the destination Thread through an authorized file upload; they are not remote URLs. An ingress-only client is not implicitly granted upload access. External references retain their origin and are checked against current Channel policy when read. Put inaccessible platform references in `unavailable_attachments`; this records missing content without claiming that the agent saw it. Revoking a binding or sender can withhold new reads but cannot erase content already incorporated into Main's knowledge.
+For a direct operator conversation, use `threads send WORKER_ID --text ...` or exact `operations steer`. Claw records Main attention before calling the Host, including later worker inputs. The notice references already-requested work and its receipt or uncertainty. Main inspects that work instead of creating it again. Failed or interrupted publication does not authorize automatic resubmission to the worker.
+
+Workers cannot use Claw tools to publish externally in One Thread mode. Native tools and MCP permissions remain governed by their selected Agent and environment; this product rule does not sandbox host-account shell execution.
 
 ## Process the Inbox explicitly
 
-The Inbox includes external messages and internal worker/human attention. Reading, notifying, saving a checkpoint, or completing a Main Run does **not** settle an item.
+Main receives content-light attention and uses `claw_inbox_list`, `claw_inbox_read`, and `claw_inbox_file`. Routed Threads receive their original content and accepted attachments. `claw_inbox_settle` records a version-preconditioned disposition:
 
-| Disposition | Meaning                                                                           |
-| ----------- | --------------------------------------------------------------------------------- |
-| `pending`   | Requires attention and remains eligible for automatic processing.                 |
-| `deferred`  | Waits for one recorded worker Run, time, or explicit human-resolution key.        |
-| `handled`   | Processing is settled with a result or reference; delivery can remain unresolved. |
-| `ignored`   | Explicitly dismissed with a reason.                                               |
+| Disposition | Meaning                                                |
+| ----------- | ------------------------------------------------------ |
+| `pending`   | Needs eligible attention                               |
+| `deferred`  | Waits on an exact operation, time, or human resolution |
+| `handled`   | Settled with an explicit reason/result                 |
+| `ignored`   | Explicitly dismissed                                   |
 
-Use **Review item** to record a result, ignore with a reason, defer, or reopen as pending. A deferral requires exactly one reactivation condition. Worker completion or failure reopens its dependent item, including when completion raced with deferral. A timed deferral is rediscovered after restart. Resolve a human dependency by reviewing and reopening or settling the item; writing its key in a chat is not an acknowledgement.
+Reading, notification, and Host completion do not settle business work. Reconciliation scans on startup, arrivals, and periodically. Known completion releases the exact attempt; remaining pending work is reconsidered after backoff. No-progress reasons and the next check remain visible. Unknown dispatches are excluded from actionable tools, even if Main starts through native collaboration.
 
-The editor keeps the version originally read. Concurrent changes return a conflict and preserve your draft note; close and reopen to review fresh state rather than overwriting it. Main's tools follow the same version checks.
-
-Claw checks saved pending obligations on startup, Main Run completion, new arrivals, and barrier release. It coalesces attention into eligible work rather than creating a Run for every event. Unchanged pending work after completion causes a successor Run even with no new message. Repeated non-progress triggers visible, durable backoff; it never silently marks work handled or abandons it after an attempt limit.
-
-**Pause automatic processing** is persistent. It retains the Inbox and blocks automatic Main advancement, but does not stop a running Main, worker, or already accepted delivery. Direct human work remains explicit. **Stop Run** is not a durable pause. Waiting decisions, revoked authority, recovery-required work, uncertain effects, and unknown deliveries also block automatic advancement. Inspect the displayed reason; do not bypass it by submitting replacement work. **Retry pending attention now** clears backoff, not pause or recovery barriers.
+Operation dependencies use exact `thread_id` and `receipt_id`. After restart, saved evidence is accepted only when its execution ID matches. Missing or overwritten evidence stays visibly deferred for operator review. Human deferral is reopened through an explicit versioned Inbox update. See [recovery](./operations.md#decisions-cancellation-and-recovery).
 
 ## Publish and reconcile separately
 
-Only Main can use `send_message` to save an explicit delivery intent to a permitted Channel. Final responses and worker output stay in the Console unless Main explicitly sends them. There is no automatic broadcast.
+`claw_send_message` and `claw_send_file` retain content and a stable request key before sending to the original event's permitted destination. In One Thread only Main has this authority; elsewhere the routed Thread does. Final model answers are never broadcast automatically.
 
-To enable a destination, set `outbound: true` and a reviewed HTTP(S) `delivery_url` in its Channel policy. Optionally set `credential_env` to a managed or process-environment credential reference for Bearer authentication; never embed secrets in the URL or policy JSON. Endpoint configuration is privileged and does not prove connectivity.
-
-Claw posts this JSON to that receiver:
-
-```json
-{
-  "delivery_id": "delivery_example",
-  "platform": "http",
-  "account": "team",
-  "channel": "release-room",
-  "text": "Release review completed."
-}
-```
-
-The `Idempotency-Key` header is the same delivery ID. The receiver must deduplicate that identity and return 2xx only after durably accepting responsibility. Claw records 2xx as sent; redirects are not followed. A timeout, transport error, or non-2xx response leaves an unknown outcome with no automatic resend. A pending delivery whose Channel policy version changed is blocked for review under current policy.
-
-In **Deliveries**, inspect the original delivery ID and receiver evidence. **Reconcile delivery** records confirmed sent or confirmed not sent with a required note. Retrying is a separate, unchecked-by-default choice for confirmed-not-sent work, using the same delivery identity and current authority. Never infer failure from a lost response or rerun the agent to replace an unknown send.
-
-Inbox disposition, Run completion, and delivery completion are independent. Marking an Inbox item handled does not resolve a send; delivery reconciliation does not repeat the Run. After reconnect, use saved Inbox, worker, and delivery state as the source of truth. See [Operations](./operations.md) for decisions, recovery, access boundaries, and backup.
+Lark upload success is followed by a file reply. Failed upload is a definite non-send; a lost message response is unknown. Delivery reconciliation retries saved content, not inference. Inbox settlement, Host outcome, and external delivery are independent facts.

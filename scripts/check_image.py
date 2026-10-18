@@ -8,42 +8,39 @@ from uuid import uuid4
 from check_artifacts import check_authenticated, check_console
 
 CONFIGURATION = """# Retain authored source across container replacement.
-format: 1
-models:
-  persisted:
-    provider: openai
-    model_name: container-test
-    credential_env: TEST_API_KEY
+schema_version: '1'
+kind: model
+id: model-persisted
+name: Container test
+route: openai:container-test
+authentication:
+  kind: api_key
+  env: TEST_API_KEY
 """
 
 
 def check_configuration(base: str, token: str, *, restarted: bool) -> None:
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    with urlopen(Request(base + "/api/configuration", headers=headers), timeout=5) as response:
-        source = json.load(response)
-    assert source["path"] == "/home/claw/data/config.yaml"
-    if restarted:
-        assert source["text"] == CONFIGURATION
-        assert not source["pending"]
-    else:
+    if not restarted:
         request = Request(
-            base + "/api/configuration",
+            base + "/api/configuration/source",
             headers=headers,
             method="PUT",
             data=json.dumps(
-                {"text": CONFIGURATION, "expected_revision": source["revision"]}
+                {
+                    "relative_path": "models/persisted.yaml",
+                    "content": CONFIGURATION,
+                    "expected_digest": None,
+                }
             ).encode(),
         )
         with urlopen(request, timeout=5) as response:
-            assert json.load(response)["pending"]
-    with urlopen(Request(base + "/api/resources", headers=headers), timeout=5) as response:
-        resources = json.load(response)
-    if restarted:
-        assert len(resources) == 1
-        assert resources[0]["id"] == "persisted"
-        assert resources[0]["content"]["model_name"] == "container-test"
-    else:
-        assert resources == [], "Saving must not publish the runtime projection"
+            assert response.status == 200
+    with urlopen(
+        Request(base + "/api/configuration/source?path=models/persisted.yaml", headers=headers),
+        timeout=5,
+    ) as response:
+        assert json.load(response)["content"] == CONFIGURATION
 
 
 def check_container(volume: str, *, restarted: bool) -> str:
@@ -55,6 +52,8 @@ def check_container(volume: str, *, restarted: bool) -> str:
             "-d",
             "-v",
             f"{volume}:/home/claw/data",
+            "-e",
+            "A13N_OFFICIAL_MODELS_AUTO_UPDATE=0",
             "-p",
             "127.0.0.1::8080",
             "a13n-claw:check",
@@ -94,6 +93,22 @@ def check() -> None:
     volume = f"a13n-claw-check-{uuid4().hex}"
     subprocess.run(["docker", "volume", "create", volume], check=True)
     try:
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                f"{volume}:/home/claw/data",
+                "-e",
+                "A13N_OFFICIAL_MODELS_AUTO_UPDATE=0",
+                "a13n-claw:check",
+                "init",
+                "--workspace",
+                "/home/claw/workspace",
+            ],
+            check=True,
+        )
         token = check_container(volume, restarted=False)
         assert check_container(volume, restarted=True) == token
     finally:

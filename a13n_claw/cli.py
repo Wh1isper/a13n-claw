@@ -1,297 +1,245 @@
-"""Headless configuration, operations and the single-owner runtime entry point."""
+"""Headless setup and explicit operator requests to the single running Claw service."""
+
+from __future__ import annotations
 
 import argparse
+import asyncio
+import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
+from urllib.parse import quote
 
+import httpx
+import yaml
 from pydantic import ValidationError
 
 from a13n_claw import __version__
-from a13n_claw.domain import ClawError
-from a13n_claw.management import (
-    config_path,
-    data_root,
-    document,
-    local_path,
-    run_configuration,
-    run_offline,
-    run_remote,
-)
+from a13n_claw.bootstrap import initialize
+from a13n_claw.errors import ClawError
+from a13n_claw.instance import reset_operator
+from a13n_claw.settings import instance_root, read_settings, selected_path
 
 
 def parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False, argument_default=argparse.SUPPRESS)
+    common.add_argument("--root", type=Path, help="Instance directory (CLAW_ROOT or ~/.a13n-claw)")
+    common.add_argument("--url", help="Running Claw URL (CLAW_URL or http://127.0.0.1:8080)")
     common.add_argument(
-        "--config", type=Path, help="YAML file (CLAW_CONFIG or ~/.a13n-claw/config.yaml)"
+        "--token-file", type=Path, help="Operator token file; never pass the token as an argument"
     )
-    common.add_argument("--data-root", type=Path, help="Application data directory")
-    common.add_argument("--url", help="Running server URL (requires explicit client credentials)")
-    common.add_argument(
-        "--token-file", type=Path, help="Bearer token file; never pass tokens as arguments"
-    )
-    common.add_argument("--json", action="store_true", help="Machine-readable JSON output")
-    root = argparse.ArgumentParser(
+    cli = argparse.ArgumentParser(
         prog="a13n-claw",
         parents=[common],
-        description="a13n Claw: durable agent execution, headless configuration and operations.",
+        description="Claw: messaging and headless operations over an embedded Harness UI App.",
     )
-    root.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    commands = root.add_subparsers(dest="command")
-
-    serve = commands.add_parser("serve", parents=[common], help="Run the API and optional Console")
-    serve.add_argument("--host")
-    serve.add_argument("--port", type=int)
-    serve.add_argument("--workspace", type=Path)
-    serve.add_argument("--concurrency", type=int)
-    serve.add_argument(
-        "--mode",
-        choices=["per_channel", "one_thread"],
-        help="Explicit mode; otherwise retain saved mode (new Instances: one_thread)",
+    cli.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    commands = cli.add_subparsers(dest="command")
+    init = commands.add_parser(
+        "init", parents=[common], help="Initialize a fresh isolated Instance"
     )
+    init.add_argument("--workspace", required=True, type=Path)
+    init.add_argument("--model", help="Native model route, for example openai:gpt-4o")
+    init.add_argument("--model-key-env", default="CLAW_MODEL_API_KEY")
+    init.add_argument("--model-base-url")
+    serve = commands.add_parser(
+        "serve",
+        parents=[common],
+        help="Run the Host, messaging connections, API and Hello World page",
+    )
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8080)
     serve.add_argument("--no-console", action="store_true")
     commands.add_parser(
-        "reset-operator", parents=[common], help="Rotate operator access while stopped"
+        "reset-operator", parents=[common], help="Rotate the token while the Instance is stopped"
     )
-    commands.add_parser("status", parents=[common], help="Inspect running Instance health")
-    commands.add_parser("workers", parents=[common], help="Inspect Main's persistent workers")
+    commands.add_parser("status", parents=[common])
+    config = commands.add_parser("config", parents=[common])
+    config.add_argument("action", choices=["path", "show", "sources", "read", "write", "reload"])
+    config.add_argument("--path", help="Native resource relative path for read/write")
+    config.add_argument("--file", type=Path, help="Native YAML candidate for write")
+    config.add_argument(
+        "--expected-digest", help="Source digest from read; use 'new' for a new source"
+    )
+    threads = commands.add_parser("threads", parents=[common])
+    threads.add_argument(
+        "action",
+        choices=["list", "create", "show", "history", "send", "decisions", "answer", "active"],
+    )
+    threads.add_argument("id", nargs="?")
+    threads.add_argument("--text")
+    threads.add_argument(
+        "--file", type=Path, help="Text input or complete native decision batch (YAML/JSON)"
+    )
+    threads.add_argument("--project")
+    threads.add_argument("--title")
+    operations = commands.add_parser("operations", parents=[common])
+    operations.add_argument("action", choices=["show", "steer", "cancel"])
+    operations.add_argument("id")
+    operations.add_argument("--text")
+    for name in ("inbox", "attempts", "deliveries", "channels", "targets"):
+        commands.add_parser(
+            name, parents=[common], help=f"Inspect {name}; use api for exact mutations"
+        )
+    api = commands.add_parser(
+        "api", parents=[common], help="Call an explicit /api operation; no automatic retries"
+    )
+    api.add_argument("method", choices=["GET", "POST", "PUT", "PATCH"])
+    api.add_argument("path", help="Path beginning with /api/")
+    api.add_argument("--file", type=Path, help="JSON or YAML request body")
+    return cli
 
-    def group(name: str, help_text: str):
-        node = commands.add_parser(name, parents=[common], help=help_text)
-        return node.add_subparsers(dest="action", required=True)
 
-    configuration = group("config", "Edit, validate, save and reload file-first configuration")
-    for action in (
-        "path",
-        "init",
-        "show",
-        "validate",
-        "status",
-        "save",
-        "reload",
-        "apply",
-        "export",
-        "migrate",
-    ):
-        node = configuration.add_parser(action, parents=[common])
-        if action in {"reload", "apply", "export", "status", "save", "migrate"}:
-            node.add_argument(
-                "--offline",
-                action="store_true",
-                help="Require exclusive ownership of a stopped Instance",
+def request(args: argparse.Namespace, root: Path, method: str, path: str, body=None):
+    if not path.startswith("/api/") or path.startswith("//"):
+        raise ValueError("API path must begin with /api/")
+    url = args.url or os.environ.get("CLAW_URL", "http://127.0.0.1:8080")
+    token = (args.token_file or root / "operator.token").expanduser().read_text().strip()
+    with httpx.Client(base_url=url, timeout=30, follow_redirects=False) as client:
+        try:
+            response = client.request(
+                method, path, json=body, headers={"Authorization": f"Bearer {token}"}
             )
-        if action in {"reload", "apply", "save"}:
-            node.add_argument(
-                "--revision",
-                required=action == "save",
-                help="Expected file revision from config status",
+        except httpx.HTTPError as exc:
+            raise ValueError(
+                "Server response unavailable. Reconcile the original request before retrying; "
+                "no offline fallback was used"
+            ) from exc
+    if not response.is_success:
+        raise ValueError(f"Server returned {response.status_code}: {response.text}")
+    return response.json() if response.content else None
+
+
+def body_file(path: Path | None):
+    return yaml.safe_load(path.read_text(encoding="utf-8")) if path is not None else None
+
+
+def invoke(args: argparse.Namespace, root: Path):
+    if args.command == "config":
+        if args.action == "path":
+            return {
+                "product": str(root / "claw.yaml"),
+                "native_host": str(selected_path(root, read_settings(root).host_configuration)),
+            }
+        if args.action == "show":
+            return read_settings(root).model_dump(mode="json")
+        if args.action == "sources":
+            return request(args, root, "GET", "/api/configuration")
+        if args.action == "reload":
+            return request(args, root, "POST", "/api/configuration/reload")
+        if not args.path:
+            raise ValueError("config read/write requires --path")
+        if args.action == "read":
+            return request(
+                args, root, "GET", "/api/configuration/source?path=" + quote(args.path, safe="")
             )
-        if action == "save":
-            node.add_argument(
-                "--file", type=Path, required=True, help="Candidate YAML to save without loading"
+        if args.file is None or args.expected_digest is None:
+            raise ValueError("config write requires --file and --expected-digest")
+        return request(
+            args,
+            root,
+            "PUT",
+            "/api/configuration/source",
+            {
+                "relative_path": args.path,
+                "content": args.file.read_text(encoding="utf-8"),
+                "expected_digest": None if args.expected_digest == "new" else args.expected_digest,
+            },
+        )
+    if args.command == "threads":
+        if args.action == "list":
+            return request(args, root, "GET", "/api/threads")
+        if args.action == "create":
+            return request(
+                args,
+                root,
+                "POST",
+                "/api/threads",
+                {
+                    "title": args.title,
+                    "defaults": {"project_id": args.project} if args.project else None,
+                },
             )
-        if action in {"reload", "apply"}:
-            node.add_argument(
-                "--dry-run",
-                action="store_true",
-                help="Preview the file against loaded state without loading",
+        if args.id is None:
+            raise ValueError("This Thread operation requires an ID")
+        path = "/api/threads/" + quote(args.id, safe="")
+        if args.action == "send":
+            text = (
+                args.text
+                if args.text is not None
+                else args.file.read_text(encoding="utf-8")
+                if args.file
+                else None
             )
-        if action == "export":
-            node.add_argument(
-                "--output", type=Path, help="Write a new file instead of stdout; never overwrite"
-            )
-    credentials = group("credentials", "Inspect references or securely set/remove managed secrets")
-    for action in ("list", "set", "remove"):
-        node = credentials.add_parser(action, parents=[common])
-        node.add_argument("--offline", action="store_true")
-        if action != "list":
-            node.add_argument("name")
-        if action == "set":
-            node.add_argument(
-                "--stdin",
-                action="store_true",
-                help="Read secret from stdin instead of a hidden prompt",
-            )
-    main = group("main", "Initialize Main, inspect coordination and pause/resume processing")
-    for action in ("init", "show", "pause", "resume"):
-        node = main.add_parser(action, parents=[common])
-        if action == "init":
-            node.add_argument("--profile", required=True)
-            node.add_argument("--offline", action="store_true")
-        elif action in {"pause", "resume"}:
-            node.add_argument("--version", required=True, type=int)
-            node.add_argument(
-                "--retry", action="store_true", help="Clear a known-safe processing backoff"
-            )
-    threads = group("threads", "Inspect saved conversations and submit explicit work")
-    for action in (
-        "list",
-        "show",
-        "history",
-        "inputs",
-        "runs",
-        "targets",
-        "send",
-        "release-inputs",
-    ):
-        node = threads.add_parser(action, parents=[common])
-        if action != "list":
-            node.add_argument("id")
-        if action == "send":
-            node.add_argument("--request-id", required=True)
-            text = node.add_mutually_exclusive_group(required=True)
-            text.add_argument("--text")
-            text.add_argument("--text-file", type=Path)
-    runs = group("runs", "Inspect, cancel, reconcile and explicitly recover Runs")
-    for action in ("show", "decisions", "cancel", "reconcile", "recover"):
-        node = runs.add_parser(action, parents=[common])
-        node.add_argument("id")
-        if action == "reconcile":
-            node.add_argument("--note", required=True)
-        if action == "recover":
-            node.add_argument("--request-id", required=True)
-            node.add_argument("--text", required=True)
-    decisions = group("decisions", "Answer an exact saved decision batch")
-    node = decisions.add_parser("answer", parents=[common])
-    node.add_argument("id")
-    node.add_argument(
-        "--file", type=Path, required=True, help="Exact decision response in YAML or JSON"
-    )
-    inputs = group("inputs", "Reconcile uncertain or discard blocked input")
-    for action in ("acknowledge", "discard"):
-        node = inputs.add_parser(action, parents=[common])
-        node.add_argument("id")
-        node.add_argument("--note", required=True)
-    inbox = group("inbox", "Inspect and explicitly settle or defer durable attention")
-    for action in ("list", "show", "update"):
-        node = inbox.add_parser(action, parents=[common])
-        if action != "list":
-            node.add_argument("id")
-        if action == "list":
-            node.add_argument("--after", type=int, default=0)
-            node.add_argument("--limit", type=int, default=100)
-        if action != "show":
-            node.add_argument(
-                "--disposition",
-                choices=["pending", "deferred", "handled", "ignored"],
-                required=action == "update",
-            )
-        if action == "update":
-            node.add_argument("--version", type=int, required=True)
-            node.add_argument("--note", required=True)
-            dependency = node.add_mutually_exclusive_group()
-            dependency.add_argument("--dependency-run")
-            dependency.add_argument("--due-at")
-            dependency.add_argument("--human-key")
-    channels = group(
-        "channels", "Inspect Channel bindings (edit the configuration file, then reload)"
-    )
-    channels.add_parser("list", parents=[common])
-    deliveries = group("deliveries", "Inspect sends and reconcile unknown outcomes")
-    deliveries.add_parser("list", parents=[common])
-    node = deliveries.add_parser("reconcile", parents=[common])
-    node.add_argument("id")
-    node.add_argument("--version", type=int, required=True)
-    node.add_argument("--outcome", choices=["sent", "not_sent"], required=True)
-    node.add_argument("--note", required=True)
-    node.add_argument("--retry", action="store_true")
-    targets = group("targets", "Manage saved environment targets")
-    for action in ("inspect", "prepare", "stop", "remove"):
-        node = targets.add_parser(action, parents=[common])
-        node.add_argument("id")
-    return root
+            if not text:
+                raise ValueError("send requires --text or --file")
+            return request(args, root, "POST", path + "/inputs", {"text": text})
+        if args.action == "answer":
+            if args.file is None:
+                raise ValueError("answer requires --file with the complete native response batch")
+            return request(args, root, "POST", path + "/decisions", body_file(args.file))
+        return request(
+            args, root, "GET", path + ("" if args.action == "show" else "/" + args.action)
+        )
+    if args.command == "operations":
+        path = "/api/operations/" + quote(args.id, safe="")
+        if args.action == "show":
+            return request(args, root, "GET", path)
+        if args.action == "steer" and not args.text:
+            raise ValueError("steer requires --text")
+        return request(
+            args,
+            root,
+            "POST",
+            path + "/" + args.action,
+            {"text": args.text} if args.action == "steer" else None,
+        )
+    if args.command == "api":
+        return request(args, root, args.method, args.path, body_file(args.file))
+    return request(args, root, "GET", "/api/" + args.command)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    command_parser = parser()
-    args = command_parser.parse_args(
-        argv,
-        namespace=argparse.Namespace(
-            config=None,
-            data_root=None,
-            url=None,
-            token_file=None,
-            json=False,
-            action=None,
-            offline=False,
-        ),
-    )
+    cli = parser()
+    args = cli.parse_args(argv, namespace=argparse.Namespace(root=None, url=None, token_file=None))
     if args.command is None:
-        command_parser.print_help()
+        cli.print_help()
         return
+    root = instance_root(args.root)
     try:
-        # Path/init must work even when the selected document is not yet valid.
-        if args.command == "config" and (
-            args.action in {"path", "init"}
-            or (
-                args.offline
-                and (args.data_root or os.environ.get("CLAW_DATA_ROOT"))
-                and args.action in {"status", "export", "save", "migrate"}
+        if args.command == "init":
+            asyncio.run(
+                initialize(
+                    root,
+                    args.workspace,
+                    model_route=args.model,
+                    model_key_env=args.model_key_env,
+                    model_base_url=args.model_base_url,
+                )
             )
-            or (
-                not args.offline
-                and (args.url or os.environ.get("CLAW_URL"))
-                and args.action in {"status", "export", "save", "reload", "apply"}
+            print(
+                json.dumps(
+                    {
+                        "root": str(root),
+                        "configuration": str(root / "claw.yaml"),
+                        "operator_token_file": str(root / "operator.token"),
+                    },
+                    indent=2,
+                )
             )
-        ):
-            from a13n_claw.configuration import Configuration
-
-            config = Configuration()
-        else:
-            config = document(args)
-        if args.command == "serve":
+        elif args.command == "reset-operator":
+            print(json.dumps({"operator_token_file": str(reset_operator(root))}))
+        elif args.command == "serve":
             import uvicorn
 
             from a13n_claw.app import create_app
 
-            settings = config.server
-            workspace = args.workspace or (
-                Path(os.environ["CLAW_WORKSPACE"]) if "CLAW_WORKSPACE" in os.environ else None
-            )
-            if workspace is None and settings.workspace is not None:
-                workspace = local_path(settings.workspace, config_path(args).parent)
-            mode = (
-                args.mode
-                if args.mode is not None
-                else os.environ.get("CLAW_CONVERSATION_MODE", settings.mode)
-            )
-            app = create_app(
-                data_root=data_root(args, config),
-                config_path=config_path(args),
-                workspace=workspace,
-                concurrency=args.concurrency
-                if args.concurrency is not None
-                else settings.concurrency,
-                mode=mode,
-                console=settings.console and not args.no_console,
-            )
             uvicorn.run(
-                app,
-                host=args.host if args.host is not None else settings.host,
-                port=args.port if args.port is not None else settings.port,
+                create_app(root=root, console=not args.no_console), host=args.host, port=args.port
             )
-        elif args.command == "reset-operator":
-            from a13n_claw.instance import reset_operator
-
-            path = reset_operator(data_root(args, config))
-            print(f"Operator access rotated. Read the token locally from: {path}")
-        elif args.command == "config":
-            run_configuration(args, config)
-        elif args.offline:
-            run_offline(args, config)
         else:
-            run_remote(args, config)
-    except ValidationError as error:
-        # Location/type only: Pydantic messages and input can contain secrets.
-        fields = "; ".join(
-            ".".join(map(str, item["loc"])) + f" ({item['type']})"
-            for item in error.errors(include_input=False, include_context=False, include_url=False)
-        )
-        command_parser.error(f"Invalid configuration or request: {fields}")
-    except ClawError as error:
-        command_parser.error(f"{error.code}: {error}")
-    except OSError:
-        command_parser.error(
-            "Local file operation failed; check paths, permissions "
-            "and whether output already exists"
-        )
+            print(json.dumps(invoke(args, root), indent=2, ensure_ascii=False))
+    except ValidationError:
+        cli.error("Invalid configuration or request fields")
+    except (ValueError, OSError, ClawError) as exc:
+        cli.error(str(exc))

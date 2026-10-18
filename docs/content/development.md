@@ -1,14 +1,13 @@
 ---
 title: Development
-description: Work on the standalone project with reproducible tools.
+description: Build and validate the embedded product against published dependencies.
 ---
 
 ## Toolchain
 
-Use Python 3.13, uv, Node.js 24, pnpm 10.30.3, Make, and Git. Docker validates the image and GitHub Actions workflows.
+Use Python 3.13, uv, Node.js 24, pnpm 10.30.3, Make, and Git. Docker validates the distribution image and workflows. `make install` installs locked dependencies and Git hooks. The contributor guide owns focused validation.
 
 ```bash
-make install
 make check
 make test
 make build
@@ -16,47 +15,35 @@ make artifact-check
 make docs-build
 ```
 
-`make install` installs dependencies from the Python, console, and documentation lockfiles and installs pre-commit hooks. Read the repository's [contributor guide](https://github.com/Wh1isper/a13n-claw/blob/main/CONTRIBUTING.md) for focused checks and review conventions.
+## Ownership
 
-## Console and packaging
+`host.py` opens the native App; `lifecycle.py` holds the Instance lease and owns adapter/application lifetimes. `business.py` owns short SQLite transactions; `service.py` owns product dispatch, scoped tool authority, and delivery. `controls.py` implements exact IM interactions. `lark.py` owns platform normalization and asynchronous wire transport behind the neutral `MessagingAdapter` protocol. `api.py` and `cli.py` provide trusted operator access.
 
-`console/` owns a standalone private React/TypeScript/Vite application. `a13n_claw/` owns the Python application and packaged static assets. `make console-dev` serves the frontend with hot reload; `make console-check` validates its types and formatting. Run `make serve` alongside Vite for the backend; Vite proxies `/api` to loopback port 8080 without rewriting the browser origin.
-
-`make console-build` installs locked dependencies and writes the generated bundle to `a13n_claw/static/console/`. `make serve` serves that bundle through FastAPI/Uvicorn on loopback port 8080. There is no SPA catch-all: unknown APIs and missing assets return 404, while protected APIs reject unauthenticated requests with 401.
-
-`make build` builds the console first, then the wheel and sdist. Direct `uv build` requires a prior console build and fails if assets are absent. Editable installs do not require assets until you serve the console. Generated assets are not committed, but both distributions contain them; the sdist also contains frontend source. Installation and sdist-to-wheel rebuilds do not require Node.js. `make artifact-check` installs both wheels outside the checkout and tests real HTTP responses and their referenced JavaScript/CSS. `make image-check` also verifies non-root serving and that saved configuration survives container replacement and loads at the next startup.
+Claw uses published bounded Harness UI/Harness dependencies. It does not import neighboring checkouts, private Host coordinators, or Host database tables. Native worker collaboration, environment tools, and Global/Project memory remain native capabilities. Cross-owner changes need invariant-based tests, especially around admission, uncertainty, and publication.
 
 ## SQLite migrations
 
-`a13n_claw/database/schema.py` owns SQLAlchemy Core metadata. `database/migrations/versions/` owns the linear Alembic history shipped in the wheel and sdist. Runtime reads and writes remain short `sqlite3` transactions in `storage.py`, coordination, and messaging; metadata does not introduce an ORM or a second runtime store.
-
-After changing metadata, generate a revision against a temporary database:
+`a13n_claw/business_schema.py` owns product metadata. `a13n_claw/business_migrations/versions/` contains its linear generated Alembic history. Host state has a separate owner and migration history.
 
 ```bash
 make db-migrate msg="describe the schema change"
-uv run --locked ruff check --select I --fix a13n_claw/database/migrations/versions
-uv run --locked ruff format a13n_claw/database/migrations/versions
-uv run --locked pytest tests/test_migrations.py
+uv run --locked ruff check --select I --fix a13n_claw/business_migrations/versions
+uv run --locked ruff format a13n_claw/business_migrations/versions
+uv run --locked pytest tests/test_business_migrations.py tests/test_migrations.py
 ```
 
-Review the generated operations and add any required data backfill. Autogeneration cannot infer renames or application-level transformations. Revisions keep their own historical definitions; never import current metadata into an upgrade. SQLite batch operations support changes requiring table rebuilds. The runner checks foreign keys before committing, so schema, data, and revision roll back together on failure. Keep one migration head and add a populated-upgrade regression for each subsequent revision. Downgrades use a pre-upgrade backup, not reverse migrations.
+Generation upgrades a disposable SQLite database, never an operator Instance. Review generated operations and add data backfills where needed. Historical revisions keep their own definitions. SQLite table rebuilds and revision changes commit together after foreign-key validation; failed migrations roll back. Tests cover metadata parity, populated upgrades, repeated startup, unknown/prebaseline rejection, rollback, and single-head history. Downgrades use backups.
 
-The baseline is a development reset: earlier `user_version` databases require a fresh data root. See [backup and restart](./operations.md#backup-and-restart). Future changes append migrations rather than editing a released baseline. Tests cover clean creation, metadata parity, repeated opens, unknown revisions, failed DDL/data rollback, and generated batch upgrades with retained work.
+## Console and packaging
+
+`console/` is a private React/Vite Hello World page. `make console-build` places assets in `a13n_claw/static/console/`; `make build` includes them in the wheel and sdist. Installed serving and sdist rebuilds need no Node.js. Direct `uv build` requires prebuilt assets. The API can run without assets using `serve --no-console` after explicit initialization.
+
+`make artifact-check` installs the original wheel and a wheel rebuilt from the sdist outside the checkout, initializes isolated Instances, starts real HTTP listeners, and checks authentication, migration assets, and static-file boundaries. `make image-check` validates non-root initialization, serving, and native configuration persistence across replacement of disposable containers.
+
+## Runtime checks
+
+`make test` uses no external service credentials. Native FunctionModel tests exercise real App execution, tool context, files, decisions, steering, cancellation, restart evidence, routing, and operator attention. Lark tests use local WebSocket and HTTP protocol fixtures; they verify ACK ordering, serialization, and uncertain sends rather than a real tenant. Loopback provider checks use the production model client, not a production account. Linux checks do not replace Windows CI.
 
 ## Documentation
 
-Portable Markdown lives under `docs/content/`. The Fumadocs application under `docs/` uses Next.js static export. Run `make docs-serve` to preview it and `make docs-build` to build the site and check internal links and anchors.
-
-The static export is uploaded as a GitHub Actions artifact. A configured deployment publishes that same artifact through Cloudflare Workers Static Assets. The site requires no Next.js server or Cloudflare runtime code.
-
-## Runtime and integration checks
-
-`storage.py` owns short SQLite transactions; `coordinator.py` owns execution and checkpoint publication; `runtime.py` builds fresh public Harness objects from captured definitions. `environments.py` serializes target use and lifecycle intent/observations; `targets.py` owns Local validation and Docker SDK lifecycle operations. `api.py` applies current caller authority. `configuration_files.py` owns source revisions and file replacement; `configuration.py` validates the catalog and publishes its loaded projection in one transaction. CLI, Console, and startup share these owners. Changes crossing owners need invariant-based tests, not only endpoint snapshots.
-
-The supported dependency line is Harness 0.10; environment APIs come from `a13n_harness.environment` and its provider modules, not a separate environment package. Claw prepares a target before handing Harness an `EnvironmentMount(source=...)`. Its fixed `EnvironmentSource` returns an inert, execution-only `EnvironmentConnector`; Harness opens fresh `EnvironmentExecution` instances lazily and closes them before Claw releases the target. Connectors never create, restart, or replace containers. Console file browsing uses the same fixed provider selection with read-only permissions, not lifecycle recovery or a host-path shortcut. Keep management code out of source activation and leave file/shell execution to native Harness providers.
-
-Target mutations run under the manager's per-target lock and settle before cancellation releases it. Docker name reconciliation belongs only to idle lifecycle management; overlapping users retain the exact saved physical identity. Preserve both the Claw generation recipe and native provider-state fingerprint when changing dependencies: `tests/harness_08_docker.json` captures actual published 0.8 state for the 0.10 compatibility regression.
-
-`make test` needs no external credentials. Native FunctionModel fixtures drive decisions, steering, delegation, cancellation, recovery, and retained files through the real runtime. `tests/test_network_runtime.py` additionally uses a loopback HTTP server, the production OpenAI client, a real MCP server/transport, and a real local shell. This proves adapter integration, not compatibility with every external provider deployment. Set `CLAW_TEST_DOCKER_IMAGE` to opt into actual disposable-container lifecycle tests. CI also checks Python on Windows; local Linux results do not substitute for that check.
-
-For repeatable browser acceptance, build the Console and run `uv run python tests/console_server.py --root build/console-acceptance --port 0`. Use the printed listener and the generated local operator token. Configure a model with any nonempty managed test credential, a Local read environment, and a Profile with `claw.files.retain: ask`. A fresh Thread message `approval` requests an artifact decision; a message sent while waiting remains held. Approve it, verify the saved response and artifact, fork the checkpoint, send `slow`, cancel, record review, and start linked recovery. Also exercise attachment upload and selected-Run file browsing. This explicit test-only model never runs in the installed CLI and is not a provider probe.
+Portable Markdown lives in `docs/content/`; the separate Fumadocs/Next.js application exports a static site. `make docs-build` also checks links and anchors. Cloudflare Workers Static Assets hosts documentation only, not the runtime. Keep operational examples aligned with implemented CLI/API surfaces.

@@ -1,73 +1,73 @@
 ---
 title: Operations
-description: Operate a single-node Instance without confusing saved state, authority, and external effects.
+description: Operate the embedded Host and reconcile product uncertainty without replaying effects.
 ---
-
-The [headless CLI](./configuration.md) provides configuration, saved-state inspection, pause controls, decisions, cancellation, and reviewed recovery without the Console. Live commands use the authenticated API; offline configuration requires exclusive Instance ownership.
 
 ## Access and secrets
 
-The Instance is for a trusted operator and explicitly granted participants, not hostile multi-tenant workloads. Keep the default loopback listener or place it behind a trusted TLS reverse proxy. The Console and `/api` must share an origin. Forward the original Host and scheme correctly; do not enable arbitrary CORS or put access tokens in query strings. API calls require an Authorization Bearer header; browser requests with a foreign Origin are rejected. No cookies grant authority.
+The service is for a trusted operator and explicitly allowed messaging participants. Keep the default loopback listener, or use a trusted TLS reverse proxy. `/api` requires an Authorization Bearer token and rejects foreign browser Origins. Static content grants no authority. Keep tokens out of URLs and logs.
 
-The operator can configure resources, credentials, client grants, recovery, and target management. A client gets explicit Thread IDs, Profile IDs, and actions; participation does not imply administration. Grants are checked again during execution and decision handling. Removing authority can stop further work but cannot undo an external effect already performed. Shared workspace data may be visible to any granted agent with file access, regardless of private conversation history.
+The operator token is in `operator.token`. The API grants that operator full product/Host management access. Messaging grants are separate: `allowed_senders` permits intake, and `operators` permits associated IM controls. Shared context and broad native execution authority mean this is not hostile multi-tenancy.
 
-The data root contains `claw.sqlite3`, its SQLite journal files, `operator.token`, and the process lease file. Managed provider/MCP credentials are stored as plaintext values in the protected database; this is not encrypted secret storage. Restrict filesystem access and protect backups. POSIX-created data roots use private permissions; Windows operators must enforce equivalent ACLs. Credential environment references can avoid storing a managed value. API exports and captured compositions exclude values, but prompts and tool results can contain user-supplied sensitive content and must also be protected.
-
-To replace a lost or compromised operator token, stop the server, then run:
+To rotate a token, stop the server and run:
 
 ```bash
-a13n-claw reset-operator --data-root /absolute/private/claw-data
+a13n-claw reset-operator --root /absolute/private/claw-root
 ```
 
-The command requires exclusive ownership of that data root, writes a new private token file, and revokes the old operator token in the database. A crash between file replacement and database update produces an explicit startup mismatch; repeat the offline command to repair it. Do not edit the token file and expect an implicit rotation. Scoped client tokens remain separate; disable compromised clients in Settings. Client IDs must be single identifiers (letters, digits, dots, underscores, and hyphens, starting with a letter or digit). Client updates carry the viewed `version`; a stale form is rejected so it cannot restore revoked access. Creating or forking a Thread also advances the creator's grant version.
+The command takes the same Instance lease and atomically replaces the private token file. Restart to use it. It rejects standalone/uninitialized roots before changing credentials. Restrict filesystem permissions; Windows operators must enforce equivalent ACLs. Provider and Lark secrets can be supplied through environment references. Native Host authentication/storage retains its own security contract.
 
 ## Environment authority
 
-All Threads share one workspace directory. The agent sees its selected binding as `/workspace`; Docker's backing mount uses a different container path. A Thread's history and target identity do not isolate shared files. Concurrent Threads may overwrite each other's files. Capturing a definition does not snapshot working data.
+Native Host Projects, environments, files, and memory own working context. The starter workspace must exist and be separate from the Instance directory. Main and workers select the shared Project; Channel Projects can still share working files and all use Global memory. Thread history does not isolate shared working files.
 
-Local execution runs with the server account's OS authority. Logical file routing and disabled operations are useful boundaries, but enabling Local shell is **not sandboxing** and can access files outside the workspace. Do not grant it to untrusted participants. Docker provides a separate execution context, not a guarantee of isolation from intentionally shared writable data or the network.
-
-Docker execution requires a reachable daemon and an explicit compatible image. Targets are Thread-owned and reused across Runs and server restarts when the captured environment generation is compatible. Changing model settings does not recreate a container; changing container-relevant settings selects another generation. Retention `keep` leaves the target available, while `stop` stops it after the last use. Prepare starts or reconciles a target; stop/remove reject busy targets. Removing a target discards its writable layer, not the shared workspace, retained artifacts, or conversation history.
-
-Harness 0.10 separates target management from execution access. Claw prepares and validates the target; each Run receives a fixed container identity and fresh execution access. Closing execution does not remove the container. A container stopped or removed externally fails existing access rather than automatically restarting or switching it. File browsing likewise never prepares or replaces a target. An inspect result is `ready` only after the native execution readiness check, not merely because Docker reports `running`.
-
-Target generations depend on container configuration, not the Harness package version alone. Inspect retained targets after restart. Management reconciles a missing cached container ID through the stable, ownership-checked association. If container creation or initialization was interrupted, Claw does not replay initialization against the existing container. Inspect its effects, then explicitly remove and prepare it when discarding the writable layer is acceptable. Stop and remove remain available for incompletely initialized targets.
-
-There is no silent Docker-to-host fallback. After uncertain target operations, inspect before retrying. A server running in Docker does not automatically have daemon access. If deliberately granting that access, treat it as host-level privilege and ensure the workspace bind source resolves to the same absolute directory in both the server and Docker daemon's host namespace. The server's own private data directory must never be mounted into agent targets.
-
-## Command identity and limits
-
-API clients must provide a stable, nonempty `request_id` when creating a Thread (`POST /api/threads`), forking a checkpoint, submitting an input, or uploading a file. Retry the same identity with the identical payload after a lost response; changing the payload requires a new command. A rejected reconciliation query does not prove that the original command failed. Thread creation retries retain the original result even if Instance defaults have changed.
-
-The Console keeps pending commands, upload bytes, and drafts in authenticated tab memory across page and Thread switches. A pending creation or fork locks its original fields; retry it or open the confirmed result before starting another. Reloading or disconnecting loses this browser-only state, so inspect saved work before creating replacements. Hidden pages pause their queries; child-result polling runs only while execution details are open and work or notification delivery remains pending.
-
-Profile limits belong to native `agent.usage_limits`, for example `{"request_limit": 50, "tool_calls_limit": 10}`. The default request limit is 50; explicitly configured native request, token, and tool-call limits are honored. Existing pre-release `max_requests` fields are normalized into the native request limit when read, without replacing other native limits.
+The starter selects native files, shell, and Skills capabilities. Actual operations remain subject to native permission and environment policy. Local shell executes as the server OS account and is **not a sandbox**. Host-account code can reach outside logical file roots. Review native environment selections before granting participants access. The service container is a distribution boundary, not automatically a separate sandbox for each worker.
 
 ## Decisions, cancellation, and recovery
 
-Ordinary message acceptance does not mean model consumption. The Console distinguishes queued, held, delivered, incorporated, blocked, and uncertain input. An ambiguous HTTP submission keeps its original identity/body in tab memory and offers reconciliation before an identical retry. Reloading discards unsaved drafts; it does not discard accepted backend work.
+Use `threads active`, `threads decisions`, `operations show`, and `threads history`. Submit the complete native decision batch with its exact continuation ID. Ordinary chat is not an approval. Cancellation requests target one receipt; they do not roll back tools or establish that an external effect failed.
 
-Cancellation requests stop owned execution and retain the latest proven checkpoint. They do not roll back shell commands, MCP calls, or provider effects. A server restart does not infer that an interrupted tool succeeded, failed, or is safe to replay. Pending decision state can be restored from its exact checkpoint; answering it requires current authority and the complete original batch.
+Direct operator submission retains native Host admission semantics and is never automatically retried. Receipts are process-local. After restart, inspect saved Thread history and exact available execution evidence. Missing correlation means unknown, not failed. The product stores its own Inbox/dispatch/delivery evidence without writing Host tables.
 
-For failed, interrupted, or cancelled work:
+### Dispatch attempts
 
-1. Inspect saved history, inputs, and any actual external effects.
-2. Record the external-effects review in **Execution details**.
-3. Resolve uncertain inputs explicitly. Acknowledging an input as unapplied is an operator assertion, not evidence generated by the application.
-4. Start a linked recovery with a concrete instruction, or release known-unapplied blocked inputs when appropriate. If blocked work is no longer wanted or its sender is revoked, use **Discard blocked input** with a review note (`POST /api/inputs/{id}/discard`). This marks it unapplied and retains the audit record without restoring access. Discarding the last input of an otherwise empty queued Run cancels that Run rather than starting an unrequested continuation.
+Inspect `a13n-claw attempts`. Interrupted calls and receipts lacking exact evidence remain blocked. Inspect actual effects before explicitly resolving an attempt:
 
-Recovery creates a new Run linked to the old one, from the still-current checkpoint. It does not replay unknown approved tool effects. Accepted decision facts survive and are correlated to their original requests. A stale recovery checkpoint is rejected rather than replacing newer history. Cleanup failures cannot rewrite an already committed successful result. If cleanup fails before publication, the Run is failed but retains the complete produced checkpoint, output, and pending decision evidence. Recovery restores an unanswered decision as a new waiting Run; it never treats an unrecorded answer as approval.
+```json
+{"action": "settle", "evidence": "Reviewed saved history and external effects; no further processing required"}
+```
+
+Save this as a file and call `a13n-claw api POST /api/attempts/DISPATCH_ID/resolve --file resolution.json`. `settle` ends the associated business obligations. `retry` explicitly permits another attention/input attempt after review; it can repeat effects if the operator's assessment is wrong. Neither option manufactures Host completion evidence.
+
+### Deliveries
+
+Inspect `deliveries`. A send has `pending`, `sending`, `sent`, `not_sent`, or `unknown` status. Current source/destination authority is checked before each attempt. Unknown sends block automatic resend. Reconcile against platform evidence:
+
+```json
+{"outcome": "not_sent", "evidence": "Platform inspection confirms no message", "retry": true}
+```
+
+POST this body to `/api/deliveries/DELIVERY_ID/resolve`. `retry` defaults to false and is allowed only for confirmed non-send. Saved content and identity are retained. Never rerun the Agent to replace an uncertain delivery.
+
+### Target creation and Inbox disposition
+
+`targets` lists retained creation intents. If the proposed Host Thread exists with the expected Project and role, POST `{"key":"main","action":"adopt","evidence":"Inspected matching Thread"}` to `/api/targets/resolve`. Otherwise, an operator-confirmed `retry` retains the same proposed Thread ID. Claw never silently replaces canonical Main.
+
+For a versioned business disposition, PATCH `/api/inbox/INBOX_ID` with `{"expected_version":1,"disposition":"handled","reason":"Reviewed result"}`. `pending` reopens a settled/deferred item. Unknown dispatches must be reconciled separately first; settlement is not an uncertainty bypass.
+
+A pending native decision blocks dispatch to that Thread. Revoked source authority, missing capabilities, and no-progress backoff have visible reasons. There is no universal Claw pause gate over native collaboration. Stop the service to stop intake; native stop controls one operation.
 
 ## Backup and restart
 
-This delivery has no online backup scheduler or automatic retention. Before upgrades or manual backups, stop the server cleanly and stop or otherwise quiesce all writers to the shared workspace, including retained shell processes. Preserve the **whole data directory**, including any WAL files, plus the selected configuration file and workspace separately. Retained attachments/artifacts live in the database; workspace files and Docker writable layers do not. A configuration export alone is not a backup.
+Stop the service and quiesce working-data writers before backup. Preserve the whole Instance directory, external paths selected by `host_configuration`/`host_data`, and Project working directories. The default layout contains:
 
-Restore with the server stopped, restrictive ownership/permissions, the matching application/dependency versions, and the same workspace binding where accepted work still depends on it. Start exactly one server. Verify saved Threads, pending decisions, recovery flags, and targets before accepting new work. Startup applies the package's forward-only SQLite migrations under exclusive Instance ownership, before reconciliation and dispatch. Schema changes, data transformations, and the Alembic revision commit together; a failed upgrade rolls back. Unknown revisions stop startup without stamping or resetting the database.
+- `claw.yaml`: product configuration.
+- `business.sqlite3` and journal files: Inbox, dispatch, target creation, delivery, and resolution evidence.
+- `operator.token` and lease file.
+- `host/`: native configuration, state, Thread files, and memory under their native owners.
 
-The current development baseline replaces the earlier `user_version` 1–5 schemas. Those pre-baseline databases require a fresh development data root. Stop the server and preserve the configuration file and workspace separately before selecting the new root. Claw never clears a database automatically. The operator token and client grants belong to the data root; a fresh root creates new access credentials.
+Configuration export alone is not a backup. Restore with matching versions and restrictive permissions, then start exactly one owner. The product migrates only its business database; the Host owns its own migrations. Business DDL/data/revision changes commit atomically and unknown revisions fail without resetting data. Downgrades require a pre-upgrade backup.
 
-From this baseline onward, new revisions upgrade existing data. Returning to an older package requires a pre-upgrade backup. A supported database catalog without a configuration file can be exported through explicit [configuration migration](./configuration.md#migrate-an-existing-pre-file-instance).
+Old standalone `claw.sqlite3` databases are explicitly rejected. Preserve their files and select a fresh root; automatic conversion or import is unavailable. Mode/Main Project changes also require a fresh Instance in this delivery.
 
-Inspect **Coordination** for the saved mode, Main identity, pause/backoff, pending obligations, and unknown deliveries after restart. Schema migration does not migrate conversation histories between modes; see [One Thread coordination](./one-thread.md). Do not clone an active data root into two running owners with access to the same managed targets.
-
-The authenticated Instance view reports dispatcher readiness and configuration facts. It does not probe model or MCP connectivity. A meaningful connectivity check is an explicit Run with the selected Profile; retain its saved outcome and investigate a failure rather than treating a configured credential as proof of service health.
+`status` reports Host openness and adapter state, not provider connectivity. Use an intentional model request and inspect its saved outcome to verify that specific provider configuration. Native receipts, platform ACKs, saved continuation, and confirmed delivery remain distinct.

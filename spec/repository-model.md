@@ -6,9 +6,9 @@
 
 ### Source Implementation and Release Availability
 
-The backend still uses the earlier standalone runtime built directly on Harness: its own Profile catalog, durable input and Run state, decisions/recovery, Local/Docker target management, retained files, YAML configuration and CLI, One Thread coordination, workers, Inbox/drain, and generic HTTP ingress/egress. The runtime frontend has been reduced to Hello World. Neither that placeholder nor the standalone backend establishes package embedding or the replacement ownership boundary.
+The source embeds one published Harness UI App with native configuration, Threads, decisions, collaboration, environments, and memory. Claw implements a separate business database, Lark/Feishu adapter, three routing modes, Inbox/drain, exact text controls, explicit text/file delivery, and headless CLI/API. The runtime frontend is Hello World. General automation, other adapters, rich cards, and full Console remain future work.
 
-Backend dependencies, database revisions, and setup remain standalone until replaced. Vendor-specific embedded bridges and general automation remain unavailable source capabilities. Source-facing guides must follow each implemented capability; published artifacts reflect their tagged source, not the specification or uncommitted work.
+The standalone runtime and schema are retired. Existing standalone data requires a fresh explicit Instance; no conversion or deletion is performed. Source-facing guides describe implemented capabilities; published artifacts reflect their tagged source, not later source changes.
 
 The replacement implementation validates public Host APIs against a published `a13n-harness-ui` version using the [integration acceptance scenarios](11-host-integration.md#integration-acceptance). Source inspection informs that work; runtime tests establish the supported package boundary. Only a demonstrated required behavior missing from public operations justifies a focused upstream request.
 
