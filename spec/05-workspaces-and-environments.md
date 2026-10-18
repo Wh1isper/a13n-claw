@@ -12,7 +12,7 @@ Setup can initialize a common working directory using native Host configuration.
 
 Channels reference Threads, not filesystem directories. Main and workers follow Host Project and creation-default rules. An ordinary Channel cannot choose arbitrary host paths, install providers, or turn an external message into a new mount. Changing working context is an authorized Host configuration operation, separate from message routing.
 
-Thread histories do not isolate shared working files. Threads with common roots can affect the same files. A Project is a working context, not a hostile-tenant isolation boundary. The frontend discloses selected roots, execution mode, and the sharing implied by a binding.
+Thread histories do not isolate shared working files. Threads with common roots can affect the same files. A Project is a working context, not a hostile-tenant isolation boundary. Setup and inspection surfaces disclose selected roots, execution mode, and the sharing implied by a binding.
 
 ## Lifecycle Ownership
 
@@ -26,13 +26,13 @@ Thread histories do not isolate shared working files. Threads with common roots 
 
 Claw does not copy container IDs into a second target catalog, implement its own generation algorithm, race Host idle cleanup, or recover shell processes from old observation handles. Reuse, readiness, replacement, and state publication follow the selected Host provider's actual contract. The previous standalone Claw Thread-container reuse guarantee is not retained as an independent layer.
 
-Unsupported management actions are unavailable rather than approximated with direct Docker or filesystem commands. A required unavailable environment blocks the operation; Claw never falls back to host-account execution. Historical selected state and current readiness remain distinct in the Console.
+Unsupported management actions are unavailable rather than approximated with direct Docker or filesystem commands. A required unavailable environment blocks the operation; Claw never falls back to host-account execution. Historical selected state and current readiness remain distinct in product views.
 
 ## Data and Access Boundaries
 
 Host configuration, credentials, saved continuation, Thread files, memory, Claw business state, and working directories have separate owners and lifetimes. A workspace selection does not automatically expose protected application directories. Attachments enter Host execution through supported file/input operations or bounded Claw Inbox reads with explicit provenance and authorization, not by mounting the entire product store.
 
-Console file access follows the selected Host boundary and product grants. Embedding does not implicitly enable the stock WebUI's native Host file browser, Git access, PTY, or computer sharing. Those are distinct privileged surfaces, not requirements of the Claw frontend.
+IM attachment transfer and CLI/API file access follow the selected Host boundary and product grants. A remote participant receives only the specifically authorized file, not ambient access to the Host's filesystem browser. Embedding does not implicitly enable the stock WebUI's native Host file browser, Git access, PTY, or computer sharing. Those are distinct privileged surfaces, not requirements of the Claw frontend.
 
 Local or Full Control execution is host-account authority, not a sandbox. Product Channel checks and Main-only messaging tools cannot isolate an Agent that has separately been granted broad filesystem, shell, or network credentials. Configure such authority deliberately and disclose it accurately.
 

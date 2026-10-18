@@ -42,7 +42,7 @@ Memory storage and lifecycle remain separate from working directories, execution
 
 Where supported by the selected embedded Host mode, automatic organization remains a Host-owned feature with its existing scope locks, budgets, opportunity triggers, retry rules, and fresh-context behavior. Claw does not start a duplicate organizer, sweep scopes with its scheduler, or supply conversation transcripts as an extraction pipeline.
 
-Embedding must explicitly enable the intended Host capabilities through supported lifecycle options. A feature that is currently mode-specific in Harness UI is not assumed to exist merely because Claw has a web frontend. If the supported package cannot expose organization in embedding mode, the feature is visibly unavailable until the Host integration supports it; foreground memory remains independently described.
+Embedding enables the intended Host capabilities through supported lifecycle options. A mode-specific feature is available only when the selected Host configuration supports it; a web frontend is not evidence of availability. If automatic organization is unavailable, Claw reports that feature separately. Foreground memory and ordinary IM interaction remain usable without requiring an upstream organizer extension.
 
 Organization history and files are read through supported Host queries. Viewing memory does not trigger inference or turn an internal maintenance Thread into an ordinary chat. Maintenance failure is shown without retroactively failing unrelated Inbox processing.
 

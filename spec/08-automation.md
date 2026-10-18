@@ -4,11 +4,11 @@
 
 Claw owns when and why business work should be requested. The embedded Host owns how Agent execution advances. Schedules, heartbeat, workflows, and product follow-up use Host operations and never instantiate another Agent loop, child operator, or durable Run scheduler.
 
-Retained automation intent does not promise execution at an exact instant, continuous availability, distributed failover, or exactly-once external effects.
+Automation is an additional entry into the same interaction path. Basic IM conversation, controls, and worker collaboration work without schedules or a workflow engine. Retained automation intent does not promise execution at an exact instant, continuous availability, distributed failover, or exactly-once external effects.
 
 ## Definitions and Occurrences
 
-An automation definition identifies its authorizing operator, purpose, target Host context, permitted operations, timing, overlap policy, and output destinations. A schedule has explicit timezone and missed-occurrence policy. A heartbeat is a bounded periodic purpose, not permission to inspect every Thread or expand tools.
+An automation definition identifies its authorizing operator, purpose, target Host context, permitted operations, timing, overlap policy, and output destinations. Automation enters Main or an independent Host root; Main delegates managed-worker tasks through native collaboration. It does not submit automated first input through a path that falsely notifies an owner of direct human work. A schedule has explicit timezone and missed-occurrence policy. A heartbeat is a bounded periodic purpose, not permission to inspect every Thread or expand tools.
 
 Each firing opportunity has a stable occurrence identity. Claw records whether it is pending, skipped, blocked, or resolved, plus any [dispatch evidence](04-persistence-and-recovery.md#dispatch-evidence). These are business dispositions, not replacement Host Run states. Duplicate discovery returns the existing occurrence instead of dispatching again merely because a timer fired.
 
@@ -38,7 +38,7 @@ Cancelling a workflow prevents new step dispatch and requests supported Host can
 
 Agent-directed follow-up has an explicit purpose, allowed triggers, resource limits, and stopping conditions. Where the Host already owns a goal or coordinator continuation loop, Claw uses that capability or leaves it disabled; it does not install a competing loop over the same task. Product limits can stop new requests but do not grant control over unrelated Host work.
 
-[Inbox drain](10-one-thread-mode.md#wake-and-drain) is reconciliation of retained business obligations, not a heartbeat or optional Agent goal. It rediscovers pending items without new platform events. Pause, decisions, unresolved dispatch, revoked authority, and backoff still block execution. Limits expose a reason and preserve backlog rather than relabeling it handled.
+[Inbox drain](10-one-thread-mode.md#wake-and-drain) reconciles retained business obligations independently of optional schedules or Agent goals. It rediscovers pending items without new platform events and coexists with native coordinator follow-up. Decisions, unresolved dispatch, revoked authority, and backoff constrain the affected product requests. Limits expose a reason and preserve backlog rather than relabeling it handled.
 
 In One Thread mode automation uses Main for Agent-originated external publication. A worker or operational Thread cannot obtain a separate send path by being timer-triggered. Platform notification remains a separately authorized delivery action.
 

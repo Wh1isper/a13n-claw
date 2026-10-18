@@ -2,15 +2,15 @@
 
 ## Product and Implementation Boundary
 
-[The specification index](README.md) defines Claw as a product layer over an embedded Harness UI Host. The target is one process, one package-embedded App, Claw's own frontend/API, and Claw-owned messaging and automation state. The Host owns configuration, Threads, execution, continuation, environments, collaboration, and memory.
+[The specification index](README.md) defines Claw as an IM-first product over an embedded Harness UI Host. The target is one process, one package-embedded App, IM adapters and headless CLI/API, and Claw-owned messaging and automation state. The replacement runtime frontend is a Hello World placeholder; a full Console is separate follow-up scope. The Host owns configuration, Threads, execution, continuation, environments, collaboration, and memory.
 
 ### Source Implementation and Release Availability
 
-The current source remains the earlier standalone runtime built directly on Harness. It implements its own Profile catalog, durable input and Run state, decisions/recovery, Local/Docker target management, retained files, Console, YAML configuration and CLI, One Thread coordination, workers, Inbox/drain, and generic HTTP ingress/egress. Those implementations are not evidence that package embedding or the new ownership boundary is available.
+The backend still uses the earlier standalone runtime built directly on Harness: its own Profile catalog, durable input and Run state, decisions/recovery, Local/Docker target management, retained files, YAML configuration and CLI, One Thread coordination, workers, Inbox/drain, and generic HTTP ingress/egress. The runtime frontend has been reduced to Hello World. Neither that placeholder nor the standalone backend establishes package embedding or the replacement ownership boundary.
 
-This specification-only redesign leaves executable code, dependencies, existing database revisions, tests, and user setup commands unchanged. User documentation continues to describe the standalone source until implementation changes. Vendor-specific embedded bridges and general automation remain unavailable source capabilities. Published artifacts reflect their tagged source; a new specification does not publish a runtime release.
+Backend dependencies, database revisions, and setup remain standalone until replaced. Vendor-specific embedded bridges and general automation remain unavailable source capabilities. Source-facing guides must follow each implemented capability; published artifacts reflect their tagged source, not the specification or uncommitted work.
 
-The replacement implementation must satisfy the [Host integration contract](11-host-integration.md) against a tested published `a13n-harness-ui` version. Existing internal App capabilities are useful evidence, not a guarantee that all required third-party embedding hooks are already supported. This repository cannot declare another package's implementation complete.
+The replacement implementation validates public Host APIs against a published `a13n-harness-ui` version using the [integration acceptance scenarios](11-host-integration.md#integration-acceptance). Source inspection informs that work; runtime tests establish the supported package boundary. Only a demonstrated required behavior missing from public operations justifies a focused upstream request.
 
 ## Compatibility Boundary
 
@@ -38,7 +38,7 @@ Host versions own their resource and saved-state compatibility; Claw owns its pr
 | `AGENTS.md`       | Concise contributor guidance                                    |
 | `.agents/skills`  | Repository-local contributor workflows                          |
 
-This remains an independent single-package repository with `a13n_claw/` at its root. Claw does not vendor Harness UI internals or extract another generic Host package as part of this design. Missing Host embedding features are implemented and released by their owner, not copied into Claw.
+This remains an independent single-package repository with `a13n_claw/` at its root. Claw does not vendor Harness UI internals or extract another generic Host package as part of this design. Required Host changes belong to their owner; optional unavailable features do not block independent IM capabilities.
 
 ## Distribution
 
