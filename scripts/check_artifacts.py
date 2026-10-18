@@ -14,7 +14,8 @@ from urllib.request import Request, urlopen
 
 
 def check_console(base: str) -> None:
-    deadline = time.monotonic() + 20
+    # Fresh embedded Host imports can exceed 20 seconds on Windows CI.
+    deadline = time.monotonic() + 60
     while True:
         try:
             with urlopen(base, timeout=2) as response:
