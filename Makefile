@@ -26,7 +26,7 @@ test: ## Run tests without external service credentials
 .PHONY: db-migrate
 db-migrate: ## Generate a SQLite migration against a disposable database
 	@test -n "$(msg)" || { echo 'msg is required: make db-migrate msg="description"'; exit 2; }
-	uv run --locked python -m a13n_claw.database.migrations.generate "$(msg)"
+	uv run --locked python -m a13n_claw.database.generate "$(msg)"
 
 check: lint typecheck deps-check docs-check console-check ## Run static checks
 check-all: check test build artifact-check docs-build workflow-check image-check ## Run the complete CI-equivalent gates (Docker for workflows)

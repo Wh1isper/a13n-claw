@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import secrets
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import BinaryIO
 
-from a13n_claw.domain import ClawError
+from a13n_claw.errors import ClawError
 
 
 class InstanceLease:
@@ -69,11 +68,6 @@ class InstanceLease:
         self.close()
 
 
-def token_hash(token: str) -> str:
-    # Tokens are random 256-bit values, not passwords; no password KDF is needed.
-    return hashlib.sha256(token.encode()).hexdigest()
-
-
 def operator_token(data_root: Path) -> str:
     """Call under the Instance lease; never put the token in logs or configuration exports."""
     path = data_root / "operator.token"
@@ -82,7 +76,7 @@ def operator_token(data_root: Path) -> str:
         if len(token) < 32:
             raise ClawError("operator_token_invalid", "Operator token file is invalid")
         return token
-    if (data_root / "claw.sqlite3").exists():
+    if (data_root / "business.sqlite3").exists():
         raise ClawError(
             "operator_token_missing",
             "Operator token is missing; stop the server and run reset-operator",
@@ -98,20 +92,19 @@ def operator_token(data_root: Path) -> str:
 
 def reset_operator(data_root: Path) -> Path:
     """Explicit offline recovery also revokes the old operator credential."""
-    from a13n_claw.storage import Store
+    from a13n_claw.settings import read_settings
 
     with InstanceLease(data_root):
-        store = Store(data_root / "claw.sqlite3", initial_mode="one_thread")
+        # Reject legacy or uninitialized roots before changing credentials.
+        read_settings(data_root)
         token = secrets.token_urlsafe(32)
         path = data_root / "operator.token"
-        # Publish the file first. A crash before the DB update is a visible startup
-        # mismatch, repairable by repeating this explicit offline command.
+        # The token file is the sole authority; replacement revokes the old token.
         with NamedTemporaryFile(mode="w", dir=data_root, delete=False) as temporary:
             temporary.write(token + "\n")
             temporary.flush()
             os.fsync(temporary.fileno())
         os.replace(temporary.name, path)
-        store.reset_operator(token_hash(token))
         return path
 
 

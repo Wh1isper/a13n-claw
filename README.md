@@ -2,38 +2,37 @@
 
 [![CI](https://github.com/Wh1isper/a13n-claw/actions/workflows/ci.yml/badge.svg)](https://github.com/Wh1isper/a13n-claw/actions/workflows/ci.yml)
 
-A local-first assistant project in the [a13n ecosystem](https://github.com/converge-ai-labs/agent-foundation), inspired by [YA Claw](https://github.com/Wh1isper/ya-mono/tree/main/packages/ya-claw).
+An IM-first assistant in the [a13n ecosystem](https://github.com/converge-ai-labs/agent-foundation), inspired by [YA Claw](https://github.com/Wh1isper/ya-mono/tree/main/packages/ya-claw).
 
-**Architecture direction:** the [replacement specification](spec/README.md) defines Claw as a product layer embedding one Harness UI App from its Python package, with Claw-owned messaging, automation, API, and frontend. The current source and instructions below still describe the standalone runtime; package embedding and data conversion are not implemented by the specification change. Start with the [architecture](spec/00-overview.md) and [required Host integration boundary](spec/11-host-integration.md).
+Claw embeds one Harness UI App from its published Python package. The Host owns configuration, Threads, execution, decisions, environments, collaboration, and Global/Project memory. Claw adds Lark/Feishu messaging, durable Inbox and delivery evidence, routing, and headless CLI/API operations.
 
-**Current source scope: a single-node runtime and real conversation Console.** Run agents through Harness with durable Threads, inputs, checkpoints, decisions, cancellation/recovery, delegated work, and checkpoint forks. Manage versioned Profiles, model credentials, skills, MCP servers, scoped clients, reusable Local/Docker targets, and retained files through authenticated APIs and the Console. All Threads share one explicitly selected workspace.
+- **One Thread** (default): canonical Main coordinates native workers and explicitly replies to authorized Channels.
+- **Per-Channel**: reuse one conversation Thread per Channel.
+- **Per-trigger**: create a fresh task Thread for each eligible distinct event in its Channel Project.
+- Mention filtering, event deduplication, text/file replies, exact stop/steer/continue commands, and native JSON decisions.
+- Explicit reconciliation of uncertain dispatches, target creation, and delivery without automatic effect replay.
 
-[One Thread mode](docs/content/one-thread.md), the default for new Instances, provides a persistent Main coordinator, owned workers, a durable Inbox with automatic drain and pause controls, and explicit Main-only delivery. Generic HTTP ingress and egress are available; vendor-specific embedded adapters, file-memory organization, and scheduling/automation are later deliveries. Published `0.0.2` remains an informational CLI placeholder; these runtime capabilities require a source build until a runtime release is published.
+The runtime frontend is Hello World; operational interaction uses IM and CLI/API. Other platform adapters, rich cards, full Console, and general automation remain future work. The `0.0.2` tagged artifacts contain the earlier informational placeholder; build this source for the embedded service.
 
 ## Start from source
 
-For configuration and operations without a browser, follow [Headless configuration and CLI](docs/content/configuration.md). One YAML file is the configuration source for the CLI and Console. Startup loads it; later edits use explicit save and reload, with whole-file revision checks. Exports retain authored source and credential references. `serve --no-console` needs no frontend build. Existing Instances keep their saved conversation mode unless explicitly changed.
-
-To also use the optional Console from a source checkout:
-
 ```bash
 uv sync --locked
-uv run a13n-claw --version
-uv run a13n-claw --help
-make console-build
 mkdir -p "$HOME/claw-workspace"
-uv run a13n-claw serve --workspace "$HOME/claw-workspace"
+uv run a13n-claw init --workspace "$HOME/claw-workspace" --model openai:gpt-4o
+# Supply CLAW_MODEL_API_KEY through your environment/secret manager.
+uv run a13n-claw serve --no-console
 ```
 
-Open `http://127.0.0.1:8080` and connect with the locally generated `~/.a13n-claw/operator.token`. Use Settings' starter definitions, review the model and Profile, then save and load the file. Store credential values separately before creating work. See [Getting started](docs/content/getting-started.md) for the complete setup.
+The default Instance is `~/.a13n-claw`; `--root` or `CLAW_ROOT` selects another. Product settings live in `claw.yaml`; native Host resources live under `host/`. The workspace must be separate from protected Instance data. Configure Lark credentials and explicit Channel/sender bindings using [Getting started](docs/content/getting-started.md), then inspect `a13n-claw status`.
 
-The default workspace is startup cwd; the default data root is `~/.a13n-claw`. They must be separate, non-nested directories. Local shell is host-account execution, not a sandbox. Managed credentials are plaintext in the protected SQLite database. Read [Operations](docs/content/operations.md) before granting access, exposing the listener, or backing up data.
+Read [Configuration and CLI](docs/content/configuration.md), [routing and IM commands](docs/content/one-thread.md), and [Operations](docs/content/operations.md). Local shell is host-account execution, not a sandbox. One Thread shares Main context and Project memory across Channels. Review grants before enabling participants.
 
-Source builds report `0.0.0`. Release builds derive their version from `release/a13n-claw-vX.Y.Z` tags. The published `0.0.2` package is the earlier informational CLI placeholder and does not include the console.
+Existing standalone roots containing `claw.sqlite3` are rejected. Preserve their data and initialize a fresh root; there is no implicit conversion or deletion. Source versions remain `0.0.0`; tags define published versions.
 
 ## Develop
 
-Python 3.13, uv, Node.js 24, pnpm 10.30.3, and Make are required. Docker is used for container and workflow checks.
+Python 3.13, uv, Node.js 24, pnpm 10.30.3, and Make are used for source development. Docker validates distribution images and workflows.
 
 ```bash
 make install
@@ -44,16 +43,16 @@ make artifact-check
 make docs-build
 ```
 
-`console/` is the private runtime frontend; `a13n_claw/` is the Python package; `docs/` remains the independent documentation site. `make console-dev` provides frontend hot reload on port 5173 and proxies APIs to the backend on port 8080. `make build` compiles console assets into the wheel and sdist; installed serving and wheel rebuilds from the sdist require no Node.js. Docker installs the same wheel.
+`a13n_claw/` is the Python package, `console/` the private Hello World frontend, and `docs/` the separate documentation site. `make build` compiles assets into the wheel and sdist. Installed serving and rebuilding the sdist need no Node.js. Docker installs the same wheel and requires explicit initialization and `serve`.
 
 - [Contributing](CONTRIBUTING.md): setup, validation, and releases.
-- [Development standards](DEVELOPMENT.md): code and test conventions.
-- [Documentation](docs/content/index.md): current capabilities and setup.
-- [Release setup](docs/content/releasing.md): GitHub environments, secrets, and initial publication.
-- [Specifications](spec/README.md): accepted boundaries, not migration proposals.
+- [Development standards](DEVELOPMENT.md): ownership and engineering conventions.
+- [Documentation](docs/content/index.md): available capabilities and setup.
+- [Specifications](spec/README.md): accepted architecture and boundaries.
+- [Release setup](docs/content/releasing.md): PyPI, GHCR, and documentation publication.
 
-The documentation is a static Fumadocs site deployed through **Cloudflare Workers Static Assets**, not Pages. The public site is configured for [a13n-claw.wh1isper.top](https://a13n-claw.wh1isper.top). It hosts documentation only, not the agent runtime; no account identifier is embedded in the repository.
+The static Fumadocs site uses Cloudflare Workers Static Assets at [a13n-claw.wh1isper.top](https://a13n-claw.wh1isper.top). It hosts documentation only.
 
 ## Compatibility and license
 
-This is an independent project, not a configuration-compatible fork of YA Claw. No legacy configuration or persistence format is supported. Licensed under [BSD-3-Clause](LICENSE), matching YA Claw / ya-mono. The license correction starts with `0.0.2`; previously published `0.0.1` artifacts remain unchanged.
+This independent product is not configuration-compatible with YA Claw or the retired standalone Claw runtime. It depends on bounded published Harness UI/Harness packages, never a sibling checkout. Licensed under [BSD-3-Clause](LICENSE), matching YA Claw / ya-mono. The license correction starts with `0.0.2`; earlier `0.0.1` artifacts remain unchanged.

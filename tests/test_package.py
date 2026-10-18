@@ -14,7 +14,7 @@ def test_distribution_owns_version():
 
 def test_runtime_command_is_described(capsys):
     main([])
-    assert "durable agent execution" in capsys.readouterr().out
+    assert "embedded Harness UI" in capsys.readouterr().out
 
 
 def test_version(capsys):

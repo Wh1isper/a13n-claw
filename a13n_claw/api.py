@@ -1,524 +1,351 @@
-"""Authenticated application operations shared by the Console and API clients."""
+"""Trusted operator API composing public Host operations and Claw business services."""
 
-import asyncio
+from __future__ import annotations
+
 import secrets
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query, Request, Response
-from pydantic import Field, JsonValue
+from a13n_harness_ui.configuration.mutation import ResourceMutationRequest
+from a13n_harness_ui.surfaces import (
+    DecisionResponseBatch,
+    NewThreadDefaults,
+    ThreadConfigurationMutationInput,
+    ThreadMetadataMutation,
+)
+from a13n_harness_ui.thread_files import AttachmentUpload
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from pydantic import Field
 
 from a13n_claw import __version__
-from a13n_claw.attention import (
-    ChannelPolicy,
-    DeliveryResolution,
-    InboundMessage,
-    ProcessingChange,
-    ProcessingControl,
-)
-from a13n_claw.configuration import ConfigurationPreview, ConfigurationReload, ConfigurationWrite
-from a13n_claw.configuration_files import ConfigurationFile
-from a13n_claw.coordinator import Coordinator
-from a13n_claw.domain import (
-    MAX_ASSET_BYTES,
-    ClawError,
-    InputRequest,
-    Principal,
-    ResourceChange,
-    ResourceId,
-    RunRecord,
-    Value,
-)
-from a13n_claw.instance import token_hash
-from a13n_claw.messaging import DeliveryDispatcher, Messaging
-from a13n_claw.runtime import Runtime
-from a13n_claw.storage import Store
+from a13n_claw.service import ClawService, database
+from a13n_claw.settings import ProductModel
 
 
-@dataclass(frozen=True)
-class Services:
-    store: Store
-    runtime: Runtime
-    coordinator: Coordinator
-    workspace: Path
-    configuration: ConfigurationFile
-    deliveries: DeliveryDispatcher | None = None
-
-
-def services(request: Request) -> Services:
-    value = request.app.state.services
-    assert isinstance(value, Services)
+def service(request: Request) -> ClawService:
+    value = request.app.state.service
+    assert isinstance(value, ClawService)
     return value
 
 
-async def authenticate(request: Request) -> Principal:
-    authorization = request.headers.get("authorization", "")
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token or len(token) > 4096:
-        raise ClawError("unauthorized", "A Bearer access token is required", 401)
-    # No cookies, URL credentials, permissive CORS, or browser token persistence.
+async def authenticate(request: Request) -> None:
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not secrets.compare_digest(token, request.app.state.token):
+        raise HTTPException(401, "An operator Bearer token is required")
     origin = request.headers.get("origin")
     if origin is not None and origin.rstrip("/") != str(request.base_url).rstrip("/"):
-        raise ClawError("origin_forbidden", "Cross-origin API requests are not enabled", 403)
-    return await asyncio.to_thread(services(request).store.authenticate, token_hash(token))
+        raise HTTPException(403, "Cross-origin API access is disabled")
 
 
-Actor = Annotated[Principal, Depends(authenticate)]
-Application = Annotated[Services, Depends(services)]
-router = APIRouter(prefix="/api")
+Application = Annotated[ClawService, Depends(service)]
+router = APIRouter(prefix="/api", dependencies=[Depends(authenticate)])
 
 
-class ThreadCreate(Value):
-    request_id: str = Field(min_length=1, max_length=200)
-    title: str = Field(default="New conversation", min_length=1, max_length=500)
-    profile_id: ResourceId | None = None
+class ThreadCreate(ProductModel):
+    title: str | None = None
+    defaults: NewThreadDefaults | None = None
+    coordinator_thread_id: str | None = None
 
 
-class ThreadEdit(Value):
-    title: str = Field(min_length=1, max_length=500)
-    profile_id: ResourceId
+class Input(ProductModel):
+    text: str = Field(min_length=1, max_length=100_000)
+    attachment_ids: tuple[str, ...] = ()
+
+
+class ConfigurationWrite(ProductModel):
+    relative_path: str
+    content: str
+    expected_digest: str | None  # null means a new source
+
+
+class AttemptResolution(ProductModel):
+    action: Literal["retry", "settle"]
+    evidence: str = Field(min_length=1)
+
+
+class DeliveryResolution(ProductModel):
+    outcome: Literal["sent", "not_sent"]
+    evidence: str = Field(min_length=1)
+    retry: bool = False
+
+
+class TargetResolution(ProductModel):
+    key: str
+    action: Literal["adopt", "retry"]
+    evidence: str = Field(min_length=1)
+
+
+class InboxChange(ProductModel):
     expected_version: int = Field(ge=1)
-    archived: bool = False
+    disposition: Literal["handled", "ignored", "pending"]
+    reason: str = Field(min_length=1)
 
 
-class ForkRequest(Value):
-    checkpoint_id: str
-    request_id: str = Field(min_length=1, max_length=200)
-    title: str = Field(min_length=1, max_length=500)
-    profile_id: ResourceId
-
-
-class ResourceImport(Value):
-    resources: list[ResourceChange] = Field(max_length=1000)
-
-
-class SecretChange(Value):
-    value: str | None = Field(default=None, max_length=65536)
-
-
-class ClientChange(Value):
-    principal: Principal
-
-
-class ReviewRequest(Value):
-    note: str = Field(min_length=1, max_length=10000)
-
-
-class RecoveryRequest(Value):
-    request_id: str = Field(min_length=1, max_length=200)
-    text: str = Field(min_length=1, max_length=1_000_000)
-
-
-class TargetOperation(Value):
-    operation: Literal["inspect", "prepare", "stop", "remove"]
-
-
-def project_run(run: RunRecord) -> dict[str, JsonValue]:
-    # Executor fences are server-owned, not client control inputs.
-    return run.model_dump(mode="json", exclude={"owner"})
-
-
-@router.get("/instance")
-async def instance(actor: Actor, app: Application):
+@router.get("/status")
+async def status(app: Application):
     return {
         "version": __version__,
-        "principal": actor,
-        "dispatcher": "unavailable" if app.coordinator.failure else "ready",
-        "error": app.coordinator.failure,
-        "workspace": str(app.workspace) if actor.admin else None,
+        "instance": await database(app.store.instance),
+        "reconciliation_error": app.last_error,
+        "connection_errors": app.connection_errors,
+        "host": "open",
         "connectivity": "not_probed",
-        "delivery_dispatcher": app.deliveries.failure if app.deliveries else None,
-        "conversation_mode": await asyncio.to_thread(app.store.coordination.mode),
+        "connections": {
+            key: {
+                "platform": config.platform,
+                "enabled": config.enabled,
+                "status": app.adapters[key].status if key in app.adapters else "disabled",
+                "interactions": ["text", "files", "mentions", "commands", "decision_json"],
+            }
+            for key, config in app.settings.connections.items()
+        },
     }
 
 
-@router.get("/resources")
-async def resources(actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.resources, actor.id)
-
-
-@router.post("/resources/import")
-async def import_resources(body: ResourceImport, actor: Actor, app: Application):
-    return await asyncio.to_thread(app.configuration.update_resources, actor.id, body.resources)
-
-
-@router.get("/profiles")
-async def profiles(actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.available_profiles, actor.id)
-
-
-@router.get("/credentials")
-async def credentials(actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.credential_status, actor.id)
-
-
-@router.put("/credentials/{name}", status_code=204)
-async def set_credential(name: str, body: SecretChange, actor: Actor, app: Application):
-    await asyncio.to_thread(app.store.save_credential, actor.id, name, body.value)
-
-
-@router.get("/clients")
-async def clients(actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.principals, actor.id)
-
-
-@router.post("/clients", status_code=201)
-async def create_client(body: ClientChange, actor: Actor, app: Application):
-    token = secrets.token_urlsafe(32)
-    await asyncio.to_thread(
-        app.store.set_principal, actor.id, body.principal, token_hash(token), create_only=True
-    )
-    return {"principal": body.principal, "token": token}
-
-
-@router.put("/clients/{client_id}", status_code=204)
-async def update_client(client_id: str, body: ClientChange, actor: Actor, app: Application):
-    if client_id != body.principal.id:
-        raise ClawError("client_identity", "Client identity does not match the URL", 422)
-    await asyncio.to_thread(app.store.set_principal, actor.id, body.principal, None)
-
-
 @router.get("/threads")
-async def threads(actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.threads, actor.id)
+async def threads(
+    app: Application,
+    cursor: str | None = None,
+    project_id: str | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    return await app.host.list_threads(cursor=cursor, limit=limit, project_id=project_id)
 
 
 @router.post("/threads", status_code=201)
-async def create_thread(body: ThreadCreate, actor: Actor, app: Application):
-    return await asyncio.to_thread(
-        app.store.create_thread,
-        actor.id,
-        body.title,
-        body.profile_id,
-        request_id=body.request_id,
-    )
-
-
-@router.post("/threads/fork", status_code=201)
-async def fork_thread(body: ForkRequest, actor: Actor, app: Application):
-    return await asyncio.to_thread(
-        app.store.fork_thread,
-        actor.id,
-        body.checkpoint_id,
-        body.request_id,
-        body.title,
-        body.profile_id,
+async def create_thread(body: ThreadCreate, app: Application):
+    return await app.host.create_thread(
+        title=body.title, defaults=body.defaults, coordinator_thread_id=body.coordinator_thread_id
     )
 
 
 @router.get("/threads/{thread_id}")
-async def thread(thread_id: str, actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.thread, actor.id, thread_id)
+async def thread(thread_id: str, app: Application):
+    return await app.host.get_thread(thread_id)
 
 
-@router.put("/threads/{thread_id}")
-async def update_thread(thread_id: str, body: ThreadEdit, actor: Actor, app: Application):
-    return await asyncio.to_thread(
-        app.store.update_thread,
-        actor.id,
-        thread_id,
-        body.expected_version,
-        title=body.title,
-        profile_id=body.profile_id,
-        archived=body.archived,
-    )
+@router.patch("/threads/{thread_id}/metadata")
+async def thread_metadata(thread_id: str, body: ThreadMetadataMutation, app: Application):
+    return await app.host.update_thread_metadata(thread_id=thread_id, mutation=body)
+
+
+@router.patch("/threads/{thread_id}/configuration")
+async def thread_configuration(
+    thread_id: str, body: ThreadConfigurationMutationInput, app: Application
+):
+    return await app.host.patch_thread_configuration(thread_id=thread_id, mutation=body)
 
 
 @router.get("/threads/{thread_id}/history")
-async def history(thread_id: str, actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.history, actor.id, thread_id)
-
-
-@router.get("/threads/{thread_id}/inputs")
-async def inputs(thread_id: str, actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.inputs, actor.id, thread_id)
+async def history(
+    thread_id: str,
+    app: Application,
+    cursor: str | None = None,
+    expected_continuation_id: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+):
+    return await app.host.get_thread_transcript(
+        thread_id=thread_id,
+        cursor=cursor,
+        limit=limit,
+        expected_continuation_id=expected_continuation_id,
+    )
 
 
 @router.post("/threads/{thread_id}/inputs", status_code=202)
-async def submit(thread_id: str, body: InputRequest, actor: Actor, app: Application):
-    receipt = await asyncio.to_thread(
-        app.store.admit, actor.id, thread_id, body, str(app.workspace)
-    )
-    app.coordinator.wake()
-    return receipt
+async def submit(thread_id: str, body: Input, app: Application):
+    # Direct operator input retains Host admission semantics, not a second durable input queue.
+    return await app.operator_input(thread_id, body.text, body.attachment_ids)
 
 
-@router.get("/threads/{thread_id}/runs")
-async def runs(thread_id: str, actor: Actor, app: Application):
-    return [
-        project_run(run) for run in await asyncio.to_thread(app.store.runs, actor.id, thread_id)
-    ]
+@router.get("/threads/{thread_id}/active")
+async def active(thread_id: str, app: Application):
+    return await app.host.active_root_operation(thread_id)
 
 
-@router.get("/runs/{run_id}")
-async def run(run_id: str, actor: Actor, app: Application):
-    return project_run(await asyncio.to_thread(app.store.run, actor.id, run_id))
+@router.get("/operations/{receipt_id}")
+async def operation(receipt_id: str, app: Application):
+    return await app.host.get_root_operation(receipt_id)
 
 
-@router.get("/runs/{run_id}/observations")
-async def observations(run_id: str, actor: Actor, app: Application):
-    saved = await asyncio.to_thread(app.store.run, actor.id, run_id)
-    return {
-        "run": project_run(saved),
-        "disposable": True,
-        "events": list(app.coordinator.observations.get(run_id, [])),
-    }
-
-
-@router.post("/runs/{run_id}/cancel")
-async def cancel(run_id: str, actor: Actor, app: Application):
-    saved = await asyncio.to_thread(app.store.cancel, actor.id, run_id)
-    app.coordinator.wake()
-    return project_run(saved)
-
-
-@router.get("/runs/{run_id}/decisions")
-async def decisions(run_id: str, actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.decisions, actor.id, run_id)
-
-
-@router.post("/decisions/{decision_id}/answer")
-async def answer(decision_id: str, body: dict[str, JsonValue], actor: Actor, app: Application):
-    from a13n_claw.domain import canonical
-
-    saved = await asyncio.to_thread(app.store.answer, actor.id, decision_id, canonical(body))
-    app.coordinator.wake()
-    return project_run(saved)
-
-
-@router.get("/runs/{run_id}/children")
-async def children(run_id: str, actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.delegations, actor.id, run_id)
-
-
-@router.post("/runs/{run_id}/reconcile")
-async def reconcile(run_id: str, body: ReviewRequest, actor: Actor, app: Application):
-    return project_run(
-        await asyncio.to_thread(app.store.reconcile_run, actor.id, run_id, body.note)
+@router.post("/operations/{receipt_id}/steer")
+async def steer(receipt_id: str, body: Input, app: Application):
+    operation = await app.host.get_root_operation(receipt_id)
+    return await app.operator_input(
+        operation.receipt.thread_id, body.text, body.attachment_ids, receipt_id=receipt_id
     )
 
 
-@router.post("/runs/{run_id}/recover", status_code=202)
-async def recover(run_id: str, body: RecoveryRequest, actor: Actor, app: Application):
-    saved = await asyncio.to_thread(
-        app.store.recover, actor.id, run_id, body.request_id, body.text, str(app.workspace)
-    )
-    app.coordinator.wake()
-    return project_run(saved)
+@router.post("/operations/{receipt_id}/cancel")
+async def cancel(receipt_id: str, app: Application):
+    return await app.host.cancel_root_operation(receipt_id)
 
 
-@router.post("/inputs/{input_id}/acknowledge")
-async def acknowledge(input_id: str, body: ReviewRequest, actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.acknowledge_uncertainty, actor.id, input_id, body.note)
-
-
-@router.post("/inputs/{input_id}/discard")
-async def discard(input_id: str, body: ReviewRequest, actor: Actor, app: Application):
-    result = await asyncio.to_thread(app.store.discard_blocked, actor.id, input_id, body.note)
-    app.coordinator.wake()
-    return result
-
-
-@router.post("/threads/{thread_id}/release-inputs", status_code=204)
-async def release_inputs(thread_id: str, actor: Actor, app: Application):
-    await asyncio.to_thread(app.store.release_blocked, actor.id, thread_id, str(app.workspace))
-    app.coordinator.wake()
-
-
-@router.get("/threads/{thread_id}/targets")
-async def targets(thread_id: str, actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.targets, actor.id, thread_id)
-
-
-@router.post("/targets/{target_id}/manage")
-async def manage_target(target_id: str, body: TargetOperation, actor: Actor, app: Application):
-    return await app.runtime.environments.manage(actor.id, target_id, body.operation)
-
-
-@router.get("/threads/{thread_id}/files")
-async def retained_files(thread_id: str, actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.assets, actor.id, thread_id)
-
-
-@router.post("/threads/{thread_id}/files", status_code=201)
-async def upload_file(
-    thread_id: str,
-    request: Request,
-    actor: Actor,
-    app: Application,
-    request_id: Annotated[str, Query(min_length=1, max_length=200)],
-    name: Annotated[str, Query(min_length=1, max_length=255)],
-):
-    # Reject scope before reading a body. Bytes and metadata commit together.
-    actor.require("submit", thread_id)
-    content = bytearray()
-    async for chunk in request.stream():
-        content.extend(chunk)
-        if len(content) > MAX_ASSET_BYTES:
-            raise ClawError("asset_size", "Retained files are limited to 8 MiB each", 413)
-    media_type = request.headers.get("content-type", "application/octet-stream").split(";", 1)[0]
-    return await asyncio.to_thread(
-        app.store.retain_asset, actor.id, thread_id, request_id, name, media_type, bytes(content)
+@router.get("/threads/{thread_id}/decisions")
+async def decisions(thread_id: str, app: Application, expected_continuation_id: str | None = None):
+    return await app.host.thread_decisions(
+        thread_id=thread_id, expected_continuation_id=expected_continuation_id
     )
 
 
-@router.get("/files/{file_id}/download")
-async def download_file(file_id: str, actor: Actor, app: Application):
-    asset, content = await asyncio.to_thread(app.store.asset_content, actor.id, file_id)
-    return Response(
-        content,
-        media_type="application/octet-stream",
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(asset.name, safe='')}",
-            "Content-Security-Policy": "sandbox; default-src 'none'",
-        },
-    )
+@router.post("/threads/{thread_id}/decisions", status_code=202)
+async def answer(thread_id: str, body: DecisionResponseBatch, app: Application):
+    return await app.host.respond_decisions(thread_id=thread_id, response=body)
 
 
-@router.get("/runs/{run_id}/files")
-async def workspace_files(
-    run_id: str,
-    actor: Actor,
-    app: Application,
-    path: str = "/workspace",
-    offset: Annotated[int, Query(ge=0)] = 0,
-):
-    async with app.runtime.environments.files(actor.id, run_id) as environment:
-        return await environment.files.list(path, offset=offset, max_results=200)
+@router.get("/configuration")
+async def configuration(app: Application):
+    return await app.host.configuration_sources()
 
 
-@router.get("/runs/{run_id}/file-content")
-async def workspace_content(
-    run_id: str,
-    actor: Actor,
-    app: Application,
-    path: str,
-    line_offset: Annotated[int, Query(ge=0)] = 0,
-):
-    async with app.runtime.environments.files(actor.id, run_id) as environment:
-        return await environment.files.read_text(path, line_offset=line_offset, line_limit=200)
+@router.get("/configuration/source")
+async def configuration_source(app: Application, path: str):
+    return await app.host.configuration_source(relative_path=path)
 
 
-class MainSetup(Value):
-    profile_id: ResourceId
+@router.put("/configuration/source")
+async def write_configuration(body: ConfigurationWrite, app: Application):
+    # Claw serializes its editors and checks the observed source. Native Host mutation
+    # validates/accepts the candidate; it does not expose an OS-wide compare-and-swap.
+    async with app.lock:
+        catalog = await app.host.configuration_sources()
+        existing = next((s for s in catalog.sources if s.relative_path == body.relative_path), None)
+        if existing is None:
+            if body.expected_digest is not None:
+                raise ValueError("Configuration source no longer exists")
+        else:
+            source = await app.host.configuration_source(relative_path=body.relative_path)
+            if source.source_digest != body.expected_digest:
+                raise ValueError("Configuration source changed; refetch and preserve your draft")
+        return await app.host.mutate_configuration(
+            relative_path=body.relative_path, request=ResourceMutationRequest(content=body.content)
+        )
 
 
-class ChannelChange(Value):
-    expected_version: int = Field(ge=0)
-    policy: ChannelPolicy
+@router.post("/configuration/reload")
+async def reload_configuration(app: Application):
+    async with app.lock:
+        await app.host.reload_configuration()
+        return await app.host.configuration_sources()
 
 
-@router.get("/coordination")
-async def coordination(actor: Actor, app: Application):
-    return await asyncio.to_thread(app.store.coordination.view, actor.id)
+@router.get("/projects")
+async def projects(app: Application):
+    return await app.host.projects()
 
 
-@router.post("/coordination/main")
-async def initialize_main(body: MainSetup, actor: Actor, app: Application):
-    return await asyncio.to_thread(
-        app.store.coordination.initialize_main, actor.id, body.profile_id
-    )
+@router.get("/targets")
+async def targets(app: Application):
+    return await database(app.store.rows, "SELECT * FROM targets ORDER BY key")
 
 
-@router.put("/coordination/control")
-async def processing_control(body: ProcessingControl, actor: Actor, app: Application):
-    result = await asyncio.to_thread(app.store.coordination.control, actor.id, body)
-    app.coordinator.wake()
-    return result
+@router.post("/targets/resolve")
+async def resolve_target(body: TargetResolution, app: Application):
+    return await app.resolve_target(body.key, body.action, body.evidence)
+
+
+@router.get("/channels")
+async def channels(app: Application):
+    return app.settings.channels
 
 
 @router.get("/inbox")
 async def inbox(
-    actor: Actor,
     app: Application,
-    disposition: str | None = None,
-    after: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=100),
-    item_id: str | None = None,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
 ):
-    return await asyncio.to_thread(
-        app.store.coordination.inbox,
-        actor.id,
-        disposition=disposition,
-        after=after,
-        limit=limit,
-        item_id=item_id,
+    return await database(
+        app.store.rows,
+        "SELECT id,channel_id,thread_id,disposition,version,reason,blocked,"
+        "next_check,dependency,created "
+        "FROM inbox ORDER BY created,id LIMIT ? OFFSET ?",
+        (limit, offset),
     )
 
 
-@router.put("/inbox/{item_id}")
-async def update_inbox(item_id: str, body: ProcessingChange, actor: Actor, app: Application):
-    result = await asyncio.to_thread(app.store.coordination.change_item, actor.id, item_id, body)
-    app.coordinator.wake()
-    return result
+@router.get("/inbox/{item_id}")
+async def inbox_item(item_id: str, app: Application):
+    import json
+
+    row = await database(app.store.item, item_id)
+    if row["body"] is not None:
+        body = json.loads(row["body"])
+        body["files"] = [{"name": f["name"]} for f in body["files"]]
+        row["body"] = body
+    return row
 
 
-@router.get("/channels")
-async def channels(actor: Actor, app: Application):
-    return await asyncio.to_thread(Messaging(app.store).channels, actor.id)
+@router.patch("/inbox/{item_id}")
+async def update_inbox(item_id: str, body: InboxChange, app: Application):
+    async with app.lock:
+        result = await database(
+            app.store.settle, item_id, body.expected_version, body.disposition, body.reason
+        )
+        app.wake.set()
+        return {key: result[key] for key in ("id", "disposition", "version", "reason")}
 
 
-@router.put("/channels/{channel_id}")
-async def save_channel(channel_id: ResourceId, body: ChannelChange, actor: Actor, app: Application):
-    return await asyncio.to_thread(
-        app.configuration.update_channel, actor.id, channel_id, body.policy, body.expected_version
+@router.get("/attempts")
+async def attempts(app: Application, offset: int = Query(default=0, ge=0)):
+    return await database(
+        app.store.rows, "SELECT * FROM attempts ORDER BY created DESC LIMIT 100 OFFSET ?", (offset,)
     )
 
 
-@router.post("/channels/{channel_id}/messages")
-async def receive_message(channel_id: str, body: InboundMessage, actor: Actor, app: Application):
-    result = await asyncio.to_thread(
-        Messaging(app.store).receive, actor.id, channel_id, body, str(app.workspace)
-    )
-    app.coordinator.wake()
-    return result
+@router.post("/attempts/{attempt_id}/resolve")
+async def resolve_attempt(attempt_id: str, body: AttemptResolution, app: Application):
+    async with app.lock:
+        await database(app.store.resolve_attempt, attempt_id, body.action, body.evidence)
+        app.wake.set()
+        return {"resolved": attempt_id}
 
 
 @router.get("/deliveries")
-async def deliveries(actor: Actor, app: Application):
-    return await asyncio.to_thread(Messaging(app.store).deliveries, actor.id)
-
-
-@router.post("/deliveries/{delivery_id}/reconcile")
-async def reconcile_delivery(
-    delivery_id: str, body: DeliveryResolution, actor: Actor, app: Application
-):
-    result = await asyncio.to_thread(
-        Messaging(app.store).resolve_delivery, actor.id, delivery_id, body
-    )
-    app.coordinator.wake()
-    return result
-
-
-@router.get("/configuration")
-async def configuration(actor: Actor, app: Application):
-    return await asyncio.to_thread(app.configuration.status, actor.id)
-
-
-@router.put("/configuration")
-async def save_configuration(body: ConfigurationWrite, actor: Actor, app: Application):
-    return await asyncio.to_thread(
-        app.configuration.save, actor.id, body.text, body.expected_revision
+async def deliveries(app: Application, offset: int = Query(default=0, ge=0)):
+    return await database(
+        app.store.rows,
+        "SELECT * FROM deliveries ORDER BY created DESC LIMIT 100 OFFSET ?",
+        (offset,),
     )
 
 
-@router.post("/configuration/validate")
-async def validate_configuration(body: ConfigurationPreview, actor: Actor, app: Application):
-    return await asyncio.to_thread(app.configuration.preview, actor.id, body.text)
+@router.post("/deliveries/{delivery_id}/resolve")
+async def resolve_delivery(delivery_id: str, body: DeliveryResolution, app: Application):
+    async with app.lock:
+        result = await database(
+            app.store.resolve_delivery, delivery_id, body.outcome, body.evidence, retry=body.retry
+        )
+        app.wake.set()
+        return result
 
 
-@router.post("/configuration/reload")
-async def reload_configuration(
-    body: ConfigurationReload,
-    actor: Actor,
-    app: Application,
-    dry_run: bool = False,
-):
-    result = await asyncio.to_thread(
-        app.configuration.reload, actor.id, body.expected_revision, dry_run=dry_run
+@router.post("/threads/{thread_id}/attachments", status_code=201)
+async def upload(thread_id: str, request: Request, app: Application, name: str):
+    content = bytearray()
+    async for chunk in request.stream():
+        content.extend(chunk)
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(413, "Attachments are limited to 10 MiB")
+    return await app.host.stage_thread_attachment(
+        thread_id=thread_id,
+        upload=AttachmentUpload(
+            name=name, data=bytes(content), media_type=request.headers.get("content-type")
+        ),
     )
-    if not dry_run:
-        app.coordinator.wake()
-    return result
+
+
+@router.get("/threads/{thread_id}/attachments/{attachment_id}")
+async def download(thread_id: str, attachment_id: str, app: Application):
+    attachment, content = await app.host.read_thread_attachment(
+        thread_id=thread_id, attachment_id=attachment_id
+    )
+    return Response(
+        content,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": "attachment; filename*=UTF-8''"
+            + quote(attachment.name, safe=""),
+            "Content-Security-Policy": "sandbox; default-src 'none'",
+        },
+    )

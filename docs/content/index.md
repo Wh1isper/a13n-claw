@@ -1,34 +1,31 @@
 ---
 title: a13n Claw
-description: A local-first agent runtime with durable conversations and a self-hosted Console.
+description: An IM-first assistant and headless service embedding Harness UI.
 ---
 
 ## Current source capabilities
 
-Claw runs agents through published [a13n Harness](https://github.com/converge-ai-labs/agent-foundation) primitives. One Python server owns authenticated APIs, SQLite state, configuration, and reusable Local/Docker working environments. Its React Console manages real conversations and settings over those APIs.
+One Python process embeds one published Harness UI App. Claw owns messaging and durable business obligations; the Host owns Agents, Models, Projects, Threads, execution, decisions, environments, collaboration, and memory.
 
-- Durable Threads, accepted inputs, full checkpoints, and saved Run outcomes.
-- Always-steer messages, held inputs at decision boundaries, explicit queued Runs, approvals, cancellation, and reviewed recovery.
-- Captured model, Profile, environment, skill, MCP, and child-work definitions with current authorization checks.
-- Independent delegated Threads and checkpoint forks sharing the Instance workspace.
-- Default One Thread coordination for new Instances with persistent Main/workers, explicit Inbox dispositions, durable drain/backoff/pause, and direct worker conversations.
-- Generic HTTP Channel ingress and Main-only explicit egress with independent delivery reconciliation.
-- Retained attachments/artifacts, selected-context file browsing, and managed target lifecycle.
-- Operator and scoped client access, write-only managed credentials, and offline operator-token recovery.
-- One YAML configuration source with form/source editing, revision-checked saves, explicit atomic reload, and headless CLI operations.
+- Lark/Feishu long-connection intake, identity-qualified sender/mention filtering, event deduplication, text/posts, files, and explicit replies.
+- One Thread (default), per-Channel, and per-trigger routing with native Global/Project memory.
+- Native Main/workers, retained Inbox dispositions, exact dependencies, backoff, and uncertainty reconciliation.
+- IM commands for status, idle continuation, exact steering/cancellation, and native JSON decisions.
+- Native scoped Claw tools for Inbox reads, retained files, settlement, and explicit text/file delivery.
+- CLI/API initialization, native configuration edits, Thread operations, attachments, decisions, recovery, and token rotation.
 
-Published `0.0.2` artifacts are still the earlier informational CLI placeholder. The runtime described here is available from source, not retroactively added to those artifacts. This is an independent project with no legacy configuration or persistence compatibility.
+The runtime frontend is Hello World. Operational interaction uses IM and CLI/API. `0.0.2` tagged artifacts contain the earlier informational placeholder; these capabilities require a build of this source. Old standalone databases need a fresh Instance rather than implicit conversion.
 
 ## Start here
 
-- [Configuration and CLI](./configuration.md): edit, validate, save, and load through one source.
-- [Configuration field reference](./configuration-reference.md): groups, defaults, and examples.
-- [Getting started](./getting-started.md): start the server and configure a working Profile.
-- [One Thread coordination](./one-thread.md): Main/workers, Channel bindings, Inbox processing, and delivery.
-- [Operations](./operations.md): access, shared workspace, recovery, and data handling.
-- [Development](./development.md): architecture, test boundaries, and packaging.
-- [Release setup](./releasing.md): configure PyPI, GHCR, and the documentation site.
+- [Getting started](./getting-started.md): initialize and connect Lark.
+- [Configuration and CLI](./configuration.md): native resource edits and headless operations.
+- [Configuration field reference](./configuration-reference.md): product/connection/Channel fields.
+- [Routing and One Thread coordination](./one-thread.md): modes, commands, workers, and Inbox.
+- [Operations](./operations.md): authority, exact evidence, reconciliation, and backup.
+- [Development](./development.md): implementation ownership, checks, and packaging.
+- [Release setup](./releasing.md): PyPI, GHCR, and documentation publication.
 
 ## Later deliveries
 
-Global and Thread-private file memory with background organization; vendor-specific embedded messaging adapters; schedules, heartbeat, workflows, and general autonomous goals are not implemented in this delivery. Durable One Thread attention processing and generic HTTP ingress/delivery are available, not proof of a live vendor integration. Their accepted specifications describe intended contracts, not currently enabled controls. The static documentation site is separate from the runtime Console.
+Other platform adapters, rich decision cards, a full runtime Console, and general schedules/heartbeat/workflows remain future work. Native memory is reused; automatic organization is disabled in the starter. Local protocol and Host tests establish the tested integration boundary; a particular live Lark tenant and model account still require an operator connectivity check.

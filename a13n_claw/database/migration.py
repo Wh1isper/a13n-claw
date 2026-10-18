@@ -11,9 +11,9 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import URL, Connection, create_engine, inspect
 from sqlalchemy.pool import NullPool
 
-from a13n_claw.domain import ClawError
+from a13n_claw.errors import ClawError
 
-MIGRATIONS_PATH = Path(__file__).parent / "migrations"
+MIGRATIONS_PATH = Path(__file__).parent.parent / "business_migrations"
 
 
 class DatabaseMigrator:

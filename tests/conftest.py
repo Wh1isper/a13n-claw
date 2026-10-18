@@ -1,42 +1,13 @@
-from pathlib import Path
+import asyncio
 
 import pytest
 
-from a13n_claw.storage import Store
+from a13n_claw.bootstrap import initialize
 
 
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
-
-
-@pytest.fixture
-def runtime_store(tmp_path: Path) -> Store:
-    store = Store(tmp_path / "runtime.sqlite3")
-    store.bootstrap("operator-token-hash")
-    store.save_resource(
-        "operator",
-        "model",
-        "model",
-        {
-            "provider": "openai",
-            "model_name": "test",
-            "credential_env": "TEST_KEY",
-        },
-        0,
-    )
-    store.save_resource("operator", "environment", "local", {"kind": "local"}, 0)
-    store.save_resource(
-        "operator",
-        "profile",
-        "default",
-        {
-            "model_id": "model",
-            "environment_id": "local",
-        },
-        0,
-    )
-    return store
 
 
 @pytest.fixture
@@ -50,8 +21,9 @@ def console(tmp_path, monkeypatch):
     (tmp_path / "private.txt").write_text("not public")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    root = tmp_path / "claw"
+    monkeypatch.setenv("A13N_OFFICIAL_MODELS_AUTO_UPDATE", "0")
+    asyncio.run(initialize(root, workspace))
     monkeypatch.setattr(app, "CONSOLE_DIRECTORY", directory)
-    monkeypatch.setenv("CLAW_CONFIG", str(tmp_path / "config.yaml"))
-    monkeypatch.setenv("CLAW_DATA_ROOT", str(tmp_path / "data"))
-    monkeypatch.setenv("CLAW_WORKSPACE", str(workspace))
+    monkeypatch.setenv("CLAW_ROOT", str(root))
     return directory
