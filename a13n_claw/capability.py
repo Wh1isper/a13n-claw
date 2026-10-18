@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -73,8 +73,9 @@ def messaging_integrations(service: ClawService | None = None) -> HarnessUiInteg
             )
             if mount is None or mount.mount_path is None:
                 raise ValueError("Thread files are not available in this Environment")
-            directory = str(Path(mount.mount_path) / "tmp" / f"claw-{uuid4().hex}")
-            path = str(Path(directory) / name)
+            # Environment mount paths use forward slashes on every Host platform.
+            directory = str(PurePosixPath(mount.mount_path) / "tmp" / f"claw-{uuid4().hex}")
+            path = str(PurePosixPath(directory) / name)
             selected = ctx.deps.environment.select_files(path, alias="thread-files")
 
             async def chunks():

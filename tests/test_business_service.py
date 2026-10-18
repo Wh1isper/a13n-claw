@@ -297,6 +297,7 @@ async def test_retained_attachment_materialized_and_sent_by_native_tools(tmp_pat
                 ]
             )
         if last.tool_name == "claw_inbox_file":
+            assert "\\" not in value["path"], value
             observed["path"] = value["path"]
             return ModelResponse(
                 parts=[
