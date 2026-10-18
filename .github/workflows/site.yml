@@ -23,7 +23,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: docs/package.json
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: pnpm
@@ -32,7 +32,7 @@ jobs:
       - run: make docs-check docs-build
       - name: Validate Worker deployment without credentials
         run: pnpm --dir docs exec wrangler deploy --dry-run --config wrangler.jsonc
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: docs-site
           path: docs/out
@@ -53,13 +53,13 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: docs/package.json
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: pnpm
           cache-dependency-path: docs/pnpm-lock.yaml
       - run: pnpm --dir docs install --frozen-lockfile
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: docs-site
           path: docs/out
