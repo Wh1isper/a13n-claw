@@ -1,0 +1,13 @@
+schema_version: "1"
+kind: device
+id: device-claw-executor
+name: Persistent Docker executor
+device_id: claw-executor
+transport:
+  kind: http
+  configuration:
+    endpoint: http://executor:8888
+    allow_plaintext_private_link: true
+authentication:
+  kind: api_key
+  env: CLAW_EXECUTOR_TOKEN

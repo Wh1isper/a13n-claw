@@ -26,6 +26,20 @@ class LarkConnection(ProductModel):
     mentions_only: bool = True
 
 
+class GitHubConnection(ProductModel):
+    platform: Literal["github"] = "github"
+    enabled: bool = True
+    token_env: str = "CLAW_GITHUB_TOKEN"
+    account_login: str = Field(min_length=1)
+    api_url: Literal["https://api.github.com"] = "https://api.github.com"
+    poll_seconds: int = Field(default=60, ge=10, le=3600)
+    delay_seconds: int = Field(default=600, ge=0, le=86400)
+    initial_lookback_seconds: int = Field(default=0, ge=0, le=604800)
+    mark_read: bool = True
+    mentions_only: Literal[False] = False
+    reasons: tuple[str, ...] = ()
+
+
 class ChannelBinding(ProductModel):
     connection: str
     chat_id: str
@@ -36,6 +50,10 @@ class ChannelBinding(ProductModel):
     mentions_only: bool | None = None
     project_id: str | None = None
     shared_context_acknowledged: bool = False
+    progress_updates: bool = False
+    reactions: bool = False
+    final_reply: bool = False
+    decision_prompts: bool = False
 
     @model_validator(mode="after")
     def acknowledge_context(self) -> ChannelBinding:
@@ -54,7 +72,7 @@ class ClawSettings(ProductModel):
     host_configuration: str = "host/a13n-harness-ui.yaml"
     host_data: str = "host/data"
     main_project_id: str = "project-claw-main"
-    connections: dict[str, LarkConnection] = Field(default_factory=dict)
+    connections: dict[str, LarkConnection | GitHubConnection] = Field(default_factory=dict)
     channels: dict[str, ChannelBinding] = Field(default_factory=dict)
     reconcile_seconds: float = Field(default=2, ge=0.1, le=60)
     retry_seconds: float = Field(default=30, ge=1, le=3600)
@@ -65,8 +83,17 @@ class ClawSettings(ProductModel):
         keys: set[tuple[str, str, str | None]] = set()
         projects: set[str] = set()
         for binding in self.channels.values():
+            if binding.final_reply and self.mode == "one_thread":
+                raise ValueError("One Thread final output is private; use explicit Main replies")
             if binding.connection not in self.connections:
                 raise ValueError("Channel references an unknown connection")
+            if isinstance(self.connections[binding.connection], GitHubConnection):
+                import re
+
+                if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", binding.chat_id):
+                    raise ValueError("GitHub Channel chat_id must be owner/repository")
+                if binding.topic_id is not None:
+                    raise ValueError("GitHub repository bindings use no topic_id")
             key = (binding.connection, binding.chat_id, binding.topic_id)
             if key in keys:
                 raise ValueError("A qualified Channel has more than one binding")
@@ -80,6 +107,16 @@ class ClawSettings(ProductModel):
         return self
 
 
+def connection_identity(connection: LarkConnection | GitHubConnection) -> dict[str, str]:
+    if isinstance(connection, LarkConnection):
+        return {"platform": "lark", "app_id": connection.app_id, "domain": connection.domain}
+    return {
+        "platform": "github",
+        "account": connection.account_login.casefold(),
+        "api_url": connection.api_url,
+    }
+
+
 def instance_root(value: Path | None = None) -> Path:
     return (value or Path(os.environ.get("CLAW_ROOT", "~/.a13n-claw"))).expanduser().resolve()
 
@@ -90,6 +127,8 @@ def selected_path(root: Path, value: str) -> Path:
 
 
 def reject_standalone_root(root: Path) -> None:
+    if (root / "restore.incomplete").exists():
+        raise ValueError("Incomplete restore blocks startup; inspect or restore into a fresh root")
     if (root / "claw.sqlite3").exists():
         raise ValueError(
             "This root contains standalone Claw data. Preserve it and select a fresh --root; "

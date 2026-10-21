@@ -5,7 +5,7 @@ description: Keep product settings separate from native Host resources and opera
 
 ## Selection and ownership
 
-`--root`, then `CLAW_ROOT`, then `~/.a13n-claw` selects the Instance. `claw.yaml` owns connections, Channel bindings, routing, and product reconciliation settings. Changes to this file require a restart. [The field reference](./configuration-reference.md) lists its fields.
+`--root`, then `CLAW_ROOT`, then `~/.a13n-claw` selects the Instance. `claw.yaml` owns connections, Channel bindings, routing, and product reconciliation settings. Save and explicit reload are separate operations; startup-only fields require restart. [The field reference](./configuration-reference.md) lists its fields.
 
 The native tree under `host/` owns Models, Agents, Projects, extensions, Skills, MCP servers, and execution policy. Claw embeds the published Harness UI App and uses its validation and configuration mutations; it has no second Profile catalog. `host_configuration` and `host_data` can select alternate paths, resolved relative to the Instance unless absolute. Back up those paths if they are outside the Instance.
 
@@ -17,6 +17,18 @@ a13n-claw config read --path agents/claw.yaml
 ```
 
 `path` and `show` read local product settings. Other configuration commands use the running service. API requests use `--url`, `CLAW_URL`, or `http://127.0.0.1:8080`; authentication reads `--token-file` or the selected root's `operator.token`. An explicitly selected URL receives that token, so select only a trusted endpoint. Redirects and automatic request retries are disabled; network failure never invokes an offline fallback.
+
+## Product configuration edits
+
+```bash
+a13n-claw product-config show
+a13n-claw product-config write --file candidate-claw.yaml --expected-digest SOURCE_DIGEST
+a13n-claw product-config reload --expected-digest SAVED_DIGEST
+```
+
+`show` returns exact source, its digest, the accepted digest, and the accepted live snapshot. `write` validates references and atomically saves the UTF-8 file without applying it. `reload` accepts the selected saved digest, replaces listeners, and waits for already admitted sends before closing old clients. A conflict preserves the live generation; refetch and merge your draft. Direct external file edits require explicit reload and coordination with service writers.
+
+Mode, Main Project, Host locations, and Console serving are startup settings. A connection changing platform/account identity needs a new ID. Retained per-Channel Threads keep their Project. Native resource edits and product edits are separate transactions; provision referenced Projects first.
 
 ## Native configuration edits
 
@@ -44,7 +56,7 @@ authentication:
   env: CLAW_MODEL_API_KEY
 ```
 
-Keep secrets in credential environment references or native Host authentication facilities, never in configuration text. The generated `agent-claw` selects `ClawMessaging`, `dynamic_environment`, and `skills`. Removing `ClawMessaging` blocks product dispatch with a visible reason. Use native Agent/environment policy for tool permissions, model settings, and limits.
+Keep secrets in credential environment references or native Host authentication facilities, never in configuration text. The generated `agent-claw` selects `ClawMessaging`, `dynamic_environment`, and `skills`. Removing `ClawMessaging` blocks product dispatch with a visible reason. Use native Agent/environment policy for tool permissions, model settings, and limits. The pinned Host 0.13 public Model route does not support `openai-responses-ws`; Claw does not silently substitute HTTP Responses. Deployments requiring that transport need a separately validated supported Host path before cutover.
 
 ## Command reference
 
@@ -54,7 +66,12 @@ All commands support `--help`. Results are JSON and rejected commands exit nonze
 | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `init`                                                   | Create fresh files with `--workspace`, optional `--model`, `--model-key-env`, `--model-base-url` |
 | `serve`                                                  | Open one Host, adapters, and API; `--host`, `--port`, `--no-console`                             |
-| `status`                                                 | Instance, Main, adapter state, reconciliation errors                                             |
+| `status`, `diagnostics`                                  | Instance, adapters, errors; content-free aggregate diagnostic counts                             |
+| `product-config`                                         | `show`, `write`, `reload` with digest preconditions                                              |
+| `schedules`                                              | `list`, `reload`, `put`, `remove`, `trigger`                                                     |
+| `occurrences`                                            | `list`, `show`, `cancel`, `resolve`, `attach`                                                    |
+| `retention`                                              | Preview aged settled content; `--apply` prunes one bounded batch                                 |
+| `backup`, `restore`                                      | Offline checksummed snapshots with `--acknowledge-external-state`                                |
 | `config`                                                 | `path`, `show`, `sources`, `read`, `write`, `reload`                                             |
 | `threads`                                                | `list`, `create`, `show`, `history`, `send`, `active`, `decisions`, `answer`                     |
 | `operations`                                             | `show`, `steer --text`, `cancel` for an exact receipt                                            |

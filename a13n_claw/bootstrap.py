@@ -24,6 +24,8 @@ async def initialize(
     model_key_env: str = "CLAW_MODEL_API_KEY",
     model_base_url: str | None = None,
     integrations: HarnessUiIntegrations | None = None,
+    executor_endpoint: str | None = None,
+    executor_workspace: str = "/workspace",
 ) -> ClawSettings:
     """Create reviewed starter files once; never replace an existing operator tree."""
     root = root.expanduser().resolve()
@@ -97,6 +99,24 @@ async def initialize(
                 relative_path="agents/claw.yaml",
                 request=ResourceMutationRequest(content=yaml.safe_dump(agent)),
             )
+            project_defaults: dict = {"agent": "agent-claw"}
+            if executor_endpoint is not None:
+                for path, document in executor_resources(executor_endpoint).items():
+                    await host.mutate_configuration(
+                        relative_path=path,
+                        request=ResourceMutationRequest(content=yaml.safe_dump(document)),
+                    )
+                project_defaults.update(
+                    environment_profile="environment-claw-files",
+                    environment_bindings=[
+                        {
+                            "device_id": "device-claw-executor",
+                            "alias": "executor",
+                            "working_directory": executor_workspace,
+                        }
+                    ],
+                    default_environment="executor",
+                )
             await host.mutate_configuration(
                 relative_path="projects/main.yaml",
                 request=ResourceMutationRequest(
@@ -106,8 +126,8 @@ async def initialize(
                             "kind": "project",
                             "id": settings.main_project_id,
                             "name": "Claw Main",
-                            "roots": [{"path": str(workspace)}],
-                            "defaults": {"agent": "agent-claw"},
+                            "roots": [] if executor_endpoint else [{"path": str(workspace)}],
+                            "defaults": project_defaults,
                         }
                     )
                 ),
@@ -122,6 +142,39 @@ async def initialize(
         return settings
     finally:
         lease.close()
+
+
+def executor_resources(endpoint: str) -> dict[str, dict]:
+    """Native Device and local file profile for a Compose-managed executor.
+
+    The custom native profile keeps cross-mount copy in Host 0.13's tool surface.
+    It retains host-account authority for local Thread files; the Device boundary
+    is independently enforced by Envd. No tool allowlist discards other Capabilities.
+    """
+    return {
+        "extensions/claw-files.yaml": {
+            "schema_version": "1",
+            "kind": "environment_profile",
+            "id": "environment-claw-files",
+            "name": "Claw local files (host authority)",
+            "provider_key": "direct_local",
+            "provider_configuration": {},
+            "adapter_key": "a13n.native-project-root",
+            "adapter_configuration": {},
+        },
+        "devices/executor.yaml": {
+            "schema_version": "1",
+            "kind": "device",
+            "id": "device-claw-executor",
+            "name": "Persistent Docker executor",
+            "device_id": "claw-executor",
+            "transport": {
+                "kind": "http",
+                "configuration": {"endpoint": endpoint, "allow_plaintext_private_link": True},
+            },
+            "authentication": {"kind": "api_key", "env": "CLAW_EXECUTOR_TOKEN"},
+        },
+    }
 
 
 def _create_yaml(path: Path, document: dict) -> None:

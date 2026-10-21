@@ -1,7 +1,7 @@
 """Cancellation boundaries for work that must settle before releasing ownership."""
 
 import asyncio
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 
 
 async def settle_on_cancel[T](work: Awaitable[T]) -> T:
@@ -17,3 +17,7 @@ async def settle_on_cancel[T](work: Awaitable[T]) -> T:
     if cancelled is not None:
         raise cancelled
     return result
+
+
+async def database[T, **P](method: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
+    return await settle_on_cancel(asyncio.to_thread(method, *args, **kwargs))

@@ -28,6 +28,14 @@ Claw does not copy container IDs into a second target catalog, implement its own
 
 Unsupported management actions are unavailable rather than approximated with direct Docker or filesystem commands. A required unavailable environment blocks the operation; Claw never falls back to host-account execution. Historical selected state and current readiness remain distinct in product views.
 
+## Persistent Docker Deployment
+
+The supplied Compose deployment owns a long-lived authenticated Envd executor and a visible browser alongside the Claw service. A native HTTP Device and remote-only Host Project select that executor through public Host configuration. Compose owns container allocation and persistent workspace/home/cache/browser/download volumes; the Host owns Run access, native file transfer, process controls, and captured selections. Neither Claw nor Compose recreates a Host-private provider state machine.
+
+Thread attachments and results cross the Host/Device boundary through native copy operations. Guest shell paths and logical Environment file paths remain distinct. Missing remote resources fail explicitly without local fallback. Browser automation and human takeover share one persistent profile with exclusive browser ownership.
+
+Host Docker socket access is an explicit deployment option granting host-level Docker authority. Equal host/guest workspace paths preserve nested bind-mount meaning, and the executor uses the socket's numeric group. It is a trusted-workload option, not a sandbox boundary. Stopping a Run or replacing a service does not delete persistent files or reverse side effects.
+
 ## Data and Access Boundaries
 
 Host configuration, credentials, saved continuation, Thread files, memory, Claw business state, and working directories have separate owners and lifetimes. A workspace selection does not automatically expose protected application directories. Attachments enter Host execution through supported file/input operations or bounded Claw Inbox reads with explicit provenance and authorization, not by mounting the entire product store.

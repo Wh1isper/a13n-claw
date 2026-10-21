@@ -4,7 +4,7 @@
 
 Prefer direct flows, cohesive modules, and explicit ownership. Fix causes at their owner instead of adding overlapping wrappers. Add abstractions, persistence, infrastructure, and dependencies only when an implemented feature requires them. Read affected tests and specifications before editing.
 
-The backend embeds one published Harness UI App, an authenticated operator API, Lark connections, and durable SQLite business state. The runtime frontend is a Hello World placeholder. Keep readiness specific: constructing a client or starting the dispatcher does not prove provider or MCP connectivity. Test fixtures must stay outside production entry points.
+The backend embeds one published Harness UI App, an authenticated operator API, Lark/GitHub connections, isolated schedules, and durable SQLite business state. The runtime frontend is a Hello World placeholder. Keep readiness specific: constructing a client or starting the dispatcher does not prove provider or MCP connectivity. Test fixtures must stay outside production entry points.
 
 ## Python
 

@@ -14,6 +14,7 @@ import logging
 import os
 import time
 from contextlib import suppress
+from typing import Any
 from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
@@ -59,10 +60,20 @@ def normalize_message(
     text = ""
     if kind == "text":
         text = content["text"]
-    elif kind in {"image", "file"}:
+    elif kind in {"image", "file", "audio", "media"}:
         key = content["image_key" if kind == "image" else "file_key"]
+        names = {
+            "image": "image.png",
+            "file": "attachment.bin",
+            "audio": "audio.ogg",
+            "media": "video.mp4",
+        }
         attachments.append(
-            AttachmentRef(key=key, name=content.get("file_name", "image.png"), kind=kind)
+            AttachmentRef(
+                key=key,
+                name=content.get("file_name", names[kind]),
+                kind="image" if kind == "image" else "file",
+            )
         )
     elif kind == "post":
         post = content
@@ -80,6 +91,8 @@ def normalize_message(
             for item in row:
                 if item.get("tag") in {"text", "a", "at"}:
                     parts.append(item.get("text", item.get("user_name", "")))
+                    if item.get("tag") == "a" and item.get("href"):
+                        parts.append(item["href"])
                 elif item.get("tag") == "img":
                     attachments.append(
                         AttachmentRef(key=item["image_key"], name="image.png", kind="image")
@@ -169,7 +182,7 @@ class LarkAdapter:
             token = await self._access_token()
         except Exception:
             return SendResult("not_sent", "Lark authentication unavailable")
-        body = {
+        body: dict[str, Any] = {
             "msg_type": "text",
             "content": json.dumps({"text": message.text}, ensure_ascii=False),
             "uuid": hashlib.sha256(request_id.encode()).hexdigest()[:32],
@@ -193,8 +206,15 @@ class LarkAdapter:
                 body["content"] = json.dumps({"file_key": key})
             except Exception:
                 return SendResult("not_sent", "File upload unavailable; no message submitted")
-        if destination.reply_to:
+        if message.reaction is not None:
+            if not destination.reply_to:
+                return SendResult("not_sent", "Reactions require an original message")
+            path = f"/open-apis/im/v1/messages/{quote(destination.reply_to, safe='')}/reactions"
+            body = {"reaction_type": {"emoji_type": message.reaction}}
+            params = None
+        elif destination.reply_to:
             path = f"/open-apis/im/v1/messages/{quote(destination.reply_to, safe='')}/reply"
+            body["reply_in_thread"] = True
             params = None
         else:
             path = "/open-apis/im/v1/messages"
@@ -211,7 +231,9 @@ class LarkAdapter:
                 return SendResult("unknown", "Lark returned a server error after submission")
             data = response.json()
             if response.is_success and data.get("code") == 0:
-                message_id = data.get("data", {}).get("message_id")
+                message_id = data.get("data", {}).get(
+                    "reaction_id" if message.reaction is not None else "message_id"
+                )
                 if isinstance(message_id, str) and message_id:
                     return SendResult("sent", message_id)
                 return SendResult("unknown", "Successful response omitted message identity")

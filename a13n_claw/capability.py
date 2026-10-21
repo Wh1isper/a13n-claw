@@ -15,6 +15,7 @@ from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.toolsets import FunctionToolset
 
+from a13n_claw.schedule_models import ScheduleTask
 from a13n_claw.service import ClawService
 
 
@@ -37,6 +38,7 @@ def messaging_integrations(service: ClawService | None = None) -> HarnessUiInteg
                     claw_inbox_settle,
                     claw_send_message,
                     claw_send_file,
+                    claw_schedules,
                 ],
                 id="claw-messaging",
             )
@@ -165,6 +167,38 @@ def messaging_integrations(service: ClawService | None = None) -> HarnessUiInteg
                 },
             )
         except (ValueError, OSError, EnvironmentError) as exc:
+            return {"error": str(exc)}
+
+    async def claw_schedules(
+        ctx: RunContext[AgentContext],
+        item_id: str,
+        action: Literal["list", "put", "remove", "trigger"],
+        schedule_id: str | None = None,
+        task: ScheduleTask | None = None,
+        expected_digest: str | None = None,
+        request_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Manage recurring or one-shot work explicitly requested by a Channel operator.
+
+        List first to get the catalog digest; put/remove require that expected_digest.
+        task specifies name, prompt, timing (cron/interval/once), notification and policies.
+        Omit destination: Project, actor and reply destination come from the original Inbox.
+        Only schedules authored by this sender in this source are visible/editable.
+        Trigger uses a stable request_key. Execution is a fresh native Host root; status and
+        recovery are available in the operator occurrences CLI/API.
+        """
+        try:
+            return await bound().scheduler.manage(
+                ctx.deps.thread_id,
+                ctx.deps.run_id,
+                item_id,
+                action,
+                schedule_id,
+                task,
+                expected_digest,
+                request_key,
+            )
+        except ValueError as exc:
             return {"error": str(exc)}
 
     return HarnessUiIntegrations(capabilities={"ClawMessaging": ClawMessaging})

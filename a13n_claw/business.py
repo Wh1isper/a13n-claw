@@ -141,7 +141,8 @@ class BusinessStore:
         return self.rows(
             "SELECT * FROM inbox WHERE disposition='pending' AND blocked IS NULL "
             "AND next_check<=? AND NOT EXISTS (SELECT 1 FROM deliveries d "
-            "WHERE d.item_id=inbox.id AND d.status IN ('sending','unknown')) "
+            "WHERE d.item_id=inbox.id AND d.status IN ('sending','unknown') "
+            "AND NOT EXISTS (SELECT 1 FROM feedback_deliveries f WHERE f.delivery_id=d.id)) "
             "ORDER BY created,id LIMIT ?",
             (time.time(), limit),
         )
@@ -169,6 +170,39 @@ class BusinessStore:
                 db.execute("INSERT INTO attempt_items VALUES(?,?)", (attempt_id, item_id))
                 db.execute("UPDATE inbox SET blocked=? WHERE id=?", (attempt_id, item_id))
         return attempt_id
+
+    def begin_continuation(
+        self, thread_id: str, control_id: str, target_id: str
+    ) -> tuple[str, str]:
+        """Retain control and original-task intent in one transaction before Host admission."""
+        control_attempt, followup = identifier("dispatch"), identifier("dispatch")
+        with self.transaction() as db:
+            for item_id, allowed in (
+                (control_id, {"pending"}),
+                (target_id, {"pending", "handled"}),
+            ):
+                row = db.execute("SELECT * FROM inbox WHERE id=?", (item_id,)).fetchone()
+                if (
+                    row is None
+                    or row["body"] is None
+                    or row["blocked"] is not None
+                    or row["disposition"] not in allowed
+                ):
+                    raise ValueError("Inbox item requires reconciliation before continuation")
+            for attempt_id, kind, item_id in (
+                (control_attempt, "control", control_id),
+                (followup, "continue", target_id),
+            ):
+                db.execute(
+                    "INSERT INTO attempts VALUES(?,?,?,'calling',NULL,'',?)",
+                    (attempt_id, thread_id, kind, time.time()),
+                )
+                db.execute("INSERT INTO attempt_items VALUES(?,?)", (attempt_id, item_id))
+                db.execute(
+                    "UPDATE inbox SET blocked=?,disposition='pending',version=version+1 WHERE id=?",
+                    (attempt_id, item_id),
+                )
+        return control_attempt, followup
 
     def finish_attempt(
         self,
@@ -233,7 +267,9 @@ class BusinessStore:
         if not reason.strip():
             raise ValueError("Disposition requires a reason")
         with self.transaction() as db:
-            self._readable(db, item_id, receipt_id)
+            row = self._readable(db, item_id, receipt_id)
+            if disposition in {"pending", "deferred"} and row["body"] is None:
+                raise ValueError("Inbox content was filtered or pruned; submit a new message")
             cursor = db.execute(
                 "UPDATE inbox SET disposition=?,reason=?,version=version+1,"
                 "next_check=?,dependency=? "
@@ -298,6 +334,8 @@ class BusinessStore:
         thread_id: str | None,
         item_id: str | None,
         body: dict,
+        feedback_kind: str | None = None,
+        continuation_id: str | None = None,
     ) -> dict[str, Any]:
         with self.transaction() as db:
             old = db.execute(
@@ -333,8 +371,29 @@ class BusinessStore:
                     time.time(),
                 ),
             )
+            if feedback_kind is not None:
+                db.execute(
+                    "INSERT INTO feedback_deliveries VALUES(?,?,?)",
+                    (delivery_id, feedback_kind, continuation_id),
+                )
             return dict(
                 db.execute("SELECT * FROM deliveries WHERE id=?", (delivery_id,)).fetchone()
+            )
+
+    def settle_routed_reply(self, receipt_id: str) -> None:
+        """A retained policy-selected final settles its routed inputs, independently of sending."""
+        with self.transaction() as db:
+            if not db.execute(
+                "SELECT 1 FROM deliveries WHERE request_key=?", (f"claw:final:{receipt_id}",)
+            ).fetchone():
+                return
+            db.execute(
+                "UPDATE inbox SET disposition='handled',version=version+1,"
+                "reason='Final result retained for delivery' WHERE disposition='pending' "
+                "AND mode!='one_thread' AND id IN (SELECT ai.item_id FROM attempt_items ai "
+                "JOIN attempts a ON a.id=ai.attempt_id WHERE a.receipt_id=? "
+                "AND a.kind IN ('submit','steer','continue'))",
+                (receipt_id,),
             )
 
     def complete_control(self, item_id: str, text: str, attempt_id: str | None = None) -> None:

@@ -15,6 +15,23 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
 
+def test_operator_cli_does_not_import_server_runtime(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import a13n_claw.cli; "
+            "assert 'a13n_harness_ui.app' not in sys.modules; "
+            "assert 'lark_oapi' not in sys.modules",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def free_port():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -163,7 +180,37 @@ def test_cli_provider_request_saved_history_and_restart(tmp_path):
             assert operation["status"] == "completed", operation
             assert "Loopback provider reply" in json.dumps(cli("threads", "history", main))
             assert len(calls) == 1
+            candidate = tmp_path / "schedule.json"
+            candidate.write_text(
+                json.dumps(
+                    {
+                        "name": "Periodic workspace check",
+                        "prompt": "Scheduled loopback input",
+                        "project_id": "project-claw-main",
+                        "notification": "never",
+                        "timing": {"kind": "interval", "seconds": 86400},
+                    }
+                )
+            )
+            catalog = cli(
+                "schedules", "put", "check", "--file", str(candidate), "--expected-digest", "new"
+            )
+            assert "check" in catalog["catalog"]["schedules"]
+            occurrence = cli("schedules", "trigger", "check", "--request-key", "cli-fire")
+            repeated = cli("schedules", "trigger", "check", "--request-key", "cli-fire")
+            assert occurrence["id"] == repeated["id"]
+            deadline = time.monotonic() + 20
+            while True:
+                occurrence = cli("occurrences", "show", occurrence["id"])
+                if occurrence["status"] == "completed":
+                    break
+                assert time.monotonic() < deadline, occurrence
+                time.sleep(0.05)
+            assert occurrence["result"] == "Loopback provider reply"
+            assert len(calls) == 2
         with running():
             assert cli("status")["instance"]["main_thread_id"] == main
             assert "Loopback provider reply" in json.dumps(cli("threads", "history", main))
-            assert len(calls) == 1
+            assert cli("occurrences", "show", occurrence["id"])["status"] == "completed"
+            assert len(cli("occurrences", "list", "--schedule", "check")) == 1
+            assert len(calls) == 2

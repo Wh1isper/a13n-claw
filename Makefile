@@ -29,7 +29,7 @@ db-migrate: ## Generate a SQLite migration against a disposable database
 	uv run --locked python -m a13n_claw.database.generate "$(msg)"
 
 check: lint typecheck deps-check docs-check console-check ## Run static checks
-check-all: check test build artifact-check docs-build workflow-check image-check ## Run the complete CI-equivalent gates (Docker for workflows)
+check-all: check test build artifact-check docs-build workflow-check image-check executor-check ## Run the complete CI-equivalent gates (Docker for workflows)
 console-install: ## Install locked console dependencies
 	pnpm --dir console install --frozen-lockfile
 console-check: ## Type-check and format-check the console
@@ -61,3 +61,8 @@ image-check: build ## Build and smoke-test the non-root runtime image
 	docker build -f deploy/docker/Dockerfile -t a13n-claw:check .
 	docker run --rm a13n-claw:check --version
 	uv run --locked python scripts/check_image.py
+
+.PHONY: executor-check
+executor-check: image-check ## Build and test persistent executor, browser, and native Host integration
+	docker build -f deploy/docker/Executor.Dockerfile -t a13n-claw-executor:local .
+	CLAW_EXECUTOR_TEST=1 uv run --locked pytest tests/test_executor.py -q

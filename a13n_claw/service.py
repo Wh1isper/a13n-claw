@@ -8,7 +8,6 @@ import hashlib
 import json
 import logging
 import time
-from collections.abc import Callable
 from contextlib import suppress
 from typing import Any, Literal
 
@@ -18,19 +17,18 @@ from a13n_harness_ui.surfaces import NewThreadDefaults
 from a13n_harness_ui.thread_files import AttachmentUpload
 
 from a13n_claw import controls
-from a13n_claw.async_utils import settle_on_cancel
+from a13n_claw.async_utils import database as database
 from a13n_claw.business import BusinessStore, encode, identifier
-from a13n_claw.settings import ChannelBinding, ClawSettings
+from a13n_claw.feedback import Feedback
+from a13n_claw.product_configuration import ProductConfiguration
+from a13n_claw.scheduler import Scheduler
+from a13n_claw.settings import ChannelBinding, ClawSettings, GitHubConnection, connection_identity
 from a13n_claw.transport import Destination, InboundMessage, MessagingAdapter, OutboundMessage
 
 logger = logging.getLogger("a13n_claw.service")
 _TERMINAL = {"completed", "failed", "cancelled", "suspended"}
 # Only explicit pre-admission conflicts are safe to retry. Other errors can follow admission.
 _REJECTED = {"thread_run_active", "app_stopping", "thread_touch_failed"}
-
-
-async def database[T, **P](method: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
-    return await settle_on_cancel(asyncio.to_thread(method, *args, **kwargs))
 
 
 class ClawService:
@@ -43,10 +41,16 @@ class ClawService:
         self._host: HarnessUiApp | None = None
         self.lock = asyncio.Lock()
         self.intake_lock = asyncio.Lock()
+        self.active_sends = 0
+        self.sends_idle = asyncio.Event()
+        self.sends_idle.set()
         self.wake = asyncio.Event()
         self.stopping = False
         self.last_error: str | None = None
         self.connection_errors: dict[str, str] = {}
+        self.scheduler = Scheduler(self, store.path.parent / "schedules.yaml")
+        self.feedback = Feedback(self)
+        self.configuration = ProductConfiguration(self)
 
     @property
     def host(self) -> HarnessUiApp:
@@ -58,27 +62,35 @@ class ClawService:
         self._host = host
 
     def binding(self, message: InboundMessage) -> tuple[str, ChannelBinding] | None:
+        root = None
         for key, binding in self.settings.channels.items():
-            if (binding.connection, binding.chat_id, binding.topic_id) == (
-                message.connection,
-                message.chat_id,
-                message.topic_id,
-            ):
+            if (binding.connection, binding.chat_id) != (message.connection, message.chat_id):
+                continue
+            # An explicit topic binding, including a disabled one, always wins.
+            if binding.topic_id == message.topic_id:
                 return key, binding
-        return None
+            if message.platform == "lark" and binding.topic_id is None:
+                root = key, binding
+        return root
 
     def authorize_message(self, message: InboundMessage, channel_id: str) -> ChannelBinding:
         binding = self.settings.channels.get(channel_id)
         connection = self.settings.connections.get(message.connection)
         if connection is None or not connection.enabled or binding is None or not binding.enabled:
             raise ValueError("Connection or Channel is disabled or unavailable")
-        if (binding.connection, binding.chat_id, binding.topic_id) != (
-            message.connection,
-            message.chat_id,
-            message.topic_id,
-        ) or message.platform != connection.platform:
+        matched = self.binding(message)
+        if matched is None or matched[0] != channel_id or message.platform != connection.platform:
             raise ValueError("Retained source no longer matches the Channel binding")
-        if message.sender_id not in binding.allowed_senders:
+        if isinstance(connection, GitHubConnection) and (
+            message.account_id != connection.account_login.casefold()
+        ):
+            raise ValueError("Retained GitHub account identity changed")
+        allowed = (
+            message.sender_id.casefold() in {s.casefold() for s in binding.allowed_senders}
+            if message.platform == "github"
+            else message.sender_id in binding.allowed_senders
+        )
+        if not allowed:
             raise ValueError("Sender is not authorized")
         return binding
 
@@ -124,6 +136,9 @@ class ClawService:
             if eligible:
                 body = {
                     "message": message.model_dump(mode="json"),
+                    "connection_identity": connection_identity(
+                        self.settings.connections[message.connection]
+                    ),
                     "files": [],
                     "unavailable": list(message.unavailable),
                     "attachments_pending": bool(message.attachments)
@@ -131,7 +146,7 @@ class ClawService:
                 }
                 if controls.is_control(message.text):
                     body["control"] = message.text.removeprefix("/claw").strip()
-            await database(
+            item = await database(
                 self.store.accept,
                 connection=message.connection,
                 event_id=message.event_id,
@@ -148,6 +163,8 @@ class ClawService:
                 body=body,
                 reason=reason,
             )
+            if eligible:
+                await self.feedback.status(item, "retained")
             self.wake.set()
 
     async def collect_attachments(self, item: dict[str, Any]) -> None:
@@ -180,7 +197,9 @@ class ClawService:
         await database(self.store.update_body, item["id"], body)
         item["body"] = encode(body)
 
-    async def ensure_target(self, key: str, project_id: str) -> str:
+    async def ensure_target(
+        self, key: str, project_id: str, *, agent_id: str | None = None, model_id: str | None = None
+    ) -> str:
         target = await database(self.store.target, key)
         if target is None or target["status"] == "retry":
             target = await database(self.store.begin_target, key, project_id)
@@ -188,7 +207,9 @@ class ClawService:
                 await self.host.create_thread(
                     thread_id=target["thread_id"],
                     title="Claw Main" if key == "main" else key,
-                    defaults=NewThreadDefaults(project_id=project_id),
+                    defaults=NewThreadDefaults(
+                        project_id=project_id, agent_id=agent_id, default_model_id=model_id
+                    ),
                     coordinator=key == "main",
                 )
             except BaseException:
@@ -235,6 +256,12 @@ class ClawService:
     ):
         """Submit once using native semantics; retain Main attention, not a replay queue."""
         async with self.lock:
+            if receipt_id is None:
+                occurrence = await self.scheduler.waiting(thread_id)
+                if occurrence is not None:
+                    return await self.scheduler.continue_work(
+                        thread_id, occurrence, prompt=text, attachment_ids=attachment_ids
+                    )
             detail = await self.host.get_thread(thread_id)
             instance = await database(self.store.instance)
             attention = None
@@ -306,18 +333,24 @@ class ClawService:
 
     def source(self, item: dict[str, Any]) -> tuple[InboundMessage, dict[str, Any]]:
         if item["body"] is None:
-            raise ValueError("Ignored events have no retained body")
+            raise ValueError("Inbox content was filtered or pruned; submit a new message")
         body = json.loads(item["body"])
         if "operator_attention" in body:
             raise ValueError("Operator attention has no external messaging destination")
         message = InboundMessage.model_validate(body["message"])
         self.authorize_message(message, item["channel_id"])
+        if "connection_identity" in body and body["connection_identity"] != connection_identity(
+            self.settings.connections[message.connection]
+        ):
+            raise ValueError("Retained connection identity changed")
         return message, body
 
     async def _dispatch(self, thread_id: str, items: list[dict[str, Any]]) -> None:
         detail = await self.host.get_thread(thread_id)
         if detail.deferred_requests:
             for item in items:
+                await self.feedback.status(item, "suspended")
+                await self.feedback.decisions(item)
                 await database(
                     self.store.delay,
                     item["id"],
@@ -425,6 +458,8 @@ class ClawService:
             raise
         else:
             await database(self.store.finish_attempt, attempt, "accepted", receipt_id=receipt_id)
+            for item in items:
+                await self.feedback.status(item, "admitted")
 
     async def reconcile(self) -> None:
         """Serialize product calls only. Native collaboration keeps its own Host admission."""
@@ -433,11 +468,17 @@ class ClawService:
                 return
             await self._observe_attempts()
             await self._dependencies()
+            try:
+                await self.scheduler.reconcile()
+            except Exception as exc:
+                self.scheduler.error = type(exc).__name__
+                logger.error("Schedule reconciliation failed (%s)", type(exc).__name__)
             rows = await database(self.store.actionable)
             grouped: dict[str, list[dict[str, Any]]] = {}
             for item in rows:
                 try:
                     body = await self.authorized_body(item)
+                    await self.feedback.status(item, "retained")
                     if "control" in body:
                         await controls.execute(self, item)
                         continue
@@ -454,11 +495,13 @@ class ClawService:
                     )
                     thread_id = await self.ensure_target(key, item["project_id"])
                     await database(self.store.assign_thread, item["id"], thread_id)
+                    item["thread_id"] = thread_id
                     grouped.setdefault(thread_id, []).append(item)
                 except (ValueError, HarnessUiError) as exc:
                     await database(
                         self.store.delay, item["id"], str(exc), self.settings.retry_seconds
                     )
+                    await self.feedback.status(item, "blocked")
             for thread_id, items in grouped.items():
                 selected = items if self.settings.mode == "one_thread" else items[:1]
                 try:
@@ -502,6 +545,7 @@ class ClawService:
             except (HarnessUiError, ValueError):
                 status = None
             if status is None or status == "unknown":
+                await self.feedback.observe(attempt, "unknown")
                 await database(
                     self.store.finish_attempt,
                     attempt["id"],
@@ -510,7 +554,10 @@ class ClawService:
                 )
                 continue
             if status not in _TERMINAL:
+                if status == "running":
+                    await self.feedback.observe(attempt, "running")
                 continue
+            await self.feedback.observe(attempt, status)
             # The exact operation is observable. Unsettled One Thread work remains an obligation.
             # Routed replies are explicit tools too: no arbitrary final output is broadcast.
             await database(
@@ -618,7 +665,8 @@ class ClawService:
                     unknown = await database(
                         self.store.rows,
                         "SELECT id FROM deliveries WHERE item_id=? "
-                        "AND status IN ('sending','unknown')",
+                        "AND status IN ('sending','unknown') AND NOT EXISTS "
+                        "(SELECT 1 FROM feedback_deliveries f WHERE f.delivery_id=deliveries.id)",
                         (row["id"],),
                     )
                     if not unknown:
@@ -693,6 +741,8 @@ class ClawService:
         *,
         file: dict[str, str] | None = None,
     ) -> dict[str, Any]:
+        if request_key.startswith("claw:"):
+            raise ValueError("Delivery request prefix is reserved for service interactions")
         body = OutboundMessage.model_validate({"text": text, "file": file})
         async with self.lock:
             receipt = await self._caller(thread_id, run_id)
@@ -700,7 +750,9 @@ class ClawService:
             message, _ = self.source(item)
             unknown = await database(
                 self.store.rows,
-                "SELECT id FROM deliveries WHERE item_id=? AND status='unknown' AND request_key!=?",
+                "SELECT id FROM deliveries WHERE item_id=? AND status='unknown' AND request_key!=? "
+                "AND NOT EXISTS (SELECT 1 FROM feedback_deliveries f "
+                "WHERE f.delivery_id=deliveries.id)",
                 (item_id, request_key),
             )
             if unknown:
@@ -725,42 +777,56 @@ class ClawService:
             row = await database(self.store.delivery, delivery_id)
             if row["status"] != "pending":
                 return row
-            item = await database(self.store.item, row["item_id"])
             try:
-                message, source = self.source(item)
-                if (
-                    "control" in source
-                    and message.sender_id
-                    not in self.settings.channels[item["channel_id"]].operators
-                ):
-                    raise ValueError("Control disclosure grant was revoked")
-                destination = Destination.model_validate_json(row["destination"])
-                if (
-                    destination.chat_id != message.chat_id
-                    or destination.reply_to != message.message_id
-                ):
-                    raise ValueError("Retained destination differs from original source")
-                adapter = self.adapters[message.connection]
-            except (ValueError, KeyError):
+                if row["item_id"] is None:
+                    connection, destination = await self.scheduler.delivery_destination(row)
+                else:
+                    item = await database(self.store.item, row["item_id"])
+                    message, source = self.source(item)
+                    await self.feedback.authorize_delivery(row, item)
+                    if (
+                        "control" in source
+                        and message.sender_id
+                        not in self.settings.channels[item["channel_id"]].operators
+                    ):
+                        raise ValueError("Control disclosure grant was revoked")
+                    destination = Destination.model_validate_json(row["destination"])
+                    if (
+                        destination.chat_id != message.chat_id
+                        or destination.reply_to != message.message_id
+                    ):
+                        raise ValueError("Retained destination differs from original source")
+                    connection = message.connection
+                adapter = self.adapters[connection]
+            except (ValueError, KeyError, HarnessUiError):
                 return {**row, "blocked": "Current destination authority is unavailable"}
             if not await database(self.store.claim_delivery, delivery_id):
                 return await database(self.store.delivery, delivery_id)
+            self.active_sends += 1
+            self.sends_idle.clear()
+        # Sending does not hold the product lock. Reload joins this admitted generation
+        # before closing its clients; duplicate requests can still inspect the sending row.
         try:
-            result = await adapter.send(
-                destination,
-                OutboundMessage.model_validate_json(row["body"]),
-                request_id=delivery_id,
-            )
-        except BaseException:
-            await database(
-                self.store.finish_delivery,
-                delivery_id,
-                "unknown",
-                "Send returned no conclusive response",
-            )
-            raise
-        await database(self.store.finish_delivery, delivery_id, result.status, result.evidence)
-        return await database(self.store.delivery, delivery_id)
+            try:
+                result = await adapter.send(
+                    destination,
+                    OutboundMessage.model_validate_json(row["body"]),
+                    request_id=delivery_id,
+                )
+            except BaseException:
+                await database(
+                    self.store.finish_delivery,
+                    delivery_id,
+                    "unknown",
+                    "Send returned no conclusive response",
+                )
+                raise
+            await database(self.store.finish_delivery, delivery_id, result.status, result.evidence)
+            return await database(self.store.delivery, delivery_id)
+        finally:
+            self.active_sends -= 1
+            if self.active_sends == 0:
+                self.sends_idle.set()
 
     async def run(self) -> None:
         while not self.stopping:

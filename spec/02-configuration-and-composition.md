@@ -13,7 +13,7 @@ Harness UI owns Agent configuration and execution composition. Claw uses its nat
 | Memory and organization settings                                                                              | Harness UI                 |
 | Listener and frontend settings, selected Host configuration/data locations                                    | Claw process bootstrap     |
 | Messaging connections, sender filters, Channel bindings, conversation mode, and delivery policy               | Claw product configuration |
-| Schedules, heartbeat definitions, and workflow policy                                                         | Claw automation            |
+| Schedules and heartbeat definitions                                                                           | Claw automation            |
 
 The operator explicitly selects a Host configuration root and data location for the embedded Instance. Claw does not accidentally open the operator's personal Harness UI store because both applications are installed. Sharing a configuration root, and therefore its configured resources and memory scopes, is an explicit choice. The embedded store has one live owner.
 
@@ -28,6 +28,12 @@ Claw's CLI/API use supported Host operations for Host-owned settings and Claw op
 A change spanning both owners does not claim one atomic transaction. Each part reports its outcome, and affected routing remains unavailable until references resolve. Invalid or removed Host selections produce an actionable blockage rather than silent substitution. Product configuration publication validates references against an accepted Host view; use-time validation still handles later changes.
 
 Headless setup remains supported. Offline operations require exclusive Instance ownership and supported owner APIs; failed communication with a running Instance never falls back to direct database edits. Host model credentials stay in Host authentication stores; platform connection credentials remain protected Claw adapter inputs. Ordinary exports and diagnostics contain references, not secret values.
+
+## Product Publication
+
+Product YAML exposes its exact UTF-8 source, bytes digest, accepted digest, and accepted live snapshot. Saving uses a digest precondition and atomic file replacement; it does not apply the candidate. Explicit reload validates the selected digest and Host Project references before replacing adapter intake. Invalid candidates preserve the previous live configuration. Arbitrary external editors must coordinate with service writers; a digest recheck is not an operating-system compare-and-swap across unrelated writers.
+
+Reload stops old listeners, allows admitted sends to finish and retain their outcomes, then accepts the new product settings and adapters. New sends validate against the accepted settings. Changes to mode, Main Project, Host locations, or Console serving require restart rather than live publication. A different connection identity requires a new connection ID; retained source/destination identities prevent old work from being redirected. An existing per-Channel Thread cannot silently move to another Project.
 
 ## Defaults and Capture
 

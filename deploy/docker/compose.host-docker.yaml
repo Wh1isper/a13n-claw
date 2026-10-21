@@ -1,0 +1,19 @@
+# Explicit opt-in: the Docker socket grants host-level Docker authority.
+# Use a pre-created host directory owned by the executor UID/GID (1000:1000).
+# Equal host/container paths keep nested `docker run -v "$PWD":...` correct.
+services:
+  executor:
+    working_dir: ${CLAW_HOST_WORKSPACE:?Set the absolute host workspace path}
+    volumes:
+      - type: bind
+        source: ${CLAW_HOST_WORKSPACE}
+        target: ${CLAW_HOST_WORKSPACE}
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+    environment:
+      A13N_ENVD_EXECUTION_GID: ${CLAW_DOCKER_GID:?Set the Docker socket group ID}

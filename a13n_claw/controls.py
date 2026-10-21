@@ -125,7 +125,19 @@ async def execute(service: ClawService, item: dict[str, Any]) -> None:
         await database(service.store.complete_control, item["id"], error)
         return
 
-    attempt = await database(service.store.begin_attempt, thread_id, "control", [item["id"]])
+    followup = None
+    try:
+        if command in {"continue", "answer"}:
+            attempt, followup = await database(
+                service.store.begin_continuation, thread_id, item["id"], target_id
+            )
+        else:
+            attempt = await database(
+                service.store.begin_attempt, thread_id, "control", [item["id"]]
+            )
+    except ValueError as exc:
+        await database(service.store.complete_control, item["id"], str(exc))
+        return
     try:
         if command == "continue":
             result = await service.host.submit_thread(
@@ -143,6 +155,13 @@ async def execute(service: ClawService, item: dict[str, Any]) -> None:
             assert response is not None
             result = await service.host.respond_decisions(thread_id=thread_id, response=response)
     except BaseException:
+        if followup is not None:
+            await database(
+                service.store.finish_attempt,
+                followup,
+                "unknown",
+                evidence="Continuation response unavailable; inspect exact Host state",
+            )
         await database(
             service.store.finish_attempt,
             attempt,
@@ -150,4 +169,8 @@ async def execute(service: ClawService, item: dict[str, Any]) -> None:
             evidence="Control returned no conclusive response; inspect the exact Host state",
         )
         raise
+    if followup is not None:
+        await database(
+            service.store.finish_attempt, followup, "accepted", receipt_id=result.receipt_id
+        )
     await database(service.store.complete_control, item["id"], result.model_dump_json(), attempt)

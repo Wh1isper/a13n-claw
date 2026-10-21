@@ -17,7 +17,8 @@ from a13n_harness_ui.thread_files import AttachmentUpload
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import Field
 
-from a13n_claw import __version__
+from a13n_claw import __version__, maintenance
+from a13n_claw.schedule_models import ScheduleCatalog, ScheduleDefinition
 from a13n_claw.service import ClawService, database
 from a13n_claw.settings import ProductModel
 
@@ -58,6 +59,20 @@ class ConfigurationWrite(ProductModel):
     expected_digest: str | None  # null means a new source
 
 
+class RetentionRequest(ProductModel):
+    older_than_days: int = Field(ge=1)
+    apply: bool = False
+
+
+class ProductWrite(ProductModel):
+    content: str
+    expected_digest: str
+
+
+class ProductReload(ProductModel):
+    expected_digest: str
+
+
 class AttemptResolution(ProductModel):
     action: Literal["retry", "settle"]
     evidence: str = Field(min_length=1)
@@ -87,6 +102,7 @@ async def status(app: Application):
         "version": __version__,
         "instance": await database(app.store.instance),
         "reconciliation_error": app.last_error,
+        "scheduler": app.scheduler.view(),
         "connection_errors": app.connection_errors,
         "host": "open",
         "connectivity": "not_probed",
@@ -95,11 +111,25 @@ async def status(app: Application):
                 "platform": config.platform,
                 "enabled": config.enabled,
                 "status": app.adapters[key].status if key in app.adapters else "disabled",
-                "interactions": ["text", "files", "mentions", "commands", "decision_json"],
+                "interactions": (
+                    ["text", "files", "mentions", "commands", "decision_json"]
+                    if config.platform == "lark"
+                    else ["polling", "comments"]
+                ),
             }
             for key, config in app.settings.connections.items()
         },
     }
+
+
+@router.get("/diagnostics")
+async def diagnostics(app: Application):
+    return await maintenance.diagnostics(app)
+
+
+@router.post("/retention")
+async def retention(body: RetentionRequest, app: Application):
+    return await maintenance.retain(app, older_than_days=body.older_than_days, apply=body.apply)
 
 
 @router.get("/threads")
@@ -190,7 +220,8 @@ async def decisions(thread_id: str, app: Application, expected_continuation_id: 
 
 @router.post("/threads/{thread_id}/decisions", status_code=202)
 async def answer(thread_id: str, body: DecisionResponseBatch, app: Application):
-    return await app.host.respond_decisions(thread_id=thread_id, response=body)
+    async with app.lock:
+        return await app.scheduler.respond(thread_id, body)
 
 
 @router.get("/configuration")
@@ -227,6 +258,21 @@ async def reload_configuration(app: Application):
     async with app.lock:
         await app.host.reload_configuration()
         return await app.host.configuration_sources()
+
+
+@router.get("/product-configuration")
+async def product_configuration(app: Application):
+    return await app.configuration.view()
+
+
+@router.put("/product-configuration")
+async def write_product_configuration(body: ProductWrite, app: Application):
+    return await app.configuration.save(body.content, body.expected_digest)
+
+
+@router.post("/product-configuration/reload")
+async def reload_product_configuration(body: ProductReload, app: Application):
+    return await app.configuration.reload(body.expected_digest)
 
 
 @router.get("/projects")
@@ -348,4 +394,105 @@ async def download(thread_id: str, attachment_id: str, app: Application):
             + quote(attachment.name, safe=""),
             "Content-Security-Policy": "sandbox; default-src 'none'",
         },
+    )
+
+
+class ScheduleWrite(ProductModel):
+    definition: ScheduleDefinition | None
+    expected_digest: str | None
+
+
+class ScheduleReplace(ProductModel):
+    catalog: ScheduleCatalog
+    expected_digest: str | None
+
+
+class ScheduleTrigger(ProductModel):
+    request_key: str = Field(min_length=1, max_length=200)
+
+
+class OccurrenceResolution(ProductModel):
+    action: Literal["retry", "abandon"]
+    evidence: str = Field(min_length=1, max_length=4000)
+
+
+class OccurrenceAttach(ProductModel):
+    receipt_id: str = Field(min_length=1)
+
+
+@router.get("/schedules")
+async def schedules(app: Application):
+    return app.scheduler.view()
+
+
+@router.put("/schedules")
+async def replace_schedules(body: ScheduleReplace, app: Application):
+    async with app.lock:
+        return await app.scheduler.replace(body.catalog, body.expected_digest)
+
+
+@router.post("/schedules/reload")
+async def reload_schedules(app: Application):
+    async with app.lock:
+        return await app.scheduler.reload()
+
+
+@router.put("/schedules/{schedule_id}")
+async def put_schedule(schedule_id: str, body: ScheduleWrite, app: Application):
+    async with app.lock:
+        return await app.scheduler.put(schedule_id, body.definition, body.expected_digest)
+
+
+@router.post("/schedules/{schedule_id}/trigger", status_code=202)
+async def trigger_schedule(schedule_id: str, body: ScheduleTrigger, app: Application):
+    async with app.lock:
+        return await app.scheduler.trigger(schedule_id, body.request_key)
+
+
+@router.get("/occurrences")
+async def occurrences(
+    app: Application, schedule_id: str | None = None, limit: int = Query(default=50, ge=1, le=100)
+):
+    return await database(app.scheduler.store.list, schedule_id, limit)
+
+
+@router.get("/occurrences/{occurrence_id}")
+async def occurrence(occurrence_id: str, app: Application):
+    return await database(app.scheduler.store.get, occurrence_id)
+
+
+@router.post("/occurrences/{occurrence_id}/resolve")
+async def resolve_occurrence(occurrence_id: str, body: OccurrenceResolution, app: Application):
+    async with app.lock:
+        result = await database(
+            app.scheduler.store.resolve, occurrence_id, body.action, body.evidence
+        )
+        app.wake.set()
+        return result
+
+
+@router.post("/occurrences/{occurrence_id}/attach")
+async def attach_occurrence(occurrence_id: str, body: OccurrenceAttach, app: Application):
+    async with app.lock:
+        return await app.scheduler.attach(occurrence_id, body.receipt_id)
+
+
+@router.post("/occurrences/{occurrence_id}/cancel")
+async def cancel_occurrence(occurrence_id: str, app: Application):
+    async with app.lock:
+        return await app.scheduler.cancel(occurrence_id)
+
+
+@router.get("/github")
+async def github_status(app: Application):
+    return await database(app.store.rows, "SELECT * FROM github_poll_state ORDER BY connection")
+
+
+@router.get("/github/events")
+async def github_events(app: Application, offset: int = Query(default=0, ge=0)):
+    return await database(
+        app.store.rows,
+        "SELECT connection,event_key,notification_id,updated,next_check,state,read_status,detail "
+        "FROM github_events ORDER BY updated DESC LIMIT 100 OFFSET ?",
+        (offset,),
     )

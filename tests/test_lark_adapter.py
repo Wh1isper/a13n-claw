@@ -244,3 +244,44 @@ async def test_multipart_event_bounds_and_conflicting_fragments():
                 frame("large", 2, 1, b"a" * (11 * 1024 * 1024)), socket, unused
             )
         assert adapter._fragments == {}
+
+
+@pytest.mark.anyio
+async def test_reaction_and_threaded_reply_wire(monkeypatch):
+    monkeypatch.setenv("CLAW_LARK_APP_SECRET", "fixture-only")
+    requests = []
+
+    async def http(request):
+        if request.url.path.endswith("tenant_access_token/internal"):
+            return httpx.Response(
+                200, json={"code": 0, "tenant_access_token": "fixture", "expire": 7200}
+            )
+        requests.append(request)
+        return httpx.Response(
+            200, json={"code": 0, "data": {"reaction_id": "reaction", "message_id": "reply"}}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(http)) as client:
+        adapter = LarkAdapter(
+            "lark", LarkConnection(app_id="app", bot_open_id="bot"), client=client
+        )
+        destination = Destination(chat_id="chat", reply_to="original")
+        result = await adapter.send(destination, OutboundMessage(reaction="OnIt"), request_id="r")
+        assert result.status == "sent" and result.evidence == "reaction"
+        assert requests[-1].url.path.endswith("/messages/original/reactions")
+        assert json.loads(requests[-1].content) == {"reaction_type": {"emoji_type": "OnIt"}}
+        await adapter.send(destination, OutboundMessage(text="Result"), request_id="f")
+        assert json.loads(requests[-1].content)["reply_in_thread"] is True
+
+
+@pytest.mark.parametrize(
+    "kind,name", [("audio", "audio.ogg"), ("media", "video.mp4"), ("file", "attachment.bin")]
+)
+def test_media_messages_retain_downloadable_files(kind, name):
+    payload = event()
+    payload["event"]["message"].update(
+        message_type=kind, content=json.dumps({"file_key": "resource"})
+    )
+    message = normalize_message(payload, connection="lark", app_id="app", bot_open_id="bot")
+    assert message.attachments[0].name == name
+    assert message.attachments[0].kind == "file"

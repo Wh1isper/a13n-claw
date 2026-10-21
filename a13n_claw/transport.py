@@ -26,6 +26,7 @@ class InboundMessage(ProductModel):
     chat_id: str
     topic_id: str | None = None
     sender_id: str
+    account_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     is_group: bool = False
     mentioned: bool = False
     text: str = Field(default="", max_length=100_000)
@@ -52,11 +53,14 @@ class OutboundFile(ProductModel):
 class OutboundMessage(ProductModel):
     text: str = Field(default="", max_length=20_000)
     file: OutboundFile | None = None
+    reaction: str | None = Field(
+        default=None, min_length=1, max_length=64, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def one_content(self) -> OutboundMessage:
-        if bool(self.text) == (self.file is not None):
-            raise ValueError("Send either text or one file")
+        if sum((bool(self.text), self.file is not None, self.reaction is not None)) != 1:
+            raise ValueError("Send text, one file, or one reaction")
         return self
 
 

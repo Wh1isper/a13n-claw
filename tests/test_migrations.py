@@ -89,9 +89,10 @@ def test_generated_batch_upgrade_preserves_work_and_foreign_keys(tmp_path, monke
     metadata.tables["inbox"].c.reason.type = sa.String(4096)
     monkeypatch.setattr(schema, "metadata", metadata)
     monkeypatch.setattr(migration, "MIGRATIONS_PATH", scripts)
+    previous_count = len(list(DatabaseMigrator(store.path).history().walk_revisions()))
     DatabaseMigrator(tmp_path / "generation.sqlite3").revision("widen test reason")
     migrator = DatabaseMigrator(store.path)
-    assert len(list(migrator.history().walk_revisions())) == 2
+    assert len(list(migrator.history().walk_revisions())) == previous_count + 1
     migrator.upgrade()
     reopened = BusinessStore(store.path, ClawSettings())
     assert reopened.item(item["id"]) == before_item

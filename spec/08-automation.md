@@ -1,55 +1,49 @@
-# Automation and Business Orchestration
+# Schedules and Periodic Tasks
 
 ## Design Position
 
-Claw owns when and why business work should be requested. The embedded Host owns how Agent execution advances. Schedules, heartbeat, workflows, and product follow-up use Host operations and never instantiate another Agent loop, child operator, or durable Run scheduler.
+Claw owns scheduled business intent and its durable occurrences. The embedded Host owns Agent execution, decisions, continuation, environments, and memory. A heartbeat is an ordinary interval schedule with a bounded prompt and explicit notification policy. Workflow orchestration is outside this product scope.
 
-Automation is an additional entry into the same interaction path. Basic IM conversation, controls, and worker collaboration work without schedules or a workflow engine. Retained automation intent does not promise execution at an exact instant, continuous availability, distributed failover, or exactly-once external effects.
+Each occurrence runs in a fresh independent Host Thread under an explicitly selected Project. It is neither Main nor a managed worker, and cannot use timer provenance to acquire Main's messaging authority. This isolates scheduled conversation history while retaining the Project's native shared memory and working context. Timing is best effort within one live Instance, not distributed scheduling or exactly-once external execution.
 
 ## Definitions and Occurrences
 
-An automation definition identifies its authorizing operator, purpose, target Host context, permitted operations, timing, overlap policy, and output destinations. Automation enters Main or an independent Host root; Main delegates managed-worker tasks through native collaboration. It does not submit automated first input through a path that falsely notifies an owner of direct human work. A schedule has explicit timezone and missed-occurrence policy. A heartbeat is a bounded periodic purpose, not permission to inspect every Thread or expand tools.
+The file-owned schedule catalog has stable schedule IDs and digest-preconditioned mutations. Definitions select a prompt, Host Project and optional Agent/Model, enabled state, cron/interval/one-shot timing, timezone, overlap policy, missed-occurrence policy, and optional result destination. Host resources are resolved at admission; a schedule definition does not freeze execution composition.
 
-Each firing opportunity has a stable occurrence identity. Claw records whether it is pending, skipped, blocked, or resolved, plus any [dispatch evidence](04-persistence-and-recovery.md#dispatch-evidence). These are business dispositions, not replacement Host Run states. Duplicate discovery returns the existing occurrence instead of dispatching again merely because a timer fired.
+Cron uses five fields and an explicit timezone. Intervals are anchored by retained due times; one-shot instants require an offset. On restart, `latest` admits at most the latest missed occurrence, while `skip` records missed work outside its grace window as skipped. `queue` serializes occurrences of a schedule behind unresolved earlier work; `skip` settles an overlapping opportunity without execution. Waiting decisions and unknown attempts count as unresolved.
 
-Editing a definition affects future occurrences. Retained occurrences preserve their authorized business request and target; Host resource content is resolved and captured at actual Host admission. Disabling a definition stops future dispatch according to policy and does not claim to cancel already accepted Host work.
+Every occurrence retains its definition revision, purpose, author, intended Project and qualified destination before dispatch. Scheduled discovery and manual triggers use stable firing/request keys. Rediscovery returns existing work. Definition edits affect future occurrences; retained work keeps its original request. Pausing/removing a schedule prevents pending dispatch and subsequent result delivery, while already accepted Host work requires separate cancellation.
+
+The operator can manage the catalog through CLI/API. Agent tools require an actual admitted Lark Inbox request from a currently authorized Channel operator. Those tools can manage only that author's schedules in the same qualified source Channel, using its Project defaults and destination. A normal allowed sender, another Channel, or a forged execution identity cannot grant scheduling authority. Source and destination identity and current grants are rechecked at use time.
 
 ## Dispatch and Restart
 
-1. Discover an occurrence under its explicit timing and catch-up rules.
-2. Retain the occurrence before attempting execution.
-3. Check enabled state, current authorization, overlap, target availability, and unresolved previous attempts.
-4. Record an attempt before calling the supported Host input boundary with automation provenance.
-5. Record the actual acceptance, explicit rejection, or uncertainty; inspect available Host results without resubmission.
+1. Discover and retain an occurrence according to timing and catch-up rules.
+2. Check enabled state, author/destination authority, overlap, and target availability.
+3. Create or recover the occurrence's exact independent Thread reference. Ambiguous creation remains blocked.
+4. Persist the attempt before calling the public Host submission boundary.
+5. Retain explicit rejection, acceptance, or uncertainty and observe that exact operation.
 
-A restart cannot turn an attempted occurrence back into a new firing. A crash between the Host call and recording its receipt blocks automatic replay. Missing evidence requires the same operator reconciliation as Inbox work. Catch-up cannot silently create a burst of overlapping executions or bypass an unanswered decision.
+Occurrence dispositions distinguish pending, calling, accepted, waiting, unknown, completed, failed, cancelled, and skipped. These describe a business request and observed Host evidence, not another execution engine. A crash around submission never resets an attempted occurrence to a new firing. A missing process-local receipt requires exact saved evidence or operator reconciliation, following [dispatch evidence](04-persistence-and-recovery.md#dispatch-evidence).
 
-An occurrence awaiting a busy Host may remain pending under its policy. It does not reserve or freeze a future Host Run. Work needing independent progress explicitly selects or creates a different Host Thread; Claw never creates a second writer for the same Thread.
+Suspension retains waiting work. Native decision responses and authorized continuation correlate a new receipt to the same occurrence Thread; ambiguous continuation is blocked. An operator can attach an observed continuation receipt or record a reconciliation with evidence. Cancellation before admission skips work; cancellation after acceptance requests native Host cancellation. Cancelling waiting business work does not erase its native decisions or reverse effects.
 
-## Workflow Progress
+## Result Notification
 
-A workflow retains business step dependencies and their correlated Host references or explicit product results. It is not a checkpoint store. A downstream step advances only from the required exact evidence, never from an admission receipt, quiet stream, unrelated later outcome, or process-local notification alone.
+An occurrence's final result and its external notification are separate durable facts. Notification policy is `always`, `error`, or `never`. The service retains completed result content and creates at most one correlated delivery obligation for the configured destination. Missing or truncated retained output is identified explicitly rather than reconstructed by rerunning the Agent.
 
-Waiting decisions block dependent progress. Failed, cancelled, and uncertain attempts retain their evidence. A retry is an explicit new attempt under the recovery policy, not erasure of the prior occurrence. External side effects can remain even when the Host failed to publish its outcome.
+The scheduler's result notification is a bounded service action authorized by the schedule. It is not a general send capability for the scheduled Thread. In One Thread mode all Agent-originated Channel publication remains Main-only. Native worker collaboration and Main's private final output keep their existing rules.
 
-Cancelling a workflow prevents new step dispatch and requests supported Host cancellation for identified active work. It reports unresolved cancellation separately and does not stop unrelated Threads or destroy shared environments.
+Delivery uses the common retained-content, current-destination authorization, and unknown-outcome rules. Retrying a confirmed-unsent notification never reruns the scheduled task. A lost send response stays unknown until explicitly reconciled.
 
 ## Follow-Up and Product Drain
 
-Agent-directed follow-up has an explicit purpose, allowed triggers, resource limits, and stopping conditions. Where the Host already owns a goal or coordinator continuation loop, Claw uses that capability or leaves it disabled; it does not install a competing loop over the same task. Product limits can stop new requests but do not grant control over unrelated Host work.
-
-[Inbox drain](10-one-thread-mode.md#wake-and-drain) reconciles retained business obligations independently of optional schedules or Agent goals. It rediscovers pending items without new platform events and coexists with native coordinator follow-up. Decisions, unresolved dispatch, revoked authority, and backoff constrain the affected product requests. Limits expose a reason and preserve backlog rather than relabeling it handled.
-
-In One Thread mode automation uses Main for Agent-originated external publication. A worker or operational Thread cannot obtain a separate send path by being timer-triggered. Platform notification remains a separately authorized delivery action.
-
-## Memory and Working Context
-
-Automation uses its target's Host-selected working context and memory scopes. It does not mount the initiating Thread's private files, create a Claw memory namespace, or run a second memory organizer. Host-native maintenance retains its own trigger and lifecycle rules; a timer is not an alternative way to bypass them.
+[Inbox drain](10-one-thread-mode.md#wake-and-drain) independently rediscovers pending messaging obligations. Native coordinator follow-up retains Host ownership. Schedules do not install a competing continuation loop, run a second memory organizer, or obtain access to other Threads' private files.
 
 ## Invariants
 
-1. Each automated request has a retained accountable business cause.
-2. Repeated occurrence discovery does not repeat an uncertain Host submission.
-3. Host execution configuration is captured at Host admission, not at timer registration or business acceptance.
-4. Workflow progress uses correlated evidence and respects Host decisions and ownership.
-5. Automation and Inbox drain cannot create a second execution or recovery engine.
+1. Each automated request has a retained author, purpose, revision, and occurrence identity.
+2. Rediscovery cannot repeat an uncertain Host submission or external notification.
+3. Every occurrence uses an independent Host Thread and captures Host configuration at admission.
+4. Decisions, overlap, authorization, and explicit reconciliation constrain business progress.
+5. Result notification and Agent-originated publication have distinct, bounded authority.

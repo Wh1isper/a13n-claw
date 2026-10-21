@@ -1,0 +1,76 @@
+services:
+  claw:
+    image: ${CLAW_IMAGE:-a13n-claw:check}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    command: [serve, --host, 0.0.0.0, --no-console]
+    restart: unless-stopped
+    environment:
+      CLAW_EXECUTOR_TOKEN: ${CLAW_EXECUTOR_TOKEN:?Set a private executor token}
+    env_file:
+      - path: ./claw.env
+        required: false
+    ports:
+      - "127.0.0.1:${CLAW_PORT:-8080}:8080"
+    volumes:
+      - claw-data:/home/claw/data
+    depends_on:
+      executor:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import pathlib,urllib.request; r=urllib.request.Request('http://127.0.0.1:8080/api/status',headers={'Authorization':'Bearer '+pathlib.Path('/home/claw/data/operator.token').read_text().strip()}); urllib.request.urlopen(r)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  executor:
+    image: ${CLAW_EXECUTOR_IMAGE:-a13n-claw-executor:local}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Executor.Dockerfile
+    restart: unless-stopped
+    environment:
+      CLAW_EXECUTOR_TOKEN: ${CLAW_EXECUTOR_TOKEN:?Set a private executor token}
+      CLAW_EXECUTOR_ID: claw-executor
+    env_file:
+      - path: ./executor.env
+        required: false
+    # The browser shares this network namespace. Only human takeover is published.
+    ports:
+      - "127.0.0.1:${CLAW_BROWSER_PORT:-6080}:6080"
+    volumes:
+      - workspace:/workspace
+      - executor-home:/home/sandbox
+      - downloads:/workspace/downloads
+    healthcheck:
+      test: [CMD, python3, -c, "import socket; socket.create_connection(('127.0.0.1',8888),2).close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  browser:
+    image: ${CLAW_EXECUTOR_IMAGE:-a13n-claw-executor:local}
+    entrypoint: [tini, --, python3, /usr/local/bin/claw-browser-start]
+    user: "1000:1000"
+    network_mode: service:executor
+    restart: unless-stopped
+    shm_size: 1gb
+    depends_on:
+      executor:
+        condition: service_healthy
+    volumes:
+      - browser-profile:/browser-profile
+      - downloads:/downloads
+    healthcheck:
+      test: [CMD, python3, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9222/json/version')"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  claw-data:
+  workspace:
+  executor-home:
+  browser-profile:
+  downloads:

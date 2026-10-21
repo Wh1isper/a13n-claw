@@ -57,6 +57,19 @@ For a versioned business disposition, PATCH `/api/inbox/INBOX_ID` with `{"expect
 
 A pending native decision blocks dispatch to that Thread. Revoked source authority, missing capabilities, and no-progress backoff have visible reasons. There is no universal Claw pause gate over native collaboration. Stop the service to stop intake; native stop controls one operation.
 
+## Diagnostics and retention
+
+`a13n-claw diagnostics` reports content-free counts, unresolved effects, missing Projects, configuration state, and adapter readiness. It does not expose prompts or tokens and does not probe model providers.
+
+Preview before pruning:
+
+```bash
+a13n-claw retention --older-than-days 30
+a13n-claw retention --older-than-days 30 --apply
+```
+
+Each application processes a bounded batch. Retention removes eligible settled Inbox content and its attachment bytes, preserving deduplication tombstones and all dispatch, delivery, resolution, and unresolved-work evidence. Host history, memory, schedule results, and working directories have separate owners.
+
 ## Backup and restart
 
 Stop the service and quiesce working-data writers before backup. Preserve the whole Instance directory, external paths selected by `host_configuration`/`host_data`, and Project working directories. The default layout contains:
@@ -66,7 +79,18 @@ Stop the service and quiesce working-data writers before backup. Preserve the wh
 - `operator.token` and lease file.
 - `host/`: native configuration, state, Thread files, and memory under their native owners.
 
-Configuration export alone is not a backup. Restore with matching versions and restrictive permissions, then start exactly one owner. The product migrates only its business database; the Host owns its own migrations. Business DDL/data/revision changes commit atomically and unknown revisions fail without resetting data. Downgrades require a pre-upgrade backup.
+For a self-contained Instance root, use the offline checksummed commands:
+
+```bash
+a13n-claw backup --root /private/claw --destination /backups/claw-snapshot \
+  --acknowledge-external-state
+a13n-claw restore --root /private/restored-claw --backup /backups/claw-snapshot \
+  --acknowledge-external-state
+```
+
+The destination snapshot must be new; restore requires an empty root and verifies the complete inventory. Directory enumeration failures abort the snapshot. An incomplete restore leaves a marker that blocks startup. External Host paths and symlinks require an operator-managed coordinated snapshot instead. Workspaces, external memory/Skills, executor home/cache, browser profile/downloads, and environment credentials need separate backup. Stop executor writers and use consistent volume snapshots; the Claw lease cannot quiesce them.
+
+Configuration export alone is not a backup. Restore with matching versions and restrictive permissions, review absolute paths (they are intentionally preserved), reconcile external effects, then start exactly one owner. The product migrates only its business database; the Host owns its own migrations. Business DDL/data/revision changes commit atomically and unknown revisions fail without resetting data. Downgrades require a pre-upgrade backup.
 
 Old standalone `claw.sqlite3` databases are explicitly rejected. Preserve their files and select a fresh root; automatic conversion or import is unavailable. Mode/Main Project changes also require a fresh Instance in this delivery.
 
