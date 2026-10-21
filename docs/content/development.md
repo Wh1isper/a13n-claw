@@ -23,7 +23,7 @@ Claw uses published bounded Harness UI/Harness dependencies. It does not import 
 
 ## SQLite migrations
 
-`a13n_claw/business_schema.py` owns product metadata. `a13n_claw/business_migrations/versions/` contains its linear generated Alembic history. Host state has a separate owner and migration history.
+`a13n_claw/business_schema.py` owns product metadata. `a13n_claw/business_migrations/versions/` starts from one generated initial baseline containing the complete business schema. The earlier development revisions are retired; databases using them require a fresh Instance root and are rejected without modification. Host state has a separate owner and migration history.
 
 ```bash
 make db-migrate msg="describe the schema change"

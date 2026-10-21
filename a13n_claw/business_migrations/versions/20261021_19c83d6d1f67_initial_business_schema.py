@@ -1,14 +1,14 @@
-"""embedded product business baseline.
+"""initial business schema.
 
-Revision ID: ae0ac20d04ba
+Revision ID: 19c83d6d1f67
 Revises:
-Create Date: 2026-10-18 03:43:29.471300+00:00
+Create Date: 2026-10-21 11:06:49.502116+00:00
 """
 
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "ae0ac20d04ba"
+revision: str = "19c83d6d1f67"
 down_revision: str | None = None
 branch_labels: None = None
 depends_on: None = None
@@ -27,6 +27,29 @@ def upgrade() -> None:
         sa.Column("evidence", sa.Text(), nullable=False),
         sa.Column("created", sa.Float(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_table(
+        "github_events",
+        sa.Column("connection", sa.Text(), nullable=False),
+        sa.Column("event_key", sa.Text(), nullable=False),
+        sa.Column("notification_id", sa.Text(), nullable=False),
+        sa.Column("updated", sa.Float(), nullable=False),
+        sa.Column("next_check", sa.Float(), nullable=False),
+        sa.Column("notification", sa.Text(), nullable=False),
+        sa.Column("message", sa.Text(), nullable=True),
+        sa.Column("state", sa.Text(), nullable=False),
+        sa.Column("read_status", sa.Text(), nullable=False),
+        sa.Column("detail", sa.Text(), nullable=False),
+        sa.PrimaryKeyConstraint("connection", "event_key"),
+    )
+    op.create_table(
+        "github_poll_state",
+        sa.Column("connection", sa.Text(), nullable=False),
+        sa.Column("account", sa.Text(), nullable=False),
+        sa.Column("cursor", sa.Float(), nullable=False),
+        sa.Column("next_poll", sa.Float(), nullable=False),
+        sa.Column("error", sa.Text(), nullable=False),
+        sa.PrimaryKeyConstraint("connection"),
     )
     op.create_table(
         "inbox",
@@ -59,12 +82,37 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_table(
+        "occurrences",
+        sa.Column("id", sa.Text(), nullable=False),
+        sa.Column("schedule_id", sa.Text(), nullable=False),
+        sa.Column("request_key", sa.Text(), nullable=False),
+        sa.Column("definition", sa.Text(), nullable=False),
+        sa.Column("destination", sa.Text(), nullable=True),
+        sa.Column("due", sa.Float(), nullable=False),
+        sa.Column("status", sa.Text(), nullable=False),
+        sa.Column("thread_id", sa.Text(), nullable=True),
+        sa.Column("receipt_id", sa.Text(), nullable=True),
+        sa.Column("detail", sa.Text(), nullable=False),
+        sa.Column("result", sa.Text(), nullable=True),
+        sa.Column("next_check", sa.Float(), nullable=False),
+        sa.Column("created", sa.Float(), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("request_key"),
+    )
+    op.create_table(
         "resolutions",
         sa.Column("id", sa.Text(), nullable=False),
         sa.Column("subject", sa.Text(), nullable=False),
         sa.Column("action", sa.Text(), nullable=False),
         sa.Column("evidence", sa.Text(), nullable=False),
         sa.Column("created", sa.Float(), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_table(
+        "schedule_state",
+        sa.Column("id", sa.Text(), nullable=False),
+        sa.Column("revision", sa.Text(), nullable=False),
+        sa.Column("next_due", sa.Float(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_table(
@@ -109,6 +157,31 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("request_key"),
+    )
+    op.create_table(
+        "feedback_deliveries",
+        sa.Column("delivery_id", sa.Text(), nullable=False),
+        sa.Column("kind", sa.Text(), nullable=False),
+        sa.Column("continuation_id", sa.Text(), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["delivery_id"],
+            ["deliveries.id"],
+        ),
+        sa.PrimaryKeyConstraint("delivery_id"),
+    )
+    op.create_table(
+        "job_deliveries",
+        sa.Column("delivery_id", sa.Text(), nullable=False),
+        sa.Column("occurrence_id", sa.Text(), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["delivery_id"],
+            ["deliveries.id"],
+        ),
+        sa.ForeignKeyConstraint(
+            ["occurrence_id"],
+            ["occurrences.id"],
+        ),
+        sa.PrimaryKeyConstraint("delivery_id"),
     )
     # ### end Alembic commands ###
 

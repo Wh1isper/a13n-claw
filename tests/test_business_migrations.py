@@ -16,7 +16,11 @@ from a13n_claw.settings import ClawSettings
 
 def test_generated_business_baseline_matches_metadata(tmp_path):
     path = tmp_path / "business.sqlite3"
-    DatabaseMigrator(path).upgrade()
+    migrator = DatabaseMigrator(path)
+    revisions = list(migrator.history().walk_revisions())
+    assert len(revisions) == 1
+    assert revisions[0].down_revision is None
+    migrator.upgrade()
     engine = create_engine(URL.create("sqlite", database=str(path)))
     try:
         with engine.connect() as connection:
@@ -51,15 +55,19 @@ def test_populated_repeat_startup_and_transaction_rollback(tmp_path):
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
-def test_unknown_revision_preserves_database(tmp_path):
+@pytest.mark.parametrize(
+    "revision",
+    ["future-revision", "ae0ac20d04ba", "749e0a64674a", "df8cecbafec6", "3fa99678a97b"],
+)
+def test_unknown_or_retired_revision_preserves_database(tmp_path, revision):
     path = tmp_path / "business.sqlite3"
-    DatabaseMigrator(path).upgrade()
+    BusinessStore(path, ClawSettings())
     with sqlite3.connect(path) as connection:
-        connection.execute("UPDATE alembic_version SET version_num='future-revision'")
-    with pytest.raises(ClawError, match="unknown"):
+        connection.execute("UPDATE alembic_version SET version_num=?", (revision,))
+    with sqlite3.connect(path) as connection:
+        before = list(connection.iterdump())
+    with pytest.raises(ClawError, match="unknown") as error:
         DatabaseMigrator(path).upgrade()
+    assert error.value.code == "schema_incompatible"
     with sqlite3.connect(path) as connection:
-        assert (
-            connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-            == "future-revision"
-        )
+        assert list(connection.iterdump()) == before

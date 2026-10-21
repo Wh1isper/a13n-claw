@@ -65,6 +65,8 @@ For One Thread mode, an explicitly settled Inbox item remains settled even if th
 
 Each owner applies its own forward migrations before its operations become available. A Host upgrade failure blocks Host use; a Claw business migration failure blocks product dispatch. Neither failure resets the other owner's state. Compatibility failures remain actionable and preserve retained data.
 
+The current Claw business history starts from one generated initial baseline. Databases marked with revisions from the retired development history are incompatible and require a fresh Instance root. Startup rejects those revisions without stamping, converting, or resetting retained data.
+
 The old standalone Claw database is not a Harness UI store. This redesign promises no automatic conversion of its Profile, Run, checkpoint, environment, or private-memory semantics. An embedding implementation must reject incompatible roots and offer an explicit fresh-instance or separately specified import path. This specification authorizes no deletion or in-place reinterpretation of existing data.
 
 ## Retention and Backup

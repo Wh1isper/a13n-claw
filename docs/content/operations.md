@@ -92,6 +92,6 @@ The destination snapshot must be new; restore requires an empty root and verifie
 
 Configuration export alone is not a backup. Restore with matching versions and restrictive permissions, review absolute paths (they are intentionally preserved), reconcile external effects, then start exactly one owner. The product migrates only its business database; the Host owns its own migrations. Business DDL/data/revision changes commit atomically and unknown revisions fail without resetting data. Downgrades require a pre-upgrade backup.
 
-Old standalone `claw.sqlite3` databases are explicitly rejected. Preserve their files and select a fresh root; automatic conversion or import is unavailable. Mode/Main Project changes also require a fresh Instance in this delivery.
+The business migration history starts from a single initial baseline. Databases from the retired development revisions and old standalone `claw.sqlite3` databases are explicitly rejected. Preserve their files and select a fresh root; automatic conversion or import is unavailable. Mode/Main Project changes also require a fresh Instance in this delivery.
 
 `status` reports Host openness and adapter state, not provider connectivity. Use an intentional model request and inspect its saved outcome to verify that specific provider configuration. Native receipts, platform ACKs, saved continuation, and confirmed delivery remain distinct.

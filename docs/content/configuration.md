@@ -56,7 +56,7 @@ authentication:
   env: CLAW_MODEL_API_KEY
 ```
 
-Keep secrets in credential environment references or native Host authentication facilities, never in configuration text. The generated `agent-claw` selects `ClawMessaging`, `dynamic_environment`, and `skills`. Removing `ClawMessaging` blocks product dispatch with a visible reason. Use native Agent/environment policy for tool permissions, model settings, and limits. The pinned Host 0.13 public Model route does not support `openai-responses-ws`; Claw does not silently substitute HTTP Responses. Deployments requiring that transport need a separately validated supported Host path before cutover.
+Keep secrets in credential environment references or native Host authentication facilities, never in configuration text. The generated `agent-claw` selects `ClawMessaging`, `dynamic_environment`, and `skills`. Removing `ClawMessaging` blocks product dispatch with a visible reason. Use native Agent/environment policy for tool permissions, model settings, and limits.
 
 ## Command reference
 
