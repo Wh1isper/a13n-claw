@@ -44,6 +44,12 @@ Authorized input is committed before transport acknowledgement. Attachments are 
 
 A Channel binding is not permission to inspect every Thread. Commands select work originally associated with that same Channel and recheck current sender/operator grants. In One Thread, control of associated work addresses shared Main. Its decisions may reflect shared context; grant `operators` accordingly. Worker history and direct worker conversations use the trusted operator CLI/API.
 
+## Feedback and schedules
+
+Enable `progress_updates` for bounded Lark messages about retained input, admission, and outcomes; `reactions` optionally adds status reactions. Enable `decision_prompts` separately for exact native prompts from an unambiguous operator-originated routed task. All default to false, retain delivery identity, and obey current source grants; a lost send response does not cause an automatic duplicate. Topic-reply fallback stays in the original authorized chat.
+
+Channel operators can ask the Agent to manage isolated [schedules and heartbeat tasks](./schedules.md) through its source-scoped `claw_schedules` tool. Scheduled execution has its own occurrence and result-notification policy; it does not turn worker answers into unrestricted broadcasts.
+
 ## Work with persistent workers
 
 Main creates and manages workers through native Host collaboration. Workers can report and ask their owner; ownership and same-Project scope remain Host-owned. Native notifications and auto-follow-up are best effort. They can overlap with product attention and are not a durable message bus.
@@ -69,6 +75,6 @@ Operation dependencies use exact `thread_id` and `receipt_id`. After restart, sa
 
 ## Publish and reconcile separately
 
-`claw_send_message` and `claw_send_file` retain content and a stable request key before sending to the original event's permitted destination. In One Thread only Main has this authority; elsewhere the routed Thread does. Final model answers are never broadcast automatically.
+`claw_send_message` and `claw_send_file` retain content and a stable request key before sending to the original event's permitted destination. In One Thread only Main has this authority; elsewhere the routed Thread does. One Thread final answers are never broadcast automatically. In per-Channel/per-trigger modes, `final_reply: true` selects the exact associated completed continuation for a reply to its original destination; an explicit Agent delivery suppresses that automatic result.
 
 Lark upload success is followed by a file reply. Failed upload is a definite non-send; a lost message response is unknown. Delivery reconciliation retries saved content, not inference. Inbox settlement, Host outcome, and external delivery are independent facts.

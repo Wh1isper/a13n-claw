@@ -18,7 +18,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
@@ -47,7 +47,7 @@ jobs:
     name: Workflows and container
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
         with:
@@ -63,4 +63,4 @@ jobs:
           node-version: "24"
           cache: pnpm
           cache-dependency-path: console/pnpm-lock.yaml
-      - run: make workflow-check image-check
+      - run: make workflow-check image-check executor-check

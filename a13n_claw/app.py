@@ -14,8 +14,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from a13n_claw.api import router
-from a13n_claw.lifecycle import open_service
-from a13n_claw.settings import instance_root, read_settings
+from a13n_claw.configuration.models import instance_root, read_settings
+from a13n_claw.runtime.lifecycle import open_service
 
 CONSOLE_DIRECTORY = Path(__file__).parent / "static" / "console"
 logger = logging.getLogger("a13n_claw.app")

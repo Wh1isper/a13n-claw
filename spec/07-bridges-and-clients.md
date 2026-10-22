@@ -108,6 +108,20 @@ Retry delivery from saved content, never by rerunning the Agent. Inbox settlemen
 
 Outgoing files are read through supported Host operations or already authorized product attachments, then retained as deliverable content with their origin. Adapter size/type limits and partial uploads are explicit. A Host path or file-browser link is not automatically accessible from IM and is not a substitute for an authorized upload or usable protected download. Platform output excludes secrets, hidden reasoning, unrelated history, and unauthorized files.
 
+## Lark Feedback and Result Selection
+
+Lark service feedback uses bounded retained status messages and optional reactions. Each update has a stable intent and original destination; unknown sends remain blocked. Status and exact decision prompts expose only authorized associations. Rich cards and token streaming are optional representations, not requirements for decision handling.
+
+An enabled saved-result policy in per-Channel/per-trigger mode selects only the exact completed Host continuation associated with the original input. Explicit Agent delivery suppresses duplicate automatic results. One Thread retains Main-only Agent publication and does not broadcast Main or worker final answers. Topic replies may fall back only to an authorized ordinary reply in the same conversation when the platform definitely rejects topic-specific delivery.
+
+## GitHub Notification Polling
+
+GitHub connections capture notification versions through durable paginated polling. A version is qualified by connection/account, notification identity, and update time. The cursor advances only after all pages are retained. Configured initial lookback, bounded delayed capture, timestamp-boundary overlap, and durable deduplication constrain discovery; the feed is sampled state rather than a complete event archive.
+
+Delayed capture refreshes issue/PR context, applies repository and sender grants, and excludes own output. Only authorized participant content enters ordinary Inbox routing. Superseded uncaptured updates can coalesce. GitHub content does not enter the IM control parser.
+
+Explicit text comments retain the issue/PR number and ordinary delivery uncertainty. Mark-read is a separate idempotent operation after business settlement and all associated dispatch/delivery obligations. Each attempt rechecks the notification version and current grants. Newer updates are left for capture; polling includes read notifications to cover the remaining platform race. Failed read-state updates retain retry/backoff evidence without repeating Agent execution or comment publication.
+
 ## Invariants
 
 1. Platform acknowledgement, business retention, Host admission, and external delivery are independent.

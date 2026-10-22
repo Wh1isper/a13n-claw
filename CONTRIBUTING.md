@@ -14,26 +14,27 @@ The independent `uv.lock`, `console/pnpm-lock.yaml`, and `docs/pnpm-lock.yaml` o
 
 ## Validation
 
-| Command               | Purpose                                        |
-| --------------------- | ---------------------------------------------- |
-| `make format`         | Apply pre-commit formatting and file hygiene   |
-| `make lint`           | Check Python and Markdown formatting           |
-| `make typecheck`      | Run Pyright                                    |
-| `make deps-check`     | Check Python dependency declarations           |
-| `make test`           | Run tests without external service credentials |
-| `make console-check`  | Check console types and formatting             |
-| `make console-build`  | Install and build packaged console assets      |
-| `make console-dev`    | Preview the console with hot reload            |
-| `make serve`          | Serve built console assets on port 8080        |
-| `make docs-check`     | Check documentation formatting and types       |
-| `make docs-serve`     | Preview the documentation                      |
-| `make docs-build`     | Export the static site and check links         |
-| `make build`          | Build console, wheel, and source distribution  |
-| `make artifact-check` | Install and HTTP-test wheel and rebuilt sdist  |
-| `make workflow-check` | Run actionlint in Docker                       |
-| `make image-check`    | Build and run the non-root runtime image       |
-| `make check`          | Run static checks                              |
-| `make check-all`      | Run the full CI-equivalent gates               |
+| Command               | Purpose                                                        |
+| --------------------- | -------------------------------------------------------------- |
+| `make format`         | Apply pre-commit formatting and file hygiene                   |
+| `make lint`           | Check Python and Markdown formatting                           |
+| `make typecheck`      | Run Pyright                                                    |
+| `make deps-check`     | Check Python dependency declarations                           |
+| `make test`           | Run tests without external service credentials                 |
+| `make console-check`  | Check console types and formatting                             |
+| `make console-build`  | Install and build packaged console assets                      |
+| `make console-dev`    | Preview the console with hot reload                            |
+| `make serve`          | Serve built console assets on port 8080                        |
+| `make docs-check`     | Check documentation formatting and types                       |
+| `make docs-serve`     | Preview the documentation                                      |
+| `make docs-build`     | Export the static site and check links                         |
+| `make build`          | Build console, wheel, and source distribution                  |
+| `make artifact-check` | Install and HTTP-test wheel and rebuilt sdist                  |
+| `make workflow-check` | Run actionlint in Docker                                       |
+| `make image-check`    | Build and run the non-root runtime image                       |
+| `make executor-check` | Test Compose executor, browser, and Docker socket path mapping |
+| `make check`          | Run static checks                                              |
+| `make check-all`      | Run the full CI-equivalent gates                               |
 
 Choose local checks by the changed surface and risk. Do not repeat unaffected checks. CI runs the complete applicable gates for ready pull requests and pushes to `main`. Python checks also run on Windows; package artifacts must be installable without the source checkout. Report unavailable checks honestly.
 
@@ -41,7 +42,7 @@ Choose local checks by the changed surface and risk. Do not repeat unaffected ch
 
 ## Database changes
 
-Edit the canonical metadata in `a13n_claw/business_schema.py`, then run `make db-migrate msg="describe the change"`. The generator upgrades a disposable database and generates an Alembic revision; it never opens an Instance data root. Review generated operations, add required data transformations, and test upgrades with populated state. See the [migration workflow](docs/content/development.md#sqlite-migrations) for formatting and validation commands.
+Edit the canonical metadata in `a13n_claw/database/schema.py`, then run `make db-migrate msg="describe the change"`. The generator upgrades a disposable database and generates an Alembic revision; it never opens an Instance data root. Review generated operations, add required data transformations, and test upgrades with populated state. See the [migration workflow](docs/content/development.md#sqlite-migrations) for formatting and validation commands.
 
 ## Changes and reviews
 

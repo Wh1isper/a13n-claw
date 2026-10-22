@@ -4,15 +4,23 @@
 
 An IM-first assistant in the [a13n ecosystem](https://github.com/converge-ai-labs/agent-foundation), inspired by [YA Claw](https://github.com/Wh1isper/ya-mono/tree/main/packages/ya-claw).
 
-Claw embeds one Harness UI App from its published Python package. The Host owns configuration, Threads, execution, decisions, environments, collaboration, and Global/Project memory. Claw adds Lark/Feishu messaging, durable Inbox and delivery evidence, routing, and headless CLI/API operations.
+Claw embeds one Harness UI App from its published Python package. The Host owns configuration, Threads, execution, decisions, environments, collaboration, and Global/Project memory. Claw adds Lark/Feishu messaging, GitHub notification polling, durable Inbox and delivery evidence, isolated scheduled tasks, and headless CLI/API operations.
 
 - **One Thread** (default): canonical Main coordinates native workers and explicitly replies to authorized Channels.
+
 - **Per-Channel**: reuse one conversation Thread per Channel.
+
 - **Per-trigger**: create a fresh task Thread for each eligible distinct event in its Channel Project.
+
 - Mention filtering, event deduplication, text/file replies, exact stop/steer/continue commands, and native JSON decisions.
+
 - Explicit reconciliation of uncertain dispatches, target creation, and delivery without automatic effect replay.
 
-The runtime frontend is Hello World; operational interaction uses IM and CLI/API. Other platform adapters, rich cards, full Console, and general automation remain future work. The `0.0.2` tagged artifacts contain the earlier informational placeholder; build this source for the embedded service.
+- Configurable Lark progress/reactions/decision prompts, isolated schedules and heartbeat, and explicit product configuration reload.
+
+- Persistent Docker executor/browser, diagnostics, conservative retention, and offline backup/restore.
+
+The runtime frontend is Hello World; operational interaction uses IM and CLI/API. Workflow orchestration, rich interactive cards, token streaming, and full Console are outside this delivery. The `0.0.2` tagged artifacts contain the earlier informational placeholder; build this source for the embedded service.
 
 ## Start from source
 
@@ -25,6 +33,8 @@ uv run a13n-claw serve --no-console
 ```
 
 The default Instance is `~/.a13n-claw`; `--root` or `CLAW_ROOT` selects another. Product settings live in `claw.yaml`; native Host resources live under `host/`. The workspace must be separate from protected Instance data. Configure Lark credentials and explicit Channel/sender bindings using [Getting started](docs/content/getting-started.md), then inspect `a13n-claw status`.
+
+For persistent remote execution and human browser takeover, use the [Docker deployment](deploy/docker/README.md). See [Schedules](docs/content/schedules.md) and [GitHub polling](docs/content/github.md) for peripheral setup.
 
 Read [Configuration and CLI](docs/content/configuration.md), [routing and IM commands](docs/content/one-thread.md), and [Operations](docs/content/operations.md). Local shell is host-account execution, not a sandbox. One Thread shares Main context and Project memory across Channels. Review grants before enabling participants.
 
