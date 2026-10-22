@@ -25,7 +25,7 @@ The starter selects native files, shell, and Skills capabilities. Actual operati
 
 ## Decisions, cancellation, and recovery
 
-Use `threads active`, `threads decisions`, `operations show`, and `threads history`. Submit the complete native decision batch with its exact continuation ID. Ordinary chat is not an approval. Cancellation requests target one receipt; they do not roll back tools or establish that an external effect failed.
+Use `threads active`, `threads decisions`, `operations show`, and `threads history`. Submit one native decision batch with its exact continuation ID. Include every answer you intend to supply: omitted requests are declined by the Host, not left pending. Invalid answers retain the pending decision and can be corrected; an uncertain submission stays blocked for reconciliation. Ordinary chat is not an approval. Cancellation requests target one receipt; they do not roll back tools or establish that an external effect failed.
 
 Direct operator submission retains native Host admission semantics and is never automatically retried. Receipts are process-local. After restart, inspect saved Thread history and exact available execution evidence. Missing correlation means unknown, not failed. The product stores its own Inbox/dispatch/delivery evidence without writing Host tables.
 
@@ -56,6 +56,20 @@ POST this body to `/api/deliveries/DELIVERY_ID/resolve`. `retry` defaults to fal
 For a versioned business disposition, PATCH `/api/inbox/INBOX_ID` with `{"expected_version":1,"disposition":"handled","reason":"Reviewed result"}`. `pending` reopens a settled/deferred item. Unknown dispatches must be reconciled separately first; settlement is not an uncertainty bypass.
 
 A pending native decision blocks dispatch to that Thread. Revoked source authority, missing capabilities, and no-progress backoff have visible reasons. There is no universal Claw pause gate over native collaboration. Stop the service to stop intake; native stop controls one operation.
+
+## Routing mode on restart
+
+Set `mode` in `claw.yaml` and restart Claw. New messages use `one_thread`, `per_channel`, or `per_trigger` as configured. Per-Channel and per-trigger modes need a valid Host `project_id` on each Channel. Existing work does not have to finish before another mode can start. Live product reload does not change the routing mode.
+
+Claw provides no mode-transition command, preview, task migration, or cross-mode continuation guarantee. Inbox items from other modes remain stored but are excluded from automatic dispatch and delivery; they cannot occupy the current mode's dispatch batch. Switching back can make matching-mode items eligible again under normal dispatch rules. Native Host restart recovery is unchanged, so already-admitted Host work may resume independently. A mode change is not a cancellation operation.
+
+Existing histories, workers, and memory stay under the Host's ownership. Retained Channel Threads keep their Project references; there is no automatic knowledge transfer. Main stays in its fixed Project. To select another Main Project or start with completely independent history, initialize a fresh Instance root and preserve the old root.
+
+## Realtime observation
+
+Trusted operators can stream `GET /api/threads/THREAD_ID/events` using the same Bearer header and same-origin rules as other APIs. This SSE endpoint observes one root lineage through the embedded Host; it starts no inference. Every connection starts with a `snapshot`, followed by any finite `replay` frames and then bounded `observation` frames. Payloads retain native Host identities and presentation semantics.
+
+A `refetch` frame means the snapshot changed, the observer fell behind, or the Host stream closed. Discard the partial presentation and reconnect for a fresh snapshot; refetch history and exact operation state as needed. Reconnect always bootstraps anew, including after a process restart; `Last-Event-ID` is not a durable replay cursor. EOF and client disconnect do not mean execution completed and do not cancel work. Keep credentials in request headers, never query strings.
 
 ## Diagnostics and retention
 
@@ -92,6 +106,6 @@ The destination snapshot must be new; restore requires an empty root and verifie
 
 Configuration export alone is not a backup. Restore with matching versions and restrictive permissions, review absolute paths (they are intentionally preserved), reconcile external effects, then start exactly one owner. The product migrates only its business database; the Host owns its own migrations. Business DDL/data/revision changes commit atomically and unknown revisions fail without resetting data. Downgrades require a pre-upgrade backup.
 
-The business migration history starts from a single initial baseline. Databases from the retired development revisions and old standalone `claw.sqlite3` databases are explicitly rejected. Preserve their files and select a fresh root; automatic conversion or import is unavailable. Mode/Main Project changes also require a fresh Instance in this delivery.
+The business migration history starts from a single initial baseline. Databases from the retired development revisions and old standalone `claw.sqlite3` databases are explicitly rejected. Preserve their files and select a fresh root; automatic conversion or import is unavailable. Routing mode changes take effect on restart as described above; no conversion of old work is performed.
 
 `status` reports Host openness and adapter state, not provider connectivity. Use an intentional model request and inspect its saved outcome to verify that specific provider configuration. Native receipts, platform ACKs, saved continuation, and confirmed delivery remain distinct.

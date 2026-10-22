@@ -24,7 +24,7 @@ SQLite transactions run in short worker-thread operations; never retain one acro
 
 Host state and migrations belong exclusively to Harness UI. Claw owns only business state. Existing standalone data is not a Host database and cannot be silently reinterpreted or deleted.
 
-SQLAlchemy Core metadata in `a13n_claw/business_schema.py` owns the current schema; package-owned Alembic revisions own its evolution. Generate revisions through `make db-migrate`, review them, and keep one linear history. Published revisions retain their historical definitions. Runtime startup uses migrations, not inline DDL, `create_all`, or version-specific branches in BusinessStore. Application reads and writes continue to use short `sqlite3` transactions.
+SQLAlchemy Core metadata in `a13n_claw/database/schema.py` owns the current schema; package-owned Alembic revisions own its evolution. Generate revisions through `make db-migrate`, review them, and keep one linear history. Published revisions retain their historical definitions. Runtime startup uses migrations, not inline DDL, `create_all`, or version-specific branches in BusinessStore. Application reads and writes continue to use short `sqlite3` transactions.
 
 Migrate under the Instance lease before application state is loaded. Schema changes, data transformations, and the revision marker commit atomically; SQLite table rebuilds must preserve references and pass foreign-key validation before commit. Test metadata parity, populated upgrades, rollback, and repeated startup. Unknown revisions fail explicitly; downgrading requires a pre-upgrade backup.
 

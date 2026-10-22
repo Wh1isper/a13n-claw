@@ -17,19 +17,33 @@ make docs-build
 
 ## Ownership
 
-`host.py` opens the native App; `lifecycle.py` holds the Instance lease and owns adapter/application lifetimes. `business.py` owns short SQLite transactions; `service.py` owns product dispatch, scoped tool authority, and delivery. `controls.py` implements exact IM interactions. `lark.py` owns platform normalization and asynchronous wire transport behind the neutral `MessagingAdapter` protocol. `api.py` and `cli.py` provide trusted operator access.
+The root `a13n_claw/` package is organized by responsibility:
+
+| Package          | Responsibility                                                                                                                |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `runtime/`       | Open the embedded App, own process lifetimes, compose services, dispatch retained work, and reconcile exact Host observations |
+| `messaging/`     | Authorize and retain ingress; expose scoped Inbox tools; handle controls, feedback, and delivery                              |
+| `adapters/`      | Normalize Lark/GitHub protocols behind `MessagingAdapter`; retain GitHub polling evidence                                     |
+| `schedules/`     | Validate schedules and own durable occurrences, dispatch, and result selection                                                |
+| `configuration/` | Define product settings, initialize native resources, and validate/save/reload product sources                                |
+| `database/`      | Own short business transactions, canonical metadata, and generated migrations                                                 |
+| `operations/`    | Enforce Instance ownership and provide backup, restore, diagnostics, and retention                                            |
+| `api/`           | Authenticate trusted operators and group HTTP routes by owning service                                                        |
+| `cli/`           | Parse headless commands and invoke explicit online or offline operations                                                      |
+
+`app.py` remains the public ASGI factory and static-asset boundary. Package initializers avoid hidden initialization and compatibility forwarding layers. `tests/` mirrors the backend responsibility groups; shared fixtures live in `tests/helpers.py` rather than importing other test modules.
 
 Claw uses published bounded Harness UI/Harness dependencies. It does not import neighboring checkouts, private Host coordinators, or Host database tables. Native worker collaboration, environment tools, and Global/Project memory remain native capabilities. Cross-owner changes need invariant-based tests, especially around admission, uncertainty, and publication.
 
 ## SQLite migrations
 
-`a13n_claw/business_schema.py` owns product metadata. `a13n_claw/business_migrations/versions/` starts from one generated initial baseline containing the complete business schema. The earlier development revisions are retired; databases using them require a fresh Instance root and are rejected without modification. Host state has a separate owner and migration history.
+`a13n_claw/database/schema.py` owns product metadata. `a13n_claw/database/migrations/versions/` starts from one generated initial baseline containing the complete business schema. The earlier development revisions are retired; databases using them require a fresh Instance root and are rejected without modification. Host state has a separate owner and migration history.
 
 ```bash
 make db-migrate msg="describe the schema change"
-uv run --locked ruff check --select I --fix a13n_claw/business_migrations/versions
-uv run --locked ruff format a13n_claw/business_migrations/versions
-uv run --locked pytest tests/test_business_migrations.py tests/test_migrations.py
+uv run --locked ruff check --select I --fix a13n_claw/database/migrations/versions
+uv run --locked ruff format a13n_claw/database/migrations/versions
+uv run --locked pytest tests/database/test_business_migrations.py tests/database/test_migrations.py
 ```
 
 Generation upgrades a disposable SQLite database, never an operator Instance. Review generated operations and add data backfills where needed. Historical revisions keep their own definitions. SQLite table rebuilds and revision changes commit together after foreign-key validation; failed migrations roll back. Tests cover metadata parity, populated upgrades, repeated startup, unknown/prebaseline rejection, rollback, and single-head history. Downgrades use backups.

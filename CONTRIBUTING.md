@@ -42,7 +42,7 @@ Choose local checks by the changed surface and risk. Do not repeat unaffected ch
 
 ## Database changes
 
-Edit the canonical metadata in `a13n_claw/business_schema.py`, then run `make db-migrate msg="describe the change"`. The generator upgrades a disposable database and generates an Alembic revision; it never opens an Instance data root. Review generated operations, add required data transformations, and test upgrades with populated state. See the [migration workflow](docs/content/development.md#sqlite-migrations) for formatting and validation commands.
+Edit the canonical metadata in `a13n_claw/database/schema.py`, then run `make db-migrate msg="describe the change"`. The generator upgrades a disposable database and generates an Alembic revision; it never opens an Instance data root. Review generated operations, add required data transformations, and test upgrades with populated state. See the [migration workflow](docs/content/development.md#sqlite-migrations) for formatting and validation commands.
 
 ## Changes and reviews
 

@@ -65,4 +65,4 @@ image-check: build ## Build and smoke-test the non-root runtime image
 .PHONY: executor-check
 executor-check: image-check ## Build and test persistent executor, browser, and native Host integration
 	docker build -f deploy/docker/Executor.Dockerfile -t a13n-claw-executor:local .
-	CLAW_EXECUTOR_TEST=1 uv run --locked pytest tests/test_executor.py -q
+	CLAW_EXECUTOR_TEST=1 uv run --locked pytest tests/distribution/test_executor.py -q

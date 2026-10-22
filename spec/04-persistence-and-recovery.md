@@ -55,7 +55,7 @@ flowchart TD
     Fresh --> Drain
 ```
 
-Claw scans pending obligations on startup, Host settlement signals, barrier release, and bounded reconciliation opportunities. Live events only accelerate discovery. A lost Run-end callback cannot erase pending business work; an ambiguous dispatch can still prevent automatic execution until resolved.
+Claw scans pending obligations on startup, Host settlement signals, barrier release, and bounded reconciliation opportunities. Inbox dispatch uses the current routing mode; changing modes does not require resolving old work and provides no cross-mode continuation guarantee. Live events only accelerate discovery. A lost Run-end callback cannot erase pending business work; an ambiguous dispatch can still prevent automatic execution until resolved.
 
 The Host decides whether a saved Thread can continue, whether a decision is available, and what saved execution state means. Claw does not rewrite foreign running markers, reacquire old receipt authority, replay deferred answers, or synthesize interrupted Runs. A graceful Host restart feature is usable only when the embedding lifecycle explicitly supports it; it is not a crash-recovery guarantee.
 

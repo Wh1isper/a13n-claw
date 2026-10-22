@@ -13,7 +13,7 @@ from sqlalchemy.pool import NullPool
 
 from a13n_claw.errors import ClawError
 
-MIGRATIONS_PATH = Path(__file__).parent.parent / "business_migrations"
+MIGRATIONS_PATH = Path(__file__).parent / "migrations"
 
 
 class DatabaseMigrator:
