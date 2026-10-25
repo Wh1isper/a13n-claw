@@ -204,7 +204,7 @@ async def test_compose_executor_native_host_browser_and_persistence(
                 attachment_ids=(attachment.attachment_id,),
             )
             outcome = await host.wait_root_operation(receipt.receipt_id, timeout_seconds=60)
-            assert outcome.status == "completed", outcome
+            assert outcome.status == "completed", outcome.model_dump_json()
             assert len(results) == 4 and all(r.get("ok") for r in results), results
             assert results[1]["status"]["exit_code"] == 0, json.dumps(results[1])
             # Native cancellation must end a live remote process, retaining its files.

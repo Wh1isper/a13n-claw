@@ -2,6 +2,10 @@
 
 Compose owns three long-lived containers: the Claw service, an authenticated Envd executor, and a visible Chromium browser. Harness UI owns execution Sessions and native tools. Restarting Claw does not destroy the executor workspace or browser profile.
 
+## Harness 0.20.0 compatibility blocker
+
+The current exact Harness UI/Harness 0.20.0 pins cannot start native remote execution with the published Envd client 0.5.0 or 0.5.1. Harness's EIP binding reads `EIPSession.device_descriptor`, which these client releases do not expose. Both Compose acceptance variants fail during Run preparation, before agent tools execute. The Claw service image starts successfully; executor use requires a compatible upstream release. Keep the executor acceptance gate enabled when updating dependencies.
+
 ## Start from source
 
 Build the ordinary Claw wheel/image and the executor image:
