@@ -2,9 +2,11 @@
 
 Compose owns three long-lived containers: the Claw service, an authenticated Envd executor, and a visible Chromium browser. Harness UI owns execution Sessions and native tools. Restarting Claw does not destroy the executor workspace or browser profile.
 
-## Harness 0.20.0 compatibility blocker
+## Dependency compatibility
 
-The current exact Harness UI/Harness 0.20.0 pins cannot start native remote execution with the published Envd client 0.5.0 or 0.5.1. Harness's EIP binding reads `EIPSession.device_descriptor`, which these client releases do not expose. Both Compose acceptance variants fail during Run preparation, before agent tools execute. The Claw service image starts successfully; executor use requires a compatible upstream release. Keep the executor acceptance gate enabled when updating dependencies.
+Harness UI and Harness are pinned to `0.20.1`, with Envd client and executor image `0.5.1`. This combination fixes the native remote-execution startup failure in Harness `0.20.0` and passes both named-volume and host-Docker acceptance variants.
+
+Stopping a Run and cancelling a retained tool execution are separate native Host operations. Run Stop leaves an admitted shell execution running; use the native `tool_execution_cancel` tool or the embedded App's `cancel_tool_execution(thread_id, execution_id)` operation to request its cancellation. Observe terminal status before treating the process as stopped. Cancellation retains files already written and does not roll back external effects.
 
 ## Start from source
 

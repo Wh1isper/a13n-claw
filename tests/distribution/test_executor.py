@@ -207,7 +207,7 @@ async def test_compose_executor_native_host_browser_and_persistence(
             assert outcome.status == "completed", outcome.model_dump_json()
             assert len(results) == 4 and all(r.get("ok") for r in results), results
             assert results[1]["status"]["exit_code"] == 0, json.dumps(results[1])
-            # Native cancellation must end a live remote process, retaining its files.
+            # Run Stop and retained tool cancellation are separate Host operations.
             actions[:] = [
                 (
                     "shell_exec",
@@ -242,6 +242,27 @@ async def test_compose_executor_native_host_browser_and_persistence(
             await host.cancel_root_operation(pending.receipt_id)
             cancelled = await host.wait_root_operation(pending.receipt_id, timeout_seconds=20)
             assert cancelled.status == "cancelled", cancelled
+            executions = await host.tool_executions(cancellation_thread.thread_id)
+            assert len(executions) == 1, executions
+            execution = executions[0]
+            assert execution.tool_name == "shell_exec" and execution.status == "running", execution
+            await asyncio.to_thread(
+                compose,
+                "exec",
+                "-T",
+                "executor",
+                "sh",
+                "-c",
+                'kill -0 "$(cat /workspace/cancel.pid)"',
+            )
+            await host.cancel_tool_execution(cancellation_thread.thread_id, execution.execution_id)
+            for _ in range(100):
+                executions = await host.tool_executions(cancellation_thread.thread_id)
+                if executions[0].status not in {"queued", "running"}:
+                    break
+                await asyncio.sleep(0.1)
+            assert executions[0].status == "cancelled", executions
+            # Explicit tool cancellation must end the process and retain its files.
             stopped = await asyncio.to_thread(
                 compose,
                 "exec",
