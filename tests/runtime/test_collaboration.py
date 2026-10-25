@@ -33,7 +33,9 @@ async def test_native_worker_wake_wins_drain_race_without_replaying_unknown(
         if main_calls == 2:
             worker_created.update(results[-1].content)
             return ModelResponse(parts=[TextPart("Worker requested; wait for its result")])
-        if main_calls == 3:
+        # Native steering can restart model generation before its tool call commits.
+        # Advance from retained tool results, not from the model request count.
+        if results[-1].tool_name == "create_thread":
             native_started.set()
             await asyncio.wait_for(release_main.wait(), 20)
             return ModelResponse(parts=[ToolCallPart("claw_inbox_list", {})])

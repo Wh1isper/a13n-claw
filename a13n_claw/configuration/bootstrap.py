@@ -147,7 +147,7 @@ async def initialize(
 def executor_resources(endpoint: str) -> dict[str, dict]:
     """Native Device and local file profile for a Compose-managed executor.
 
-    The custom native profile keeps cross-mount copy in Host 0.13's tool surface.
+    The custom native profile keeps cross-mount copy in the Host tool surface.
     It retains host-account authority for local Thread files; the Device boundary
     is independently enforced by Envd. No tool allowlist discards other Capabilities.
     """

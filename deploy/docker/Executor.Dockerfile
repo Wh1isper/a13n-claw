@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Match the a13n-envd-client release in uv.lock; this is not the Host version.
-ARG ENVD_IMAGE=ghcr.io/converge-ai-labs/a13n-sandbox:0.3.0
+ARG ENVD_IMAGE=ghcr.io/converge-ai-labs/a13n-sandbox:0.5.1
 FROM ${ENVD_IMAGE}
 USER root
 ARG ANYCAP_VERSION=0.6.4
