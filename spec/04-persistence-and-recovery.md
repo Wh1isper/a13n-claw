@@ -15,7 +15,7 @@ There is no cross-owner transaction between business acceptance, Host admission,
 | Environment associations, Thread files, memory, and organization state                | Host-supported resource operations   |
 | Connections, bindings, canonical Main reference, and platform interaction correlation | Claw business store                  |
 | Inbox content, dispositions, dependencies, and dispatch evidence                      | Claw business store                  |
-| Automation definitions, occurrences, and business workflow progress                   | Claw business store                  |
+| Occurrences, retained schedule revisions, and notification evidence                   | Claw business store                  |
 | Delivery content, destination, and transport evidence                                 | Claw business store                  |
 | Live operation handles and event subscriptions                                        | Process-local; not restart authority |
 
@@ -55,7 +55,7 @@ flowchart TD
     Fresh --> Drain
 ```
 
-Claw scans pending obligations on startup, Host settlement signals, barrier release, and bounded reconciliation opportunities. Live events only accelerate discovery. A lost Run-end callback cannot erase pending business work; an ambiguous dispatch can still prevent automatic execution until resolved.
+Claw scans pending obligations on startup, Host settlement signals, barrier release, and bounded reconciliation opportunities. Inbox dispatch uses the current routing mode; changing modes does not require resolving old work and provides no cross-mode continuation guarantee. Live events only accelerate discovery. A lost Run-end callback cannot erase pending business work; an ambiguous dispatch can still prevent automatic execution until resolved.
 
 The Host decides whether a saved Thread can continue, whether a decision is available, and what saved execution state means. Claw does not rewrite foreign running markers, reacquire old receipt authority, replay deferred answers, or synthesize interrupted Runs. A graceful Host restart feature is usable only when the embedding lifecycle explicitly supports it; it is not a crash-recovery guarantee.
 
@@ -65,13 +65,19 @@ For One Thread mode, an explicitly settled Inbox item remains settled even if th
 
 Each owner applies its own forward migrations before its operations become available. A Host upgrade failure blocks Host use; a Claw business migration failure blocks product dispatch. Neither failure resets the other owner's state. Compatibility failures remain actionable and preserve retained data.
 
+The current Claw business history starts from one generated initial baseline. Databases marked with revisions from the retired development history are incompatible and require a fresh Instance root. Startup rejects those revisions without stamping, converting, or resetting retained data.
+
 The old standalone Claw database is not a Harness UI store. This redesign promises no automatic conversion of its Profile, Run, checkpoint, environment, or private-memory semantics. An embedding implementation must reject incompatible roots and offer an explicit fresh-instance or separately specified import path. This specification authorizes no deletion or in-place reinterpretation of existing data.
 
 ## Retention and Backup
 
 Archiving a Host Thread, removing a Channel, deleting business records, deleting memory, and destroying an environment are distinct operations under their owners. Removing a referenced Host resource leaves a visible blocked product reference unless an authorized action explicitly resolves the affected obligations. It never silently routes old work to a replacement Thread.
 
-Retain content needed by unsettled items, workflow dependencies, and deliveries. Product deletion coordinates with active product calls and does not bypass Host retention rules. Saved outgoing content can be delivered without reconstructing or rerunning the Agent.
+Retain content needed by unsettled items, worker dependencies, and deliveries. Product deletion coordinates with active product calls and does not bypass Host retention rules. Saved outgoing content can be delivered without reconstructing or rerunning the Agent.
+
+Retention is explicit and preview-first. It removes aged settled Inbox bodies and settled GitHub mirrors in bounded batches while retaining deduplication tombstones, dispatch evidence, and delivery content. Unresolved attempts, shared unsettled peers, active Host work, dependencies, retryable deliveries, and unresolved mark-read actions protect their content. Pruned items cannot be reopened as executable requests. Host history, memory, and workspace deletion remain separate owner operations.
+
+The offline backup command requires the exclusive Instance lease and self-contained selected Host configuration/data paths. It copies regular files at the stopped boundary and publishes a checksummed manifest; symlinks and special files are rejected. Restore verifies the snapshot, requires an empty destination and an explicit acknowledgement of external effects, and leaves a startup-blocking incomplete marker on failure. Host files are restored as files without editing their schema. Absolute paths and external credentials/resources need operator review before startup at another root.
 
 A recoverable backup covers the Host store and its referenced files, selected configuration and memory, and Claw business state at a coordinated quiescent boundary. Copying two live databases independently is not an atomic application snapshot. Working directories, containers, and external systems have their own retention; restoring a backup does not reverse external effects.
 

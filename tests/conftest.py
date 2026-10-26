@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from a13n_claw.bootstrap import initialize
+from a13n_claw.configuration.bootstrap import initialize
 
 
 @pytest.fixture

@@ -17,7 +17,7 @@ Duplicate events reuse their retained disposition. A quoted reply is still an or
 
 One Thread creates canonical Main as a native Host Coordinator on startup. Main's ID is in `status`. If target creation is uncertain or Main is unavailable, Claw preserves the reference and leaves the recovery API available. Ordinary Thread creation never replaces it.
 
-Changing saved mode or Main Project is currently rejected. Initialize another root for a different mode and preserve the original data. There is no automatic history or memory transfer.
+Change `mode` in the saved configuration and restart to apply it to new messages. Other-mode Inbox items remain retained and inactive; there is no automatic history or memory transfer. Main keeps its original Project identity.
 
 ## Bind an external conversation
 
@@ -37,12 +37,22 @@ Authorized input is committed before transport acknowledgement. Attachments are 
 /claw steer <inbox-id> <receipt-id> <text>
 /claw cancel <inbox-id> <receipt-id>
 /claw decisions <inbox-id>
+/claw review <inbox-id>
+/claw respond <inbox-id> <continuation-id> <ordered JSON array>
 /claw answer <inbox-id> <complete DecisionResponseBatch JSON>
 ```
 
 `continue` requires an idle Thread without pending decisions. `steer` and `cancel` require the exact currently active receipt. A stale receipt never controls a replacement operation. `decisions` returns the native pending batch and correlation; `answer` preserves the complete native JSON shape. Oversized responses direct the operator to CLI/API rather than truncating decision JSON. Cards and automatic token streaming are not implemented.
 
+`review` shows numbered requests, question choices, approval arguments, and a copyable `respond` command. Replace every array entry in order: `true`/`false` for approvals and a quoted answer for each question request. For example, `[false, "Use option One"]` denies the first approval and answers the second request. All entries are required, and a stale continuation fails. Native `answer` retains Host batch semantics: omitted requests are declined, not left pending.
+
 A Channel binding is not permission to inspect every Thread. Commands select work originally associated with that same Channel and recheck current sender/operator grants. In One Thread, control of associated work addresses shared Main. Its decisions may reflect shared context; grant `operators` accordingly. Worker history and direct worker conversations use the trusted operator CLI/API.
+
+## Feedback and schedules
+
+Enable `progress_updates` for bounded Lark messages about retained input, admission, and outcomes; `reactions` optionally adds status reactions. Enable `decision_prompts` separately for exact native prompts from an unambiguous operator-originated routed task. All default to false, retain delivery identity, and obey current source grants; a lost send response does not cause an automatic duplicate. Topic-reply fallback stays in the original authorized chat.
+
+Channel operators can ask the Agent to manage isolated [schedules and heartbeat tasks](./schedules.md) through its source-scoped `claw_schedules` tool. Scheduled execution has its own occurrence and result-notification policy; it does not turn worker answers into unrestricted broadcasts.
 
 ## Work with persistent workers
 
@@ -54,7 +64,7 @@ Workers cannot use Claw tools to publish externally in One Thread mode. Native t
 
 ## Process the Inbox explicitly
 
-Main receives content-light attention and uses `claw_inbox_list`, `claw_inbox_read`, and `claw_inbox_file`. Routed Threads receive their original content and accepted attachments. `claw_inbox_settle` records a version-preconditioned disposition:
+Main receives content-light attention and uses `claw_inbox_list`, `claw_inbox_read`, and `claw_inbox_file`. `claw_inbox_context` optionally retrieves earlier retained Lark text in the same authorized Thread and Channel/topic, prioritizing the original reply target. It considers at most 20 candidates and returns up to ten messages, 2,000 characters each and 10,000 text characters total. It rechecks current grants and dispatch barriers; filtered, pruned, other-task, and uncertain-dispatch content stays unavailable. No platform history is fetched, and per-trigger tasks do not inherit earlier task context. Routed Threads receive their original content and accepted attachments. `claw_inbox_settle` records a version-preconditioned disposition:
 
 | Disposition | Meaning                                                |
 | ----------- | ------------------------------------------------------ |
@@ -69,6 +79,6 @@ Operation dependencies use exact `thread_id` and `receipt_id`. After restart, sa
 
 ## Publish and reconcile separately
 
-`claw_send_message` and `claw_send_file` retain content and a stable request key before sending to the original event's permitted destination. In One Thread only Main has this authority; elsewhere the routed Thread does. Final model answers are never broadcast automatically.
+`claw_send_message` and `claw_send_file` retain content and a stable request key before sending to the original event's permitted destination. In One Thread only Main has this authority; elsewhere the routed Thread does. One Thread final answers are never broadcast automatically. In per-Channel/per-trigger modes, `final_reply: true` selects the exact associated completed continuation for a reply to its original destination; an explicit Agent delivery suppresses that automatic result.
 
 Lark upload success is followed by a file reply. Failed upload is a definite non-send; a lost message response is unknown. Delivery reconciliation retries saved content, not inference. Inbox settlement, Host outcome, and external delivery are independent facts.

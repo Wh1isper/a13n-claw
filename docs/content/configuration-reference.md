@@ -20,11 +20,13 @@ Read [Configuration and CLI](./configuration.md) for selection and mutation beha
 | `retry_seconds`      | `30`                        | No-progress/rejection delay, 1–3600 seconds    |
 | `console`            | `true`                      | Serve the packaged Hello World page if present |
 
-Paths resolve relative to the Instance. Settings take effect at startup. `--no-console` overrides the page setting. Listener flags default to loopback port 8080. Saved mode and Main Project must match configuration: changing either on an existing business database is rejected. Use a fresh Instance for another mode; preserve old histories and resolve outstanding effects separately.
+Paths resolve relative to the Instance. Product changes use explicit save/reload; mode, Main Project, Host locations, and Console serving remain startup-only. `--no-console` overrides the page setting. Listener flags default to loopback port 8080. Changing `mode` takes effect on restart: new messages use the selected mode, while old-mode work remains stored and is excluded from current automatic dispatch and delivery. See [routing mode on restart](./operations.md#routing-mode-on-restart). Main Project remains fixed; selecting another Main Project requires a fresh Instance root.
 
 ## Connections
 
-The implemented connection type is `lark`; the adapter boundary and normalized message model are platform-neutral.
+Connections select `lark` or `github`; the adapter boundary and normalized message model are platform-neutral.
+
+### Lark
 
 | Field            | Default / requirement    | Meaning                                       |
 | ---------------- | ------------------------ | --------------------------------------------- |
@@ -36,7 +38,24 @@ The implemented connection type is `lark`; the adapter boundary and normalized m
 | `domain`         | `https://open.feishu.cn` | Feishu or `https://open.larksuite.com`        |
 | `mentions_only`  | `true`                   | Group default; independent of routing mode    |
 
-`status` reports connected/disconnected state and adapter failures. Text and post input, images/files, replies, exact text commands, and JSON decision batches are supported. Interactive cards and other platforms are future adapters. Upload/download availability also depends on actual platform permissions.
+`status` reports connected/disconnected state and adapter failures. Text and post input, images/files, replies, exact text commands, and JSON decision batches are supported. Optional bounded feedback and reactions are available; rich interactive cards remain outside this delivery. Upload/download availability also depends on actual platform permissions.
+
+### GitHub
+
+| Field                      | Default / requirement    | Meaning                                           |
+| -------------------------- | ------------------------ | ------------------------------------------------- |
+| `platform`                 | Required `github`        | Notification polling adapter                      |
+| `account_login`            | Required                 | Authenticated account; checked against `/user`    |
+| `token_env`                | `CLAW_GITHUB_TOKEN`      | Token environment reference                       |
+| `api_url`                  | `https://api.github.com` | Supported API origin                              |
+| `poll_seconds`             | `60`                     | Poll interval, 10–3600 seconds                    |
+| `delay_seconds`            | `600`                    | Delay before admitting an updated notification    |
+| `initial_lookback_seconds` | `0`                      | Initial cutoff; zero starts from activation time  |
+| `mark_read`                | `true`                   | Mark settled eligible notification versions read  |
+| `reasons`                  | `[]`                     | Optional GitHub notification reason filter        |
+| `mentions_only`            | `false`                  | GitHub uses notification reasons, not IM mentions |
+
+GitHub bindings use `chat_id: owner/repository`, no `topic_id`, and explicit allowed author logins. See [GitHub polling](./github.md) for event and read-state semantics.
 
 ## Channels
 
@@ -51,6 +70,10 @@ The implemented connection type is `lark`; the adapter boundary and normalized m
 | `mentions_only`               | `null`                 | Override connection group filter                                     |
 | `project_id`                  | `null`                 | Required distinct native Project per Channel outside One Thread mode |
 | `shared_context_acknowledged` | Required `true`        | Explicit acceptance of shared Agent context and memory               |
+| `progress_updates`            | `false`                | Bounded receipt/admission/terminal feedback                          |
+| `reactions`                   | `false`                | Lark message reactions                                               |
+| `final_reply`                 | `false`                | Automatic final reply in per-Channel/per-trigger mode only           |
+| `decision_prompts`            | `false`                | Exact decision prompt for an unambiguous authorized source           |
 
 One `(connection, chat_id, topic_id)` has one binding. Channel operators must also be allowed senders. Retained events keep their original qualified source; changing a binding cannot redirect saved replies. Removing/disabling it or revoking a sender blocks later reads and delivery but cannot erase already-consumed content.
 

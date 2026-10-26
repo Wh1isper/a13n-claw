@@ -6,9 +6,9 @@
 
 ### Source Implementation and Release Availability
 
-The source embeds one published Harness UI App with native configuration, Threads, decisions, collaboration, environments, and memory. Claw implements a separate business database, Lark/Feishu adapter, three routing modes, Inbox/drain, exact text controls, explicit text/file delivery, and headless CLI/API. The runtime frontend is Hello World. General automation, other adapters, rich cards, and full Console remain future work.
+The source embeds one published Harness UI App with native configuration, Threads, decisions, collaboration, environments, and memory. Claw implements a separate business database, Lark/Feishu interaction and feedback, GitHub notification polling and issue/PR replies, three routing modes, Inbox/drain, exact controls, explicit delivery, isolated schedules/heartbeat, and headless configuration/diagnostics/retention/backup. Compose supplies persistent Docker execution and a shared visible browser through a native Device. The runtime frontend is Hello World. Workflow orchestration, rich interactive cards, token streaming, and full Console are outside this delivery.
 
-The standalone runtime and schema are retired. Existing standalone data requires a fresh explicit Instance; no conversion or deletion is performed. Source-facing guides describe implemented capabilities; published artifacts reflect their tagged source, not later source changes.
+The standalone runtime and schema are retired. Existing standalone data and embedded databases from the retired development migration history require a fresh explicit Instance; no conversion or deletion is performed. [Persistence and recovery](04-persistence-and-recovery.md#upgrades-and-existing-data) owns the baseline compatibility boundary. Source-facing guides describe implemented capabilities; published artifacts reflect their tagged source, not later source changes.
 
 The replacement implementation validates public Host APIs against a published `a13n-harness-ui` version using the [integration acceptance scenarios](11-host-integration.md#integration-acceptance). Source inspection informs that work; runtime tests establish the supported package boundary. Only a demonstrated required behavior missing from public operations justifies a focused upstream request.
 
@@ -32,7 +32,7 @@ Host versions own their resource and saved-state compatibility; Claw owns its pr
 | `docs`            | Private Fumadocs documentation site and Worker configuration    |
 | `spec`            | Accepted target product and architecture contracts              |
 | GitHub Issues     | Proposals and unresolved decisions                              |
-| `deploy/docker`   | Non-root distribution image                                     |
+| `deploy/docker`   | Distribution image and persistent executor/browser deployment   |
 | `CONTRIBUTING.md` | Setup, validation, and release procedure                        |
 | `DEVELOPMENT.md`  | Engineering standards                                           |
 | `AGENTS.md`       | Concise contributor guidance                                    |

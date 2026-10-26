@@ -1,0 +1,13 @@
+schema_version: "1"
+kind: project
+id: project-claw-main
+name: Claw Main
+roots: []
+defaults:
+  agent: agent-claw
+  environment_profile: environment-claw-files
+  environment_bindings:
+    - device_id: device-claw-executor
+      alias: executor
+      working_directory: /workspace
+  default_environment: executor
