@@ -31,7 +31,7 @@ jobs:
       - run: uv run --locked pytest
       - if: runner.os == 'Linux'
         run: make lint typecheck deps-check
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.30.3
       - uses: actions/setup-node@v7
@@ -55,7 +55,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.13"
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.30.3
       - uses: actions/setup-node@v7
