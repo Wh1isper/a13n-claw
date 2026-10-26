@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
 import { data, type Schema } from "../api/client";
 import { useApi } from "../api/session";
-import { Badge, Empty, ErrorNotice, Loading, Panel } from "./ui";
+import { Icon, IconButton } from "./icons";
+import { Badge, Info, ErrorNotice, Loading, Panel } from "./ui";
 import { duration, timestamp } from "../format";
 import styles from "./allowances.module.css";
 
@@ -17,12 +18,21 @@ export function Allowances() {
     <section className="stack">
       <header className="page-header">
         <div>
-          <h2>Subscription allowance</h2>
-          <p className="muted">
-            Current provider limits, including use outside Claw.
-          </p>
+          <div className="toolbar">
+            <h2>Account allowance</h2>
+            <Info label="Allowance details">
+              Provider totals include activity outside Claw.
+            </Info>
+          </div>
         </div>
-        <Link to="/models?tab=accounts">Manage accounts →</Link>
+        <Link
+          className="icon-button button"
+          aria-label="Manage accounts"
+          title="Manage accounts"
+          to="/models?tab=accounts"
+        >
+          <Icon name="right" />
+        </Link>
       </header>
       <ErrorNotice
         error={subscriptions.error}
@@ -38,12 +48,6 @@ export function Allowances() {
           <SelectedAllowance provider="copilot" />
           <SelectedAllowance provider="chatgpt" />
         </div>
-      )}
-      {subscriptions.data?.accounts.length === 0 && (
-        <p className="hint">
-          No managed Codex or Grok accounts. Add one in Models & Accounts to see
-          its allowance here.
-        </p>
       )}
     </section>
   );
@@ -138,92 +142,97 @@ export function ManagedAllowance({
         </Badge>
       }
     >
-      <div className={`panel-body ${styles.body}`}>
-        <p className="eyebrow">{account.provider}</p>
-        {!snapshot ? (
-          <p className="muted">
-            {authentication.usable
-              ? "Allowance has not been observed yet."
-              : "Sign in to read provider allowance."}
-          </p>
-        ) : "rate_limit" in snapshot ? (
-          <>
-            <p className="hint">{snapshot.plan_type}</p>
-            <Windows limits={snapshot.rate_limit} />
-            {snapshot.additional_rate_limits?.map((extra, i) => (
-              <div key={i}>
-                <p className="hint">{extra.limit_name}</p>
-                <Windows limits={extra.rate_limit} />
-              </div>
-            ))}
-            {snapshot.credits && (
-              <p className="hint">
-                Paid credits:{" "}
-                {snapshot.credits.unlimited
-                  ? "Unlimited"
-                  : (snapshot.credits.balance ?? "Unavailable")}
-              </p>
-            )}
-            {snapshot.rate_limit_reset_credits && (
-              <p className="hint">
-                {snapshot.rate_limit_reset_credits.available_count} reset
-                vouchers available
-              </p>
-            )}
-            {snapshot.spend_control && (
-              <div className="stack">
+      {(snapshot || authentication.usable || actions) && (
+        <div className={`panel-body ${styles.body}`}>
+          <p className="eyebrow">{account.provider}</p>
+          {!snapshot ? (
+            authentication.usable && (
+              <p className="muted">Allowance unavailable</p>
+            )
+          ) : "rate_limit" in snapshot ? (
+            <>
+              <p className="hint">{snapshot.plan_type}</p>
+              <Windows limits={snapshot.rate_limit} />
+              {snapshot.additional_rate_limits?.map((extra, i) => (
+                <div key={i}>
+                  <p className="hint">{extra.limit_name}</p>
+                  <Windows limits={extra.rate_limit} />
+                </div>
+              ))}
+              {snapshot.credits && (
                 <p className="hint">
-                  Spend control:{" "}
-                  {snapshot.spend_control.reached
-                    ? "Limit reached"
-                    : "Within limit"}
+                  Paid credits:{" "}
+                  {snapshot.credits.unlimited
+                    ? "Unlimited"
+                    : (snapshot.credits.balance ?? "Unavailable")}
                 </p>
-                {snapshot.spend_control.individual_limit && (
-                  <>
-                    <QuotaMeter
-                      label="Individual spending limit"
-                      used={
-                        snapshot.spend_control.individual_limit.used_percent
-                      }
-                      reset={snapshot.spend_control.individual_limit.reset_at}
-                    />
-                    <p className="hint">
-                      {snapshot.spend_control.individual_limit.used} used /{" "}
-                      {snapshot.spend_control.individual_limit.limit} limit ·{" "}
-                      {snapshot.spend_control.individual_limit.remaining}{" "}
-                      remaining
-                    </p>
-                  </>
-                )}
-              </div>
-            )}
-          </>
-        ) : "config" in snapshot && snapshot.config ? (
-          <>
-            <GrokBilling billing={snapshot.config} />
-          </>
-        ) : (
-          <p className="muted">Provider did not return numeric allowance.</p>
-        )}
-        {usage.error && authentication.usable && (
-          <p className="notice error">
-            {snapshot
-              ? "Refresh failed. Showing the last successful observation."
-              : "Provider allowance could not be refreshed."}
-          </p>
-        )}
-        <ErrorNotice error={refresh.error} />
-        <div className={styles.footer}>
-          <span className="hint">Observed {timestamp(usage.observed_at)}</span>
-          <button
-            disabled={!authentication.usable || refresh.isPending}
-            onClick={() => refresh.mutate()}
-          >
-            {refresh.isPending ? "Refreshing…" : "Refresh"}
-          </button>
+              )}
+              {snapshot.rate_limit_reset_credits && (
+                <p className="hint">
+                  {snapshot.rate_limit_reset_credits.available_count} reset
+                  vouchers available
+                </p>
+              )}
+              {snapshot.spend_control && (
+                <div className="stack">
+                  <p className="hint">
+                    Spend control:{" "}
+                    {snapshot.spend_control.reached
+                      ? "Limit reached"
+                      : "Within limit"}
+                  </p>
+                  {snapshot.spend_control.individual_limit && (
+                    <>
+                      <QuotaMeter
+                        label="Individual spending limit"
+                        used={
+                          snapshot.spend_control.individual_limit.used_percent
+                        }
+                        reset={snapshot.spend_control.individual_limit.reset_at}
+                      />
+                      <p className="hint">
+                        {snapshot.spend_control.individual_limit.used} used /{" "}
+                        {snapshot.spend_control.individual_limit.limit} limit ·{" "}
+                        {snapshot.spend_control.individual_limit.remaining}{" "}
+                        remaining
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+            </>
+          ) : "config" in snapshot && snapshot.config ? (
+            <>
+              <GrokBilling billing={snapshot.config} />
+            </>
+          ) : (
+            <p className="muted">Allowance unavailable</p>
+          )}
+          {usage.error && authentication.usable && (
+            <p className="notice error">
+              {snapshot
+                ? "Refresh failed · last known allowance"
+                : "Refresh failed"}
+            </p>
+          )}
+          <ErrorNotice error={refresh.error} />
+          {authentication.usable && (
+            <div className={styles.footer}>
+              <span className="hint">
+                {usage.observed_at ? timestamp(usage.observed_at) : ""}
+              </span>
+              <IconButton
+                icon="refresh"
+                label="Refresh"
+                busy={refresh.isPending}
+                disabled={!authentication.usable || refresh.isPending}
+                onClick={() => refresh.mutate()}
+              />
+            </div>
+          )}
+          {actions}
         </div>
-        {actions}
-      </div>
+      )}
     </Panel>
   );
 }
@@ -268,57 +277,56 @@ export function SelectedAllowance({
         )
       }
     >
-      <div className={`panel-body ${styles.body}`}>
-        <ErrorNotice error={account.error} />
-        {account.isPending ? (
-          <Loading />
-        ) : (
-          <>
-            <p className="hint">
-              {account.data?.account_id ?? "Selected account"}
-            </p>
-            {provider === "chatgpt" ? (
-              <p className="muted">
-                This connection provides login status. Numeric allowance is
-                unavailable.
-              </p>
-            ) : account.data?.usable ? (
-              <>
-                <ErrorNotice
-                  error={quota.error}
-                  retry={() => void quota.refetch()}
-                />
-                {quota.isPending ? (
-                  <Loading />
-                ) : (
-                  quota.data && (
-                    <>
-                      <p className="hint">
-                        {quota.data.copilot_plan ?? "Current plan"}
-                      </p>
-                      <CopilotBuckets usage={quota.data} />
-                      <p className="hint">
-                        Observed {timestamp(quota.dataUpdatedAt / 1000)}
-                      </p>
-                      <button
-                        disabled={quota.isFetching}
-                        onClick={() => void quota.refetch()}
-                      >
-                        Refresh allowance
-                      </button>
-                    </>
-                  )
-                )}
-              </>
-            ) : (
-              <Empty title="Not signed in">
-                Connect an account to view allowance.
-              </Empty>
-            )}
-          </>
-        )}
-        {actions}
-      </div>
+      {(account.isPending ||
+        account.error ||
+        account.data?.usable ||
+        actions) && (
+        <div className={`panel-body ${styles.body}`}>
+          <ErrorNotice error={account.error} />
+          {account.isPending ? (
+            <Loading />
+          ) : (
+            <>
+              {account.data?.account_id && (
+                <p className="hint">{account.data.account_id}</p>
+              )}
+              {account.data?.usable && provider === "chatgpt" ? (
+                <p className="muted">Allowance unavailable</p>
+              ) : account.data?.usable ? (
+                <>
+                  <ErrorNotice
+                    error={quota.error}
+                    retry={() => void quota.refetch()}
+                  />
+                  {quota.isPending ? (
+                    <Loading />
+                  ) : (
+                    quota.data && (
+                      <>
+                        <p className="hint">
+                          {quota.data.copilot_plan ?? "Current plan"}
+                        </p>
+                        <CopilotBuckets usage={quota.data} />
+                        <p className="hint">
+                          Observed {timestamp(quota.dataUpdatedAt / 1000)}
+                        </p>
+                        <IconButton
+                          icon="refresh"
+                          label="Refresh allowance"
+                          busy={quota.isFetching}
+                          disabled={quota.isFetching}
+                          onClick={() => void quota.refetch()}
+                        />
+                      </>
+                    )
+                  )}
+                </>
+              ) : null}
+            </>
+          )}
+          {actions}
+        </div>
+      )}
     </Panel>
   );
 }

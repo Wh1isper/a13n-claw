@@ -66,7 +66,7 @@ export function AccountReset({
   return (
     <Modal
       title={`Reset allowance · ${account.name}`}
-      description="Redeem one provider voucher to reset eligible Codex rate-limit windows. This consumes the selected voucher."
+      description="Uses one voucher to reset Codex rate limits."
       close={() => {
         if (!redeem.isPending) close();
       }}
@@ -81,7 +81,7 @@ export function AccountReset({
             <p>
               {attempt.result
                 ? `Provider confirmed: ${attempt.result.code.replaceAll("_", " ")}. ${attempt.result.windows_reset ?? 0} windows reset.`
-                : "Keep this request identity until the outcome is known. Retry sends the same account, voucher, and redemption UUID."}
+                : "Outcome pending. Retry uses the same request."}
             </p>
             <dl className="facts">
               <dt>Local account</dt>
@@ -96,8 +96,7 @@ export function AccountReset({
             {!attempt.result && (
               <>
                 <p className="hint">
-                  This identity is retained while this Console session remains
-                  connected. Copy it before reloading or disconnecting.
+                  Copy the request ID before reloading or disconnecting.
                 </p>
                 <button
                   className="primary"
@@ -188,19 +187,12 @@ export function AccountReset({
                 </button>
               </>
             ) : (
-              !usage.error && (
-                <Empty title="No eligible reset vouchers">
-                  Refresh to check the provider again.
-                </Empty>
-              )
+              !usage.error && <Empty title="No eligible vouchers" />
             )}
           </>
         )}
         {attempt?.result && usage.error && (
-          <p className="notice">
-            Redemption remains confirmed. The latest allowance could not be
-            refreshed.
-          </p>
+          <p className="notice">Voucher redeemed. Allowance refresh failed.</p>
         )}
       </div>
     </Modal>

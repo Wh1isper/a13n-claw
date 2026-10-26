@@ -1,3 +1,4 @@
+import { IconButton } from "../components/icons";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { data, type Schema } from "../api/client";
@@ -58,7 +59,6 @@ export function GroupEditor({
   return (
     <Modal
       title={view ? "Edit subscription group" : "Add subscription group"}
-      description="Groups select managed accounts for future requests. Ordered groups try accounts in order; weighted groups use the configured weights."
       close={() => {
         if (!save.isPending) close();
       }}
@@ -133,12 +133,7 @@ export function GroupEditor({
           <div className="stack">
             <h3>Accounts</h3>
             <ErrorNotice error={accounts.error} />
-            {members.length === 0 && (
-              <Empty title="No accounts selected">
-                Add an account below. Disabled or signed-out accounts remain
-                visible but may not be usable.
-              </Empty>
-            )}
+            {members.length === 0 && <Empty title="No accounts selected" />}
             {members.map((member, index) => (
               <div className="member-row" key={member.account}>
                 <div className="grow">
@@ -172,34 +167,31 @@ export function GroupEditor({
                   </Field>
                 )}
                 <div className="actions">
-                  <button
+                  <IconButton
+                    icon="up"
                     type="button"
-                    aria-label={`Move ${member.account} up`}
+                    label={`Move ${member.account} up`}
                     disabled={index === 0}
                     onClick={() => move(index, -1)}
-                  >
-                    ↑
-                  </button>
-                  <button
+                  />
+                  <IconButton
+                    icon="down"
                     type="button"
-                    aria-label={`Move ${member.account} down`}
+                    label={`Move ${member.account} down`}
                     disabled={index === members.length - 1}
                     onClick={() => move(index, 1)}
-                  >
-                    ↓
-                  </button>
-                  <button
+                  />
+                  <IconButton
+                    icon="close"
                     type="button"
-                    aria-label={`Remove ${member.account}`}
+                    label={`Remove ${member.account}`}
                     onClick={() =>
                       setGroup({
                         ...group,
                         accounts: members.filter((_, i) => i !== index),
                       })
                     }
-                  >
-                    Remove
-                  </button>
+                  />
                 </div>
               </div>
             ))}

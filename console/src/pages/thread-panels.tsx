@@ -5,6 +5,7 @@ import { data, type Schema } from "../api/client";
 import { useApi } from "../api/session";
 import {
   Badge,
+  Info,
   Empty,
   ErrorNotice,
   Loading,
@@ -12,6 +13,7 @@ import {
   Panel,
   Raw,
 } from "../components/ui";
+import { IconButton } from "../components/icons";
 import { exact, money, timestamp } from "../format";
 
 type ThreadProps = { threadId: string };
@@ -59,27 +61,26 @@ export function ThreadHistory({
       {view && (
         <>
           <div className="pagination">
-            <button
+            <IconButton
+              icon="left"
+              label="Older"
               disabled={!view.next_cursor}
               onClick={() => setCursor(view.next_cursor!)}
-            >
-              Older
-            </button>
-            <button
+            />
+            <IconButton
+              icon="right"
+              label="Newer"
               disabled={!view.newer_cursor}
               onClick={() => setCursor(view.newer_cursor!)}
-            >
-              Newer
-            </button>
-            <button disabled={!cursor} onClick={() => setCursor(undefined)}>
-              Latest
-            </button>
+            />
+            <IconButton
+              icon="refresh"
+              label="Latest"
+              disabled={!cursor}
+              onClick={() => setCursor(undefined)}
+            />
           </div>
-          {!view.entries.length && (
-            <Empty title="No saved history yet">
-              Live work may not have produced a saved message.
-            </Empty>
-          )}
+          {!view.entries.length && <Empty title="No saved history" />}
           <div className="transcript">
             {view.entries.map((entry) => (
               <article className="transcript-entry" key={entry.position}>
@@ -120,9 +121,7 @@ export function TranscriptPart({ part }: { part: Schema["TranscriptPart"] }) {
         </pre>
       )}
       {(part.text_truncated || part.value_omitted) && (
-        <p className="hint">
-          Content is truncated or omitted in the saved projection.
-        </p>
+        <p className="hint">Saved excerpt</p>
       )}
       {part.content_parts.length > 0 && (
         <Raw title="Media and structured content" value={part.content_parts} />
@@ -178,22 +177,23 @@ export function ThreadTools({ threadId }: ThreadProps) {
       ),
   });
   return (
-    <Panel title="Retained tool executions">
-      <div className="panel-body">
-        <p className="hint">
-          Tool status is independent of Run status. Results remain behind native
-          Host result tools.
-        </p>
-      </div>
+    <Panel
+      title="Tool executions"
+      actions={
+        <Info label="Tool status details">
+          Tool execution status is tracked separately from Run status.
+        </Info>
+      }
+    >
       <ErrorNotice error={tools.error} retry={() => void tools.refetch()} />
       {tools.isPending && <Loading />}
       {tools.data && (
         <>
           {!tools.data.length ? (
-            <Empty title="No tool executions on this page" />
+            <Empty title="No tool executions" />
           ) : (
             <div className="table-scroll">
-              <table>
+              <table className="responsive-table">
                 <thead>
                   <tr>
                     <th>Tool</th>
@@ -205,13 +205,13 @@ export function ThreadTools({ threadId }: ThreadProps) {
                 <tbody>
                   {tools.data.map((tool) => (
                     <tr key={tool.execution_id}>
-                      <td>
+                      <td className="row-title" data-label="Tool">
                         {tool.tool_name}
                         <span className="subline">
                           <code>{tool.execution_id}</code>
                         </span>
                       </td>
-                      <td>
+                      <td data-label="Status">
                         <Badge>{tool.status}</Badge>
                         <span className="subline">
                           {tool.result_available
@@ -222,10 +222,10 @@ export function ThreadTools({ threadId }: ThreadProps) {
                             : ""}
                         </span>
                       </td>
-                      <td>
+                      <td data-label="Run">
                         <code>{tool.run_id}</code>
                       </td>
-                      <td>{timestamp(tool.created_at)}</td>
+                      <td data-label="Created">{timestamp(tool.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -233,16 +233,19 @@ export function ThreadTools({ threadId }: ThreadProps) {
             </div>
           )}
           <div className="pagination">
-            <button disabled={!offset} onClick={() => setOffset(offset - 20)}>
-              Previous
-            </button>
+            <IconButton
+              icon="left"
+              label="Previous"
+              disabled={!offset}
+              onClick={() => setOffset(offset - 20)}
+            />
             <span>Page {offset / 20 + 1}</span>
-            <button
+            <IconButton
+              icon="right"
+              label="Next"
               disabled={tools.data.length < 20}
               onClick={() => setOffset(offset + 20)}
-            >
-              Next
-            </button>
+            />
           </div>
         </>
       )}
@@ -291,11 +294,7 @@ export function ThreadUsage({ threadId }: ThreadProps) {
       {usage.isPending && <Loading />}
       {view && (
         <>
-          <p className="hint">
-            Lifetime ledger through {timestamp(view.observed_through)}.
-            Root-family descendants and auxiliary agents are included;
-            independent coordinator workers have their own Thread totals.
-          </p>
+          <p className="hint">Updated {timestamp(view.observed_through)}</p>
           <div className="cards">
             {(
               [
@@ -318,12 +317,15 @@ export function ThreadUsage({ threadId }: ThreadProps) {
               </Panel>
             ))}
           </div>
-          <Panel title="Token counters">
+          <Panel
+            title="Token counters"
+            actions={
+              <Info label="Token counter details">
+                Input and output include cache and audio tokens.
+              </Info>
+            }
+          >
             <div className="panel-body">
-              <p className="hint">
-                Cache and audio counters are subsets, not additions to input +
-                output.
-              </p>
               <dl className="facts">
                 {view.combined.tokens.map(([key, value]) => (
                   <div className="fact-row" key={key}>
@@ -337,12 +339,11 @@ export function ThreadUsage({ threadId }: ThreadProps) {
           <Panel title="Recent Runs">
             <div className="panel-body">
               <p className="hint">
-                Bounded ledger detail, not an exhaustive execution index. Other
-                Runs: {exact(tokenTotal(view.other_runs))} Tokens.
+                Other Runs: {exact(tokenTotal(view.other_runs))} tokens
               </p>
             </div>
             <div className="table-scroll">
-              <table>
+              <table className="responsive-table">
                 <thead>
                   <tr>
                     <th>Run</th>
@@ -354,15 +355,17 @@ export function ThreadUsage({ threadId }: ThreadProps) {
                 <tbody>
                   {view.recent_runs.map((run) => (
                     <tr key={`${run.run_id}:${run.agent_instance_id}`}>
-                      <td>
+                      <td className="row-title" data-label="Run">
                         <code>{run.run_id}</code>
                         <span className="subline">{run.agent_instance_id}</span>
                       </td>
-                      <td>{run.descendant ? "Descendant" : "Root"}</td>
-                      <td className="numeric">
+                      <td data-label="Scope">
+                        {run.descendant ? "Descendant" : "Root"}
+                      </td>
+                      <td className="numeric" data-label="Tokens">
                         {exact(tokenTotal(run.totals))}
                       </td>
-                      <td className="numeric">
+                      <td className="numeric" data-label="Cost">
                         <Cost totals={run.totals} />
                       </td>
                     </tr>
@@ -412,9 +415,6 @@ export function ThreadConfiguration({ threadId }: ThreadProps) {
         <div className="split">
           <Panel title="Next Run">
             <div className="panel-body stack">
-              <p className="hint">
-                Selections resolved from the current accepted configuration.
-              </p>
               <dl className="facts">
                 <dt>Model</dt>
                 <dd>{view.next_model_id ?? "Unavailable"}</dd>
@@ -488,10 +488,7 @@ export function ThreadBusiness({ threadId }: ThreadProps) {
       {query.isPending && <Loading />}
       {view && (
         <>
-          <p className="hint">
-            Latest {view.limit} records per collection, joined by retained IDs.
-            Execution and business settlement are independent.
-          </p>
+          <p className="hint">Latest {view.limit} records per source</p>
           <div className="cards">
             <Panel title="Inbox">
               {view.inbox.length ? (

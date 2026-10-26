@@ -1,3 +1,4 @@
+import { Icon, IconButton } from "../components/icons";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, data, type Schema } from "../api/client";
@@ -60,13 +61,9 @@ export function Accounts({ choices }: { choices: Schema["ModelChoices"] }) {
       <div className="toolbar">
         <div className="grow">
           <h2>Subscription accounts</h2>
-          <p className="hint">
-            Provider allowance includes activity outside Claw. Account identity
-            is not historical token attribution.
-          </p>
         </div>
         <button className="primary" onClick={() => setEdit("new")}>
-          Add account
+          <Icon name="plus" /> Add account
         </button>
       </div>
       <ErrorNotice
@@ -131,17 +128,23 @@ export function Accounts({ choices }: { choices: Schema["ModelChoices"] }) {
                         Sign in
                       </button>
                     )}
-                    <button onClick={() => setEdit(view.account)}>Edit</button>
+                    <IconButton
+                      icon="edit"
+                      label="Edit"
+                      onClick={() => setEdit(view.account)}
+                    />
                     {view.account.provider === "codex" && (
-                      <button
+                      <IconButton
+                        icon="refresh"
+                        label="Reset vouchers"
                         disabled={!view.authentication.usable}
                         onClick={() => setReset(view.account)}
-                      >
-                        Reset vouchers
-                      </button>
+                      />
                     )}
                     {view.authentication.usable && (
-                      <button
+                      <IconButton
+                        icon="logout"
+                        label="Sign out"
                         onClick={() =>
                           setConfirm({
                             title: `Sign out ${view.account.name}?`,
@@ -162,11 +165,11 @@ export function Accounts({ choices }: { choices: Schema["ModelChoices"] }) {
                             },
                           })
                         }
-                      >
-                        Sign out
-                      </button>
+                      />
                     )}
-                    <button
+                    <IconButton
+                      icon="trash"
+                      label="Delete"
                       className="danger"
                       onClick={() =>
                         setConfirm({
@@ -186,9 +189,7 @@ export function Accounts({ choices }: { choices: Schema["ModelChoices"] }) {
                           },
                         })
                       }
-                    >
-                      Delete
-                    </button>
+                    />
                   </div>
                 </div>
               }
@@ -274,7 +275,6 @@ function AccountEditor({
   return (
     <Modal
       title={account ? "Edit account" : "Add subscription account"}
-      description="Each registration represents one upstream identity. Create another registration to connect a different account."
       close={() => {
         if (!save.isPending) close();
       }}
@@ -317,8 +317,7 @@ function AccountEditor({
         <ErrorNotice error={save.error} />
         {ambiguous && (
           <p className="notice">
-            The outcome is unknown. Close and refresh the account list before
-            creating another account.
+            Outcome unknown. Refresh the account list before creating another.
           </p>
         )}
         <div className="form-actions">
@@ -422,20 +421,28 @@ function SelectedAccount({
               </button>
             )}
             {connection?.source_selection && (
-              <button onClick={() => setShowSources(!showSources)}>
-                Account sources
-              </button>
+              <IconButton
+                icon="archive"
+                label="Account sources"
+                aria-expanded={showSources}
+                onClick={() => setShowSources(!showSources)}
+              />
             )}
             {connection?.model_discovery && (
-              <button
+              <IconButton
+                icon="search"
+                label="Discover models"
+                busy={discover.isPending}
                 disabled={!account.data?.usable || discover.isPending}
                 onClick={() => discover.mutate()}
-              >
-                {discover.isPending ? "Discovering…" : "Discover models"}
-              </button>
+              />
             )}
             {account.data?.usable && (
-              <button onClick={() => setConfirmLogout(true)}>Sign out</button>
+              <IconButton
+                icon="logout"
+                label="Sign out"
+                onClick={() => setConfirmLogout(true)}
+              />
             )}
           </div>
           {showSources && (
@@ -520,10 +527,6 @@ export function Credentials() {
       actions={<button onClick={() => setEdit("")}>Add credential</button>}
     >
       <div className="panel-body stack">
-        <p className="hint">
-          Models reference these keys by ID. Values are write-only; environment
-          variables remain a separate credential source.
-        </p>
         <ErrorNotice error={list.error} />
         {list.isPending ? (
           <Loading />
@@ -532,9 +535,11 @@ export function Credentials() {
             <div className="toolbar" key={credential.credential_ref}>
               <code className="grow">{credential.credential_ref}</code>
               <Badge>stored</Badge>
-              <button onClick={() => setEdit(credential.credential_ref)}>
-                Replace
-              </button>
+              <IconButton
+                icon="key"
+                label="Replace"
+                onClick={() => setEdit(credential.credential_ref)}
+              />
             </div>
           ))
         ) : (
@@ -578,7 +583,6 @@ function CredentialEditor({
   return (
     <Modal
       title={reference ? "Replace API key" : "Store API key"}
-      description="The key is sent to the protected Host credential store. It is never written into a model resource."
       close={() => {
         if (!save.isPending) close();
       }}

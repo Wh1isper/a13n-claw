@@ -16,9 +16,7 @@ export function jsonObject(text: string): JsonObject {
 export function SourceConflict({ error }: { error: unknown }) {
   return error instanceof ApiError && error.status === 409 ? (
     <p className="notice">
-      The saved source may have changed. Your draft is still here. Close this
-      editor and refresh the inventory before reopening it; the current source
-      will not be overwritten.
+      Source changed. Copy your draft, then refresh and reopen the editor.
     </p>
   ) : null;
 }
@@ -175,7 +173,6 @@ export function ModelEditor({
   return (
     <Modal
       title={view ? "Edit model" : "Add model"}
-      description="Save a native Host model resource. Changes apply to future Runs; captured Runs keep their configuration."
       close={() => {
         if (!save.isPending) close();
       }}
@@ -230,10 +227,7 @@ export function ModelEditor({
               ))}
             </select>
           </Field>
-          <Field
-            label="Provider model ID"
-            hint="Suggestions are not proof of account entitlement. Custom provider IDs are supported."
-          >
+          <Field label="Provider model ID" hint="Custom model IDs supported.">
             <input
               required
               value={modelId}
@@ -283,7 +277,7 @@ export function ModelEditor({
                     ? "Credential reference"
                     : "Environment variable"
                 }
-                hint="Enter the reference, never the API key itself."
+                hint="Reference name only."
               >
                 <input
                   required
@@ -323,8 +317,7 @@ export function ModelEditor({
                 label="Settings preset"
                 hint={
                   options.data.presets.find((p) => p.value === preset)
-                    ?.description ??
-                  "Keep existing settings or use an offered provider preset."
+                    ?.description ?? ""
                 }
               >
                 <select
@@ -354,9 +347,7 @@ export function ModelEditor({
               <Field
                 label="Model settings (JSON)"
                 hint={
-                  preset
-                    ? "The selected preset replaces these settings."
-                    : "Native provider settings are preserved when other fields change."
+                  preset ? "The selected preset replaces these settings." : ""
                 }
               >
                 <textarea
@@ -369,7 +360,7 @@ export function ModelEditor({
               {connection.authentication === "api_key" && (
                 <Field
                   label="Connection configuration (JSON)"
-                  hint="The Base URL field above owns base_url. Other native configuration is preserved."
+                  hint="Use the Base URL field for base_url."
                 >
                   <textarea
                     spellCheck={false}

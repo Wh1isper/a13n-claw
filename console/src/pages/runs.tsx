@@ -1,3 +1,4 @@
+import { Icon, IconButton } from "../components/icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router";
 import { data, type Schema } from "../api/client";
@@ -62,14 +63,13 @@ export function Runs() {
     <>
       <PageHeader
         title="Runs"
-        description="Inspect saved work, current activity, and exact source records. Continue conversations in IM."
         actions={
-          <button
+          <IconButton
+            icon="refresh"
+            label="Refresh"
             disabled={threads.isFetching}
             onClick={() => void threads.refetch()}
-          >
-            Refresh
-          </button>
+          />
         }
       />
       <form
@@ -88,10 +88,10 @@ export function Runs() {
           key={search}
           name="search"
           aria-label="Search Threads"
-          placeholder="Search title or Thread ID"
+          placeholder="Search Threads"
           defaultValue={search}
         />
-        <button type="submit">Search</button>
+        <IconButton icon="search" label="Search" type="submit" />
         <label>
           Project
           <select
@@ -130,11 +130,11 @@ export function Runs() {
           >
             {threads.data.threads.length ? (
               <div className="table-scroll">
-                <table>
+                <table className="responsive-table">
                   <thead>
                     <tr>
                       <th>Thread</th>
-                      <th>Activity / latest attempt</th>
+                      <th>Activity</th>
                       <th>Project</th>
                       <th>Updated</th>
                     </tr>
@@ -142,7 +142,7 @@ export function Runs() {
                   <tbody>
                     {threads.data.threads.map((thread) => (
                       <tr key={thread.thread_id}>
-                        <td>
+                        <td data-label="Thread">
                           <Link to={`/runs/${thread.thread_id}`}>
                             {thread.title || "Untitled Thread"}
                           </Link>
@@ -154,10 +154,10 @@ export function Runs() {
                             {thread.archived ? " · Archived" : ""}
                           </span>
                         </td>
-                        <td>
+                        <td data-label="Activity">
                           <Activity thread={thread} />
                         </td>
-                        <td>
+                        <td data-label="Project">
                           {projects.data?.find(
                             (item) =>
                               item.project_id ===
@@ -166,7 +166,7 @@ export function Runs() {
                             thread.configuration.project_id ||
                             "No project"}
                         </td>
-                        <td>
+                        <td data-label="Updated">
                           {timestamp(thread.activity_at ?? thread.updated_at)}
                         </td>
                       </tr>
@@ -175,20 +175,22 @@ export function Runs() {
                 </table>
               </div>
             ) : (
-              <Empty title="No matching Threads">
-                Work created in IM or through the CLI will appear here.
-              </Empty>
+              <Empty title="No matching Threads" />
             )}
             <div className="pagination">
               {cursor && (
-                <button onClick={() => update("cursor", "")}>First page</button>
+                <IconButton
+                  icon="left"
+                  label="First page"
+                  onClick={() => update("cursor", "")}
+                />
               )}
-              <button
+              <IconButton
+                icon="right"
+                label="Next page"
                 disabled={!threads.data.next_cursor}
                 onClick={() => update("cursor", threads.data!.next_cursor!)}
-              >
-                Next page
-              </button>
+              />
             </div>
           </Panel>
         )
@@ -202,7 +204,7 @@ function Activity({ thread }: { thread: Schema["ThreadSummary"] }) {
     <div className="stack compact-stack">
       <Badge>{thread.root_activity.state}</Badge>
       <span className="hint">
-        Latest attempt: {thread.last_execution?.status ?? "none"}
+        Latest: {thread.last_execution?.status ?? "—"}
       </span>
     </div>
   );
@@ -245,19 +247,18 @@ function ThreadDetail({ threadId }: { threadId: string }) {
   return (
     <>
       <Link to="/runs" className="back-link">
-        ← All Threads
+        <Icon name="left" /> Threads
       </Link>
       <PageHeader
         title={thread?.title || "Thread details"}
-        description="Read-only investigation. Saved execution, current activity, and delivery have separate outcomes."
         actions={
-          <button
+          <IconButton
+            icon="refresh"
+            label="Refresh"
             onClick={() =>
               void cache.invalidateQueries({ queryKey: ["thread", threadId] })
             }
-          >
-            Refresh
-          </button>
+          />
         }
       />
       <Copy value={threadId} />
@@ -336,10 +337,6 @@ function ThreadDetail({ threadId }: { threadId: string }) {
                                 {thread.last_execution.main_account.account_id}
                               </code>
                             </p>
-                            <p className="hint">
-                              Execution provenance; historical Token totals are
-                              not attributed to this account.
-                            </p>
                             <Raw value={thread.last_execution.main_account} />
                           </>
                         )}
@@ -367,13 +364,9 @@ function ThreadDetail({ threadId }: { threadId: string }) {
                       <p className="muted">
                         {thread.parent_thread_id
                           ? "Child execution is observed through its root Thread."
-                          : "No active root operation observed."}
+                          : "Idle"}
                       </p>
                     )}
-                    <p className="hint">
-                      An inactive Thread is not proof of success. Tool
-                      executions can outlive a Run.
-                    </p>
                     <dl className="facts">
                       <dt>Project</dt>
                       <dd>{thread.configuration.project_id ?? "None"}</dd>
@@ -425,10 +418,6 @@ function ThreadDetail({ threadId }: { threadId: string }) {
                     <p>
                       {timestamp(thread.completion.completed_at)} ·{" "}
                       <code>{thread.completion.run_id}</code>
-                    </p>
-                    <p className="hint">
-                      The latest successfully selected saved result may belong
-                      to an earlier attempt.
                     </p>
                   </div>
                 </Panel>

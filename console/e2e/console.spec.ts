@@ -10,7 +10,7 @@ test("schedule CRUD, preview, manual execution and read-only investigation", asy
   await page.getByLabel("Operator token").fill(token);
   await page.getByRole("button", { name: "Open Console" }).click();
   await expect(
-    page.getByRole("heading", { name: "Accepted schedules" }),
+    page.getByRole("heading", { name: "Schedules", level: 2, exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Create schedule" }).click();
   const dialog = page.getByRole("dialog");
@@ -68,7 +68,7 @@ test("schedule CRUD, preview, manual execution and read-only investigation", asy
   ).toBeVisible();
   await page.getByRole("link", { name: "Tools", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Retained tool executions" }),
+    page.getByRole("heading", { name: "Tool executions", exact: true }),
   ).toBeVisible();
   await page.getByRole("link", { name: "Schedules", exact: true }).click();
   await page.getByRole("button", { name: "Pause", exact: true }).click();

@@ -1,3 +1,4 @@
+import { Icon, IconButton } from "../components/icons";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -47,18 +48,17 @@ export function Models() {
     <>
       <PageHeader
         title="Models & Accounts"
-        description="Configure connections, credentials, and subscription routing."
         actions={
-          <button
+          <IconButton
+            icon="refresh"
+            label="Refresh"
             disabled={inventory.isFetching}
             onClick={() => {
               void inventory.refetch();
               void cache.invalidateQueries({ queryKey: ["subscriptions"] });
               void cache.invalidateQueries({ queryKey: ["account"] });
             }}
-          >
-            Refresh
-          </button>
+          />
         }
       />
       <nav className="tabs" aria-label="Model settings">
@@ -88,13 +88,13 @@ export function Models() {
           title="Subscription groups"
           actions={
             <button className="primary" onClick={() => setGroup("new")}>
-              Add group
+              <Icon name="plus" /> Add group
             </button>
           }
         >
           {inventory.data?.groups.length ? (
             <div className="table-scroll">
-              <table>
+              <table className="responsive-table">
                 <thead>
                   <tr>
                     <th>Group</th>
@@ -110,27 +110,31 @@ export function Models() {
                 <tbody>
                   {inventory.data.groups.map((view) => (
                     <tr key={view.resource.id}>
-                      <td>
+                      <td data-label="Group">
                         <strong>{view.resource.name}</strong>
                         <code className="subline">{view.resource.id}</code>
                       </td>
-                      <td>{view.resource.provider}</td>
-                      <td>{view.resource.strategy}</td>
-                      <td>{view.resource.accounts?.length ?? 0}</td>
-                      <td>
-                        {view.resource.allow_credits
-                          ? "Allowed"
-                          : "Not allowed"}
+                      <td data-label="Provider">{view.resource.provider}</td>
+                      <td data-label="Strategy">{view.resource.strategy}</td>
+                      <td data-label="Accounts">
+                        {view.resource.accounts?.length ?? 0}
                       </td>
-                      <td>
+                      <td data-label="Paid credits">
+                        {view.resource.allow_credits ? "On" : "Off"}
+                      </td>
+                      <td data-label="">
                         <div className="actions">
-                          <button onClick={() => setGroup(view)}>Edit</button>
-                          <button
+                          <IconButton
+                            icon="edit"
+                            label="Edit"
+                            onClick={() => setGroup(view)}
+                          />
+                          <IconButton
+                            icon="trash"
+                            label="Delete"
                             className="danger"
                             onClick={() => setRemove(view)}
-                          >
-                            Delete
-                          </button>
+                          />
                         </div>
                       </td>
                     </tr>
@@ -139,28 +143,25 @@ export function Models() {
               </table>
             </div>
           ) : (
-            <Empty title="No subscription groups">
-              Create a group to route requests across managed Codex or Grok
-              accounts.
-            </Empty>
+            <Empty title="No subscription groups" />
           )}
         </Panel>
       ) : (
         <Panel
-          title="Configured models"
+          title="Models"
           actions={
             <button
               className="primary"
               disabled={!choices.data?.connections?.length}
               onClick={() => setModel("new")}
             >
-              Add model
+              <Icon name="plus" /> Add model
             </button>
           }
         >
           {inventory.data?.models.length ? (
             <div className="table-scroll">
-              <table>
+              <table className="responsive-table">
                 <thead>
                   <tr>
                     <th>Model</th>
@@ -174,14 +175,14 @@ export function Models() {
                 <tbody>
                   {inventory.data.models.map((view) => (
                     <tr key={view.resource.id}>
-                      <td>
+                      <td data-label="Model">
                         <strong>{view.resource.name}</strong>
                         <code className="subline">{view.resource.id}</code>
                       </td>
-                      <td>
+                      <td data-label="Route">
                         <code>{view.resource.route}</code>
                       </td>
-                      <td>
+                      <td data-label="Authentication">
                         <Badge>{view.resource.authentication.kind}</Badge>
                         <span className="subline">
                           {view.resource.authentication.kind === "api_key"
@@ -193,15 +194,19 @@ export function Models() {
                               : "Selected account"}
                         </span>
                       </td>
-                      <td>
+                      <td data-label="">
                         <div className="actions">
-                          <button onClick={() => setModel(view)}>Edit</button>
-                          <button
+                          <IconButton
+                            icon="edit"
+                            label="Edit"
+                            onClick={() => setModel(view)}
+                          />
+                          <IconButton
+                            icon="trash"
+                            label="Delete"
                             className="danger"
                             onClick={() => setRemove(view)}
-                          >
-                            Delete
-                          </button>
+                          />
                         </div>
                       </td>
                     </tr>
@@ -210,18 +215,10 @@ export function Models() {
               </table>
             </div>
           ) : (
-            <Empty title="Connect your first model">
-              Add a provider connection, then select it in your Agent or Project
-              configuration.
-            </Empty>
+            <Empty title="No models yet" />
           )}
         </Panel>
       )}
-      <p className="hint">
-        Platform, environment, and default selections remain in native
-        configuration files. Saving a model validates configuration, not
-        provider connectivity.
-      </p>
       {model && choices.data && (
         <ModelEditor
           view={model === "new" ? undefined : model}
@@ -239,7 +236,7 @@ export function Models() {
       {remove && (
         <ConfirmAction
           title={`Delete ${remove.resource.name}?`}
-          description={`Remove ${remove.relative_path}. Host validation will reject deletion if another resource still requires it.`}
+          description={`Delete ${remove.relative_path}.`}
           action={async () => {
             await data(
               api.DELETE(

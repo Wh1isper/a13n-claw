@@ -4,21 +4,19 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Popover } from "@base-ui/react/popover";
 import { ApiError } from "../api/client";
 import { compact, exact } from "../format";
+import { Icon, IconButton } from "./icons";
 
 export function PageHeader({
   title,
-  description,
   actions,
 }: {
   title: string;
-  description: string;
   actions?: ReactNode;
 }) {
   return (
     <header className="page-header">
       <div>
         <h1>{title}</h1>
-        <p className="muted">{description}</p>
       </div>
       <div className="actions">{actions}</div>
     </header>
@@ -57,7 +55,7 @@ export function Empty({
   return (
     <div className="empty">
       <h3>{title}</h3>
-      {children && <p className="muted">{children}</p>}
+      {children && <div className="muted">{children}</div>}
     </div>
   );
 }
@@ -123,6 +121,26 @@ export function NumberValue({ value }: { value: number }) {
     </Popover.Root>
   );
 }
+export function Info({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <Popover.Root>
+      <Popover.Trigger className="info-button" aria-label={label} title={label}>
+        <Icon name="info" />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner sideOffset={8}>
+          <Popover.Popup className="popover">{children}</Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
 export function Raw({
   value,
   title = "Diagnostic details",
@@ -161,7 +179,7 @@ export function Modal({
   close,
 }: {
   title: string;
-  description: string;
+  description?: string;
   children: ReactNode;
   close: () => void;
 }) {
@@ -178,12 +196,14 @@ export function Modal({
           <div className="panel-header">
             <Dialog.Title>{title}</Dialog.Title>
             <Dialog.Close aria-label="Close dialog" className="icon-button">
-              ×
+              <Icon name="close" />
             </Dialog.Close>
           </div>
-          <Dialog.Description className="muted">
-            {description}
-          </Dialog.Description>
+          {description && (
+            <Dialog.Description className="muted">
+              {description}
+            </Dialog.Description>
+          )}
           {children}
         </Dialog.Popup>
       </Dialog.Portal>
@@ -196,7 +216,9 @@ export function Copy({ value }: { value: string }) {
   return (
     <span className="copy">
       <code>{value}</code>
-      <button
+      <IconButton
+        icon={message === "Copied" ? "check" : "copy"}
+        label="Copy"
         aria-describedby={id}
         onClick={() => {
           void navigator.clipboard.writeText(value).then(
@@ -204,10 +226,8 @@ export function Copy({ value }: { value: string }) {
             () => setMessage("Select and copy the text"),
           );
         }}
-      >
-        Copy
-      </button>
-      <span id={id} role="status" className="hint">
+      />
+      <span id={id} role="status" className="sr-only">
         {message}
       </span>
     </span>

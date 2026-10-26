@@ -1,3 +1,4 @@
+import { Icon, IconButton } from "../components/icons";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
@@ -86,18 +87,21 @@ export function Schedules() {
     <>
       <PageHeader
         title="Schedules"
-        description="Scheduled work, retained next-due times, and independent execution and delivery outcomes."
         actions={
           <>
-            <button disabled={reload.isPending} onClick={() => reload.mutate()}>
-              {reload.isPending ? "Reloading…" : "Reload catalog"}
-            </button>
+            <IconButton
+              icon="refresh"
+              label="Reload catalog"
+              busy={reload.isPending}
+              disabled={reload.isPending}
+              onClick={() => reload.mutate()}
+            />
             <button
               className="primary"
               disabled={!view}
               onClick={() => setEdit({ digest: view!.digest })}
             >
-              Create schedule
+              <Icon name="plus" /> Create schedule
             </button>
           </>
         }
@@ -112,12 +116,16 @@ export function Schedules() {
       {query.isPending && <Loading />}
       {view && (
         <Panel
-          title="Accepted schedules"
-          actions={<span className="hint">Updates every 15s</span>}
+          title="Schedules"
+          actions={
+            <span className="hint">
+              {Object.keys(view.catalog.schedules ?? {}).length}
+            </span>
+          }
         >
           {Object.entries(view.catalog.schedules ?? {}).length ? (
             <div className="table-scroll">
-              <table>
+              <table className="responsive-table">
                 <thead>
                   <tr>
                     <th>Schedule</th>
@@ -135,8 +143,11 @@ export function Schedules() {
                       const status = view.status[id];
                       return (
                         <tr key={id}>
-                          <td>
-                            <button onClick={() => update("schedule", id)}>
+                          <td data-label="Schedule">
+                            <button
+                              className="text-button"
+                              onClick={() => update("schedule", id)}
+                            >
                               {definition.name}
                             </button>
                             <span className="subline">
@@ -146,13 +157,13 @@ export function Schedules() {
                               {definition.project_id}
                             </span>
                           </td>
-                          <td>
+                          <td data-label="Timing">
                             {timingLabel(definition.timing)}
                             <span className="subline">
                               {definition.timing.timezone}
                             </span>
                           </td>
-                          <td>
+                          <td data-label="Next due">
                             <Badge>
                               {status?.state ?? "pending_discovery"}
                             </Badge>
@@ -162,27 +173,29 @@ export function Schedules() {
                                 : "—"}
                             </span>
                           </td>
-                          <td>
+                          <td data-label="Latest">
                             {status?.latest ? (
                               <>
                                 <Badge>{status.latest.status}</Badge>
                                 <span className="subline">
-                                  <button
+                                  <IconButton
+                                    icon="external"
+                                    label="Inspect"
                                     onClick={() =>
                                       update("occurrence", status.latest!.id)
                                     }
-                                  >
-                                    Inspect
-                                  </button>
+                                  />
                                 </span>
                               </>
                             ) : (
                               <span className="muted">No occurrence</span>
                             )}
                           </td>
-                          <td>
+                          <td data-label="">
                             <div className="actions">
-                              <button
+                              <IconButton
+                                icon="edit"
+                                label="Edit"
                                 onClick={() =>
                                   setEdit({
                                     id,
@@ -190,22 +203,22 @@ export function Schedules() {
                                     digest: view.digest,
                                   })
                                 }
-                              >
-                                Edit
-                              </button>
-                              <button
+                              />
+                              <IconButton
+                                icon="play"
+                                label="Run now"
                                 disabled={!definition.enabled}
                                 onClick={() => setTrigger(id)}
-                              >
-                                Run now
-                              </button>
-                              <button
+                              />
+                              <IconButton
+                                icon={definition.enabled ? "pause" : "play"}
+                                label={definition.enabled ? "Pause" : "Enable"}
                                 onClick={() =>
                                   setConfirm({
                                     title: `${definition.enabled ? "Pause" : "Enable"} ${definition.name}?`,
                                     description: definition.enabled
-                                      ? "Future dispatch is paused. Already admitted work and retained history remain."
-                                      : "The scheduler will discover this definition and resume eligible work.",
+                                      ? "Pause future runs. Current work continues."
+                                      : "Resume scheduled runs.",
                                     action: () =>
                                       write(
                                         id,
@@ -217,22 +230,20 @@ export function Schedules() {
                                       ),
                                   })
                                 }
-                              >
-                                {definition.enabled ? "Pause" : "Enable"}
-                              </button>
-                              <button
+                              />
+                              <IconButton
+                                icon="trash"
+                                label="Delete"
                                 className="danger"
                                 onClick={() =>
                                   setConfirm({
                                     title: `Delete ${definition.name}?`,
                                     description:
-                                      "Remove this definition. Retained occurrences, Threads and delivery records remain; admitted work is not cancelled.",
+                                      "Remove this schedule. Current work and history are kept.",
                                     action: () => write(id, null, view.digest),
                                   })
                                 }
-                              >
-                                Delete
-                              </button>
+                              />
                             </div>
                           </td>
                         </tr>
@@ -243,22 +254,19 @@ export function Schedules() {
               </table>
             </div>
           ) : (
-            <Empty title="No schedules yet">
-              Create a schedule to run isolated work with an explicit Project
-              and timing.
-            </Empty>
+            <Empty title="No schedules yet" />
           )}
         </Panel>
       )}
       <Panel
         title="Occurrence history"
         actions={
-          <button
+          <IconButton
+            icon="refresh"
+            label="Refresh"
             disabled={history.isFetching}
             onClick={() => void history.refetch()}
-          >
-            Refresh
-          </button>
+          />
         }
       >
         <div className="panel-body toolbar">
@@ -274,9 +282,13 @@ export function Schedules() {
             />
           </label>
           {scheduleId && (
-            <button onClick={() => update("schedule", null)}>Clear</button>
+            <IconButton
+              icon="close"
+              label="Clear"
+              onClick={() => update("schedule", null)}
+            />
           )}
-          <span className="hint">Latest 50 retained occurrences</span>
+          <span className="hint">Latest 50</span>
         </div>
         <ErrorNotice
           error={history.error}
@@ -286,7 +298,7 @@ export function Schedules() {
         {history.data &&
           (history.data.length ? (
             <div className="table-scroll">
-              <table>
+              <table className="responsive-table">
                 <thead>
                   <tr>
                     <th>Occurrence</th>
@@ -298,20 +310,23 @@ export function Schedules() {
                 <tbody>
                   {history.data.map((item) => (
                     <tr key={item.id}>
-                      <td>
-                        <button onClick={() => update("occurrence", item.id)}>
+                      <td data-label="Occurrence">
+                        <button
+                          className="text-button"
+                          onClick={() => update("occurrence", item.id)}
+                        >
                           {item.schedule_id}
                         </button>
                         <span className="subline">
                           <code>{item.id}</code>
                         </span>
                       </td>
-                      <td>
+                      <td data-label="Status">
                         <Badge>{item.status}</Badge>
                         <span className="subline">{item.detail}</span>
                       </td>
-                      <td>{timestamp(item.due)}</td>
-                      <td>
+                      <td data-label="Due">{timestamp(item.due)}</td>
+                      <td data-label="Thread">
                         {item.thread_id ? (
                           <Link to={`/runs/${item.thread_id}`}>
                             {item.thread_id}
@@ -393,7 +408,7 @@ export function ManualTrigger({
   return (
     <Modal
       title={`Run now · ${scheduleId}`}
-      description="Create one manual occurrence using the accepted schedule, Project and delivery destination. This can execute tools and send a result notification."
+      description="Run this schedule now, including its tools and notifications."
       close={() => {
         if (!mutation.isPending) close();
       }}
@@ -415,8 +430,7 @@ export function ManualTrigger({
         {attempt?.result ? (
           <>
             <p>
-              Occurrence retained: <code>{attempt.result.id}</code>. Acceptance
-              is separate from execution and delivery.
+              Queued: <code>{attempt.result.id}</code>
             </p>
             <button
               className="primary"
@@ -438,9 +452,8 @@ export function ManualTrigger({
           <>
             {attempt && (
               <p className="hint">
-                The outcome is not yet confirmed. Retry uses this same request
-                key. Keep it before reloading or disconnecting; closing this
-                dialog preserves it for this Console session.
+                Outcome unknown. Retry uses the same request. Copy its key
+                before reloading or disconnecting.
               </p>
             )}
             <div className="form-actions">
@@ -491,11 +504,7 @@ function OccurrenceDetail({ id, close }: { id: string; close: () => void }) {
   });
   const item = query.data;
   return (
-    <Modal
-      title="Occurrence details"
-      description="Execution and result delivery are independent retained records. Updates every 15 seconds."
-      close={close}
-    >
+    <Modal title="Occurrence details" close={close}>
       <div className="stack">
         <Copy value={id} />
         <ErrorNotice error={query.error} retry={() => void query.refetch()} />
@@ -504,7 +513,7 @@ function OccurrenceDetail({ id, close }: { id: string; close: () => void }) {
           <>
             <h3>Execution</h3>
             <Badge>{item.status}</Badge>
-            <p>{item.detail || "No additional execution evidence."}</p>
+            {item.detail && <p>{item.detail}</p>}
             <dl className="facts">
               <dt>Schedule</dt>
               <dd>{item.schedule_id}</dd>
@@ -561,10 +570,7 @@ function OccurrenceDetail({ id, close }: { id: string; close: () => void }) {
               </div>
             ))
           ) : (
-            <p className="muted">
-              No retained result delivery. Notification policy, pending
-              execution or an unavailable result may explain its absence.
-            </p>
+            <p className="muted">No deliveries</p>
           ))}
       </div>
     </Modal>

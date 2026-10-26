@@ -1,3 +1,4 @@
+import { Icon, IconButton } from "../components/icons";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
@@ -5,6 +6,7 @@ import { data, type Schema } from "../api/client";
 import { useApi } from "../api/session";
 import {
   Empty,
+  Info,
   ErrorNotice,
   Loading,
   NumberValue,
@@ -59,19 +61,24 @@ export function Overview() {
     <>
       <PageHeader
         title="Overview"
-        description="Recorded consumption and current account allowance, at a glance."
         actions={
           <button
+            className="icon-button"
+            aria-label="Refresh usage"
+            title="Refresh usage"
             onClick={() => void query.refetch()}
             disabled={query.isFetching}
           >
-            {query.isFetching ? "Refreshing…" : "Refresh usage"}
+            <Icon
+              name="refresh"
+              className={query.isFetching ? "spinning" : ""}
+            />
           </button>
         }
       />
-      <div className="toolbar">
+      <div className="filters">
         <label>
-          Period
+          Period · UTC
           <select
             aria-label="Usage period"
             value={params.get("period") ?? "7"}
@@ -112,8 +119,6 @@ export function Overview() {
             </label>
           </>
         )}
-        <span className="badge">UTC</span>
-        <span className="grow" />
         <label>
           Project
           <select
@@ -153,7 +158,7 @@ export function Overview() {
               <Metric
                 label="Total tokens"
                 value={<NumberValue value={view.summary.total_tokens} />}
-                detail="Input + output"
+                detail="Input and output tokens."
               />
               <Metric
                 label="Input / output"
@@ -164,20 +169,20 @@ export function Overview() {
                     <NumberValue value={view.summary.output_tokens} />
                   </>
                 }
-                detail={`${compact(view.summary.cache_read_tokens)} cache read · ${compact(view.summary.cache_write_tokens)} cache write (included)`}
+                detail={`${compact(view.summary.cache_read_tokens)} cache read · ${compact(view.summary.cache_write_tokens)} cache write`}
               />
               <Metric
                 label="Model requests"
                 value={<NumberValue value={view.summary.model_requests} />}
-                detail="Recorded contributions"
+                detail="Recorded model requests."
               />
               <Metric
-                label="Estimated model cost"
+                label="Estimated cost"
                 value={money(view.summary.model_cost_usd)}
                 detail={
                   view.summary.unknown_model_costs
                     ? `Partial · ${exact(view.summary.unknown_model_costs)} unpriced requests`
-                    : "Recorded model-price estimate"
+                    : "Estimate at model prices, separate from subscription charges."
                 }
               />
             </div>
@@ -185,7 +190,7 @@ export function Overview() {
               <Panel
                 title="Daily consumption"
                 actions={
-                  <div className="actions">
+                  <div className="segmented">
                     <button
                       aria-pressed={metric === "tokens"}
                       onClick={() => setMetric("tokens")}
@@ -202,9 +207,7 @@ export function Overview() {
                 }
               >
                 {view.summary.model_requests === 0 ? (
-                  <Empty title="No recorded usage in this period">
-                    Choose a different range or run your assistant through IM.
-                  </Empty>
+                  <Empty title="No usage in this period" />
                 ) : (
                   <Trend days={view.daily} metric={metric} />
                 )}
@@ -273,37 +276,39 @@ export function Overview() {
                               ),
                           ),
                         )}{" "}
-                        tokens. Shares use the full filtered total.
+                        tokens
                       </p>
                     )}
                   </div>
                 )}
                 <div className="pagination">
                   <span>{view.group_count} groups</span>
-                  <button
+                  <IconButton
+                    icon="left"
+                    label="Previous"
                     disabled={offset === 0 || query.isFetching}
                     onClick={() =>
                       update({ offset: String(Math.max(0, offset - 10)) })
                     }
-                  >
-                    Previous
-                  </button>
-                  <button
+                  />
+                  <IconButton
+                    icon="right"
+                    label="Next"
                     disabled={
                       offset + 10 >= view.group_count || query.isFetching
                     }
                     onClick={() => update({ offset: String(offset + 10) })}
-                  >
-                    Next
-                  </button>
+                  />
                 </div>
               </Panel>
             </div>
-            <p className="hint">
-              Updated {timestamp(view.as_of)} · UTC range {view.start} to{" "}
-              {view.end} (exclusive). Project attribution follows current Thread
-              assignment. Estimates are not subscription charges.
-            </p>
+            <div className="toolbar hint">
+              <span>Updated {timestamp(view.as_of)}</span>
+              <Info label="Usage details">
+                UTC: {view.start} to {view.end} (exclusive). Projects follow
+                current Thread assignments.
+              </Info>
+            </div>
           </>
         )
       )}
@@ -322,9 +327,12 @@ function Metric({
 }) {
   return (
     <div className="panel metric">
-      <p className="metric-label">{label}</p>
+      <div className="metric-label">
+        {label}
+        <Info label={`${label} details`}>{detail}</Info>
+      </div>
       <div className="metric-value">{value}</div>
-      <p className="hint">{detail}</p>
+      {detail.startsWith("Partial") && <p className="hint">{detail}</p>}
     </div>
   );
 }
@@ -369,7 +377,7 @@ export function Trend({
       <p className={styles.readout}>
         {active
           ? `${active.day} · ${exact(active.totals.total_tokens)} tokens · ${money(active.totals.model_cost_usd)}${active.totals.unknown_model_costs ? " (partial cost)" : ""}`
-          : "Select a day for exact values"}
+          : ""}
       </p>
     </div>
   );
