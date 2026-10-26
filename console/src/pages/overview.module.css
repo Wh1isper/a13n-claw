@@ -1,0 +1,101 @@
+.divider {
+  font-size: 17px;
+  color: var(--muted);
+  margin: 0 6px;
+}
+.trend {
+  padding: 20px;
+}
+.bars {
+  height: 175px;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  background: repeating-linear-gradient(
+    to top,
+    transparent,
+    transparent calc(25% - 1px),
+    var(--border) 25%
+  );
+}
+.day {
+  display: flex;
+  align-items: flex-end;
+  flex: 1;
+  min-width: 1px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px 3px 0 0;
+  background: transparent;
+}
+.day:hover {
+  background: var(--accent-soft);
+}
+.bar {
+  display: block;
+  width: 100%;
+  max-width: 42px;
+  margin: 0 auto;
+  background: var(--accent);
+  opacity: 0.78;
+  border-radius: 3px 3px 0 0;
+}
+.day[aria-pressed="true"] .bar {
+  opacity: 1;
+}
+.axis {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 11px;
+  padding-top: 10px;
+}
+.readout {
+  font-size: 12px;
+  color: var(--muted);
+  min-height: 36px;
+  margin-top: 16px;
+}
+.ranking {
+  padding: 2px 20px 12px;
+  display: grid;
+  gap: 15px;
+}
+.rankLabel {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.rankLabel > :first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.track {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--subtle);
+  overflow: hidden;
+}
+.track span {
+  height: 100%;
+  display: block;
+  background: var(--accent);
+  opacity: 0.7;
+}
+.modelLink {
+  border: 0;
+  padding: 0;
+  background: none;
+  min-height: auto;
+  color: var(--text);
+}
+.modelLink:hover {
+  color: var(--accent);
+  background: none;
+  text-decoration: underline;
+}

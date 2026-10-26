@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
+from a13n_harness_ui.configuration_inspection import ThreadConfigurationInspection
 from a13n_harness_ui.surfaces import (
     DecisionResponseBatch,
     NewThreadDefaults,
+    RootOperationView,
     ThreadConfigurationMutationInput,
+    ThreadDetail,
     ThreadMetadataMutation,
+    ThreadPage,
+    ToolExecutionView,
+    TranscriptPage,
 )
 from a13n_harness_ui.thread_files import AttachmentUpload
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -39,8 +45,16 @@ async def threads(
     cursor: str | None = None,
     project_id: str | None = None,
     limit: int = Query(default=20, ge=1, le=100),
-):
-    return await app.host.list_threads(cursor=cursor, limit=limit, project_id=project_id)
+    query: str | None = None,
+    include_archived: bool = False,
+) -> ThreadPage:
+    return await app.host.list_threads(
+        cursor=cursor,
+        limit=limit,
+        project_id=project_id,
+        query=query,
+        include_archived=include_archived,
+    )
 
 
 @router.post("/threads", status_code=201)
@@ -51,7 +65,7 @@ async def create_thread(body: ThreadCreate, app: Application):
 
 
 @router.get("/threads/{thread_id}")
-async def thread(thread_id: str, app: Application):
+async def thread(thread_id: str, app: Application) -> ThreadDetail:
     return await app.host.get_thread(thread_id)
 
 
@@ -61,7 +75,7 @@ async def fork(thread_id: str, app: Application):
 
 
 @router.get("/threads/{thread_id}/configuration")
-async def inspect_configuration(thread_id: str, app: Application):
+async def inspect_configuration(thread_id: str, app: Application) -> ThreadConfigurationInspection:
     return await app.host.inspect_thread_configuration(thread_id)
 
 
@@ -97,7 +111,7 @@ async def history(
     cursor: str | None = None,
     expected_continuation_id: str | None = None,
     limit: int = Query(default=50, ge=1, le=100),
-):
+) -> TranscriptPage:
     return await app.host.get_thread_transcript(
         thread_id=thread_id,
         cursor=cursor,
@@ -113,7 +127,7 @@ async def submit(thread_id: str, body: Input, app: Application):
 
 
 @router.get("/threads/{thread_id}/active")
-async def active(thread_id: str, app: Application):
+async def active(thread_id: str, app: Application) -> RootOperationView | None:
     return await app.host.active_root_operation(thread_id)
 
 
@@ -123,7 +137,7 @@ async def tool_executions(
     app: Application,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
-):
+) -> tuple[ToolExecutionView, ...]:
     return await app.host.tool_executions(thread_id, offset=offset, limit=limit)
 
 
@@ -133,7 +147,7 @@ async def cancel_tool_execution(thread_id: str, execution_id: str, app: Applicat
 
 
 @router.get("/operations/{receipt_id}")
-async def operation(receipt_id: str, app: Application):
+async def operation(receipt_id: str, app: Application) -> RootOperationView:
     return await app.host.get_root_operation(receipt_id)
 
 

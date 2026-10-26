@@ -38,10 +38,19 @@ jobs:
         with:
           node-version: "24"
           cache: pnpm
-          cache-dependency-path: console/pnpm-lock.yaml
+          cache-dependency-path: |
+            console/pnpm-lock.yaml
+            console/codegen/pnpm-lock.yaml
       - run: pnpm --dir console install --frozen-lockfile
       - run: pnpm --dir console check
+      - run: make console-test
+      - if: runner.os == 'Linux'
+        run: make console-schema-check
       - run: make build
+      - if: runner.os == 'Linux'
+        run: |
+          pnpm --dir console exec playwright install --with-deps chromium
+          pnpm --dir console test:e2e
       - run: uv run --locked python scripts/check_artifacts.py
   automation:
     name: Workflows and container
@@ -62,5 +71,7 @@ jobs:
         with:
           node-version: "24"
           cache: pnpm
-          cache-dependency-path: console/pnpm-lock.yaml
+          cache-dependency-path: |
+            console/pnpm-lock.yaml
+            console/codegen/pnpm-lock.yaml
       - run: make workflow-check image-check executor-check

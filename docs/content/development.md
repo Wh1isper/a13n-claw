@@ -50,7 +50,9 @@ Generation upgrades a disposable SQLite database, never an operator Instance. Re
 
 ## Console and packaging
 
-`console/` is a private React/Vite Hello World page. `make console-build` places assets in `a13n_claw/static/console/`; `make build` includes them in the wheel and sdist. Installed serving and sdist rebuilds need no Node.js. Direct `uv build` requires prebuilt assets. The API can run without assets using `serve --no-console` after explicit initialization.
+`console/` is a private React/TypeScript/Vite operator application with four lazy-loaded pages. `make console-build` places assets in `a13n_claw/static/console/`; `make build` includes them in the wheel and sdist. Installed serving and sdist rebuilds need no Node.js. Direct `uv build` requires prebuilt assets. The API can run without assets using `serve --no-console` after explicit initialization.
+
+`make console-schema` exports FastAPI's schema without opening an Instance and regenerates `console/src/api/schema.d.ts`. The generator has its own locked TypeScript 5 toolchain under `console/codegen/`; the application uses TypeScript 7. `make console-schema-check` rejects drift. `make console-test` runs component and protocol regressions. `make console-e2e` builds assets, installs Chromium, and exercises a disposable real Host/server through Playwright. The fixture model produces deterministic replies without provider calls; screenshots and traces stay under ignored `build/`.
 
 `make artifact-check` installs the original wheel and a wheel rebuilt from the sdist outside the checkout, initializes isolated Instances, starts real HTTP listeners, and checks authentication, migration assets, and static-file boundaries. `make image-check` validates non-root initialization, serving, and native configuration persistence across replacement of disposable containers.
 

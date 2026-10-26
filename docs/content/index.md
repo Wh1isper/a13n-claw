@@ -16,11 +16,12 @@ One Python process embeds one published Harness UI App. Claw owns messaging and 
 - Lark progress/reactions/decision feedback, GitHub notification polling, and isolated schedules/heartbeat.
 - Persistent Docker executor/browser, content-free diagnostics, conservative retention, and offline backup/restore.
 
-The runtime frontend is Hello World. Operational interaction uses IM and CLI/API. `0.0.2` tagged artifacts contain the earlier informational placeholder; these capabilities require a build of this source. Old standalone databases need a fresh Instance rather than implicit conversion.
+The operator Console provides consumption and allowance, read-only Runs, Models & Accounts, and Schedules. Conversation stays in IM; CLI/API retains headless operation. `0.0.2` tagged artifacts contain the earlier informational placeholder; these capabilities require a build of this source. Old standalone databases need a fresh Instance rather than implicit conversion.
 
 ## Start here
 
 - [Getting started](./getting-started.md): initialize and connect Lark.
+- [Operator Console](./console.md): usage, run investigation, models/accounts, and schedules.
 - [Configuration and CLI](./configuration.md): native resource edits and headless operations.
 - [Configuration field reference](./configuration-reference.md): product/connection/Channel fields.
 - [Routing and One Thread coordination](./one-thread.md): modes, commands, workers, and Inbox.
@@ -32,4 +33,4 @@ The runtime frontend is Hello World. Operational interaction uses IM and CLI/API
 
 ## Later deliveries
 
-Workflow orchestration is outside this delivery. Rich decision cards, token streaming, a full runtime Console, and further platforms remain separate work. Native memory is reused; automatic organization is disabled in the starter. Local protocol and Host tests establish the tested integration boundary; a particular live Lark tenant and model account still require an operator connectivity check.
+Workflow orchestration is outside this delivery. Rich decision cards, token streaming, and further platforms remain separate work. Native memory is reused; automatic organization is disabled in the starter. Local protocol and Host tests establish the tested integration boundary; a particular live Lark tenant and model account still require an operator connectivity check.

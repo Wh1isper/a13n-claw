@@ -4,7 +4,7 @@
 
 Claw exposes Harness UI interaction through IM adapters, a headless CLI, and its own API. The backend composes supported Harness UI App operations with Claw product operations in-process. It does not proxy or mount the complete stock WebUI API, start another Host per request, or depend on browser-specific drafts and page presence to execute work.
 
-The runtime frontend is a Hello World placeholder in the replacement scope. A full Console is not a prerequisite for setup, conversation, controls, approvals, worker inspection, or recovery. Those operations use the implemented IM capabilities and authorized CLI/API. Any later frontend presents the same owners and access checks; it adds no execution authority.
+The operator Console has four destinations: Overview, Runs, Models & Accounts, and Schedules. It presents recorded consumption, provider allowance, read-only execution investigation, model/account management, and scheduled work. IM remains the conversation surface; the Console has no composer or steering workflow. Low-frequency integration and environment configuration stays file/environment driven. Setup and operation remain available through authorized CLI/API. The Console presents the same owners and access checks and adds no execution authority.
 
 ## Application Surfaces
 
@@ -54,6 +54,20 @@ Configuration editing preserves the owner's source revision and any conflicting 
 Authorized users can inspect and converse with Host workers directly. Main attention references already-submitted work; it is not a duplicate task. Exact Host decisions use their native control contract. Failed or unsupported actions identify the target and reason without presenting a generic success acknowledgement.
 
 Disconnecting a client or dismissing a notification does not cancel Host work or settle obligations. Viewing status, memory, or history does not itself request inference. Destructive actions describe scope and retained dependencies.
+
+## Consumption and Account Presentation
+
+Recorded consumption comes from the Host ledger. UTC date ranges are end-exclusive and bounded by the supported Host query. Total Tokens are input plus output; cache/audio counters are subsets. Summary totals cover the whole filtered range independently of group pagination. Estimated model costs preserve unknown coverage and are distinct from subscription charges. Historical Project grouping follows current Thread assignment. Bounded recent-Run detail is labeled as such, not presented as an exhaustive execution index.
+
+Provider allowance has its own observation time, independent of the consumption date filter. Codex/Grok managed accounts, Copilot selected-account quotas, and ChatGPT login-only availability retain their native differences. A failed refresh retains the last successful snapshot with stale/error state. Missing allowance is unavailable, not zero. Latest MAIN account selection is execution provenance, not per-contribution historical account attribution.
+
+Login sessions retain Host states and process-local lifetime. Closing a dialog does not cancel login. Explicit voucher redemption confirms the native account, upstream account and voucher, and preserves the original redeem UUID after an uncertain outcome. Confirmed redemption remains confirmed if advisory refresh fails. Credentials and callback URLs stay out of persisted browser state and diagnostics.
+
+Model forms preserve unedited fields and source revisions, use Host recipes/validation, and distinguish accepted configuration from active captured execution. Before checking an edit precondition, Claw asks the Host to reload current source files; an invalid candidate or changed revision preserves the draft. This coordinates Claw editors and detects observed external edits, without claiming an OS-wide compare-and-swap.
+
+Schedule views expose the retained next-due clock only for the matching accepted definition revision. Pending discovery, paused and finished are distinct. Timing preview uses the canonical server rules and returns explicit timezone offsets; it is separate from the retained clock. Manual triggers preserve their original request key on uncertain transport outcomes. Occurrence execution and result delivery remain independently visible.
+
+Console credentials and drafts remain in tab memory. Unauthorized responses clear protected cached results. Known navigation routes support direct reload; absent API and asset paths retain their error status rather than serving the SPA entry. Validation errors identify field paths and codes without echoing submitted values.
 
 ## Invariants
 

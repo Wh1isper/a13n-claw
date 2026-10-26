@@ -31,6 +31,17 @@ class ScheduleStore:
             (schedule_id, schedule_id, limit),
         )
 
+    def clocks(self) -> list[dict[str, Any]]:
+        return self.business.rows("SELECT id,revision,next_due FROM schedule_state")
+
+    def latest(self) -> list[dict[str, Any]]:
+        return self.business.rows(
+            "SELECT id,schedule_id,status,due,created,thread_id,receipt_id,detail "
+            "FROM occurrences AS current WHERE id=(SELECT id FROM occurrences AS candidate "
+            "WHERE candidate.schedule_id=current.schedule_id "
+            "ORDER BY created DESC,id DESC LIMIT 1)"
+        )
+
     def restart(self) -> None:
         with self.business.transaction() as db:
             db.execute(

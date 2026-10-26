@@ -10,8 +10,93 @@ from pydantic import Field
 from a13n_claw.api.dependencies import Application
 from a13n_claw.async_utils import database
 from a13n_claw.configuration.models import ProductModel
+from a13n_claw.schedules.views import Occurrence
 
 router = APIRouter()
+
+
+class InboxSummary(ProductModel):
+    id: str
+    connection: str
+    channel_id: str | None
+    disposition: str
+    reason: str
+    blocked: str | None
+    created: float
+
+
+class AttemptSummary(ProductModel):
+    id: str
+    kind: str
+    status: str
+    receipt_id: str | None
+    evidence: str
+    created: float
+
+
+class DeliverySummary(ProductModel):
+    id: str
+    channel_id: str
+    status: str
+    evidence: str
+    created: float
+
+
+class ThreadBusinessView(ProductModel):
+    """Exact retained associations, with each collection independently bounded."""
+
+    inbox: list[InboxSummary]
+    attempts: list[AttemptSummary]
+    occurrences: list[Occurrence]
+    deliveries: list[DeliverySummary]
+    limit: int
+
+
+@router.get("/threads/{thread_id}/business", response_model=ThreadBusinessView)
+async def thread_business(
+    thread_id: str, app: Application, limit: int = Query(default=20, ge=1, le=100)
+):
+    await app.host.get_thread(thread_id)
+    inbox = await database(
+        app.store.rows,
+        "SELECT i.id,i.connection,i.channel_id,i.disposition,i.reason,i.blocked,i.created "
+        "FROM inbox i WHERE i.thread_id=? OR EXISTS "
+        "(SELECT 1 FROM attempt_items ai JOIN attempts a ON a.id=ai.attempt_id "
+        "WHERE ai.item_id=i.id AND a.thread_id=?) ORDER BY i.created DESC,i.id LIMIT ?",
+        (thread_id, thread_id, limit),
+    )
+    attempts = await database(
+        app.store.rows,
+        "SELECT id,kind,status,receipt_id,evidence,created FROM attempts "
+        "WHERE thread_id=? ORDER BY created DESC,id LIMIT ?",
+        (thread_id, limit),
+    )
+    occurrences = await database(
+        app.store.rows,
+        "SELECT * FROM occurrences WHERE thread_id=? ORDER BY created DESC,id LIMIT ?",
+        (thread_id, limit),
+    )
+    deliveries = await database(
+        app.store.rows,
+        "SELECT id,channel_id,status,evidence,created FROM deliveries "
+        "WHERE thread_id=? ORDER BY created DESC,id LIMIT ?",
+        (thread_id, limit),
+    )
+    return dict(
+        inbox=inbox, attempts=attempts, occurrences=occurrences, deliveries=deliveries, limit=limit
+    )
+
+
+@router.get("/occurrences/{occurrence_id}/deliveries", response_model=list[DeliverySummary])
+async def occurrence_deliveries(occurrence_id: str, app: Application):
+    await database(app.scheduler.store.get, occurrence_id)
+    return await database(
+        app.store.rows,
+        "SELECT d.id,d.channel_id,d.status,d.evidence,d.created FROM deliveries d "
+        "JOIN job_deliveries j ON j.delivery_id=d.id "
+        "WHERE j.occurrence_id=? ORDER BY d.created DESC,d.id",
+        (occurrence_id,),
+    )
 
 
 class AttemptResolution(ProductModel):
