@@ -23,7 +23,7 @@ jobs:
             test-args: -n 4
           - os: windows-latest
             suite: messaging
-            test-args: -n 2 tests/messaging
+            test-args: -n 0 tests/messaging
           - os: windows-latest
             suite: runtime-and-schedules
             test-args: -n 2 tests/runtime tests/schedules
