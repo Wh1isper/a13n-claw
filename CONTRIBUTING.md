@@ -63,7 +63,7 @@ Only squash merges are enabled, with the PR title as the commit title. Auto-merg
 
 Releases use tags, not a long-lived release branch. The `release` ruleset makes `release/a13n-claw-v*` tags immutable: updates, force pushes, and deletion are blocked, with no bypass actors. The `pypi` environment accepts only those tags; the `docs` environment accepts only the `main` branch. Release automation additionally requires the tagged commit to belong to `main` and have successful CI and Site runs.
 
-Workflow tokens default to read-only and cannot approve pull requests. Publication jobs grant their own narrowly scoped write permissions. Secret scanning, push protection, dependency alerts, and Dependabot security updates are enabled. Do not disable protections to work around a failing check; correct the cause or discuss a deliberate policy change.
+Workflow tokens default to read-only and cannot approve pull requests. Publication jobs grant their own narrowly scoped write permissions. Secret scanning, push protection, and dependency alerts are enabled. Dependabot version updates run monthly, grouped by update entry, with at most one open PR per entry. Automatic Dependabot security-update PRs are disabled; maintainers review alerts and schedule compatible fixes explicitly. Do not disable protections to work around a failing check; correct the cause or discuss a deliberate policy change.
 
 ## Documentation
 
