@@ -785,13 +785,20 @@ async def test_im_retained_tool_cancel_scope_dedup_and_unknown(
     import json
     import sys
 
+    ready = tmp_path / "work" / "shell-ready"
+    shell_prefix = "& " if sys.platform == "win32" else ""
+
     async def model(messages, info):
         return ModelResponse(
             parts=[
                 ToolCallPart(
                     "shell_exec",
                     {
-                        "command": f'"{sys.executable}" -c "import time; time.sleep(60)"',
+                        "command": (
+                            f'{shell_prefix}"{sys.executable}" -c "import pathlib, time; '
+                            "pathlib.Path('shell-ready').touch(); time.sleep(60)\""
+                        ),
+                        "cwd": str(ready.parent),
                     },
                 )
             ]
@@ -808,7 +815,10 @@ async def test_im_retained_tool_cancel_scope_dedup_and_unknown(
         item = service.store.rows("SELECT * FROM inbox WHERE event_id='shell-task'")[0]
         attempt = service.store.rows("SELECT * FROM attempts")[0]
         async with asyncio.timeout(20):
-            while not (tools := await host.tool_executions(item["thread_id"])):
+            while True:
+                tools = await host.tool_executions(item["thread_id"])
+                if tools and tools[0].status == "running" and ready.exists():
+                    break
                 await asyncio.sleep(0.05)
         execution_id = tools[0].execution_id
         await host.cancel_root_operation(attempt["receipt_id"])

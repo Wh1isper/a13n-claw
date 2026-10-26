@@ -16,6 +16,8 @@ from tests.helpers import streaming_model
 @pytest.mark.anyio
 async def test_api_cancels_exact_retained_tool_after_run_stop(tmp_path, monkeypatch):
     monkeypatch.setenv("A13N_OFFICIAL_MODELS_AUTO_UPDATE", "0")
+    ready = tmp_path / "work" / "shell-ready"
+    shell_prefix = "& " if sys.platform == "win32" else ""
 
     async def model(messages, info):
         return ModelResponse(
@@ -23,7 +25,11 @@ async def test_api_cancels_exact_retained_tool_after_run_stop(tmp_path, monkeypa
                 ToolCallPart(
                     "shell_exec",
                     {
-                        "command": f'"{sys.executable}" -c "import time; time.sleep(60)"',
+                        "command": (
+                            f'{shell_prefix}"{sys.executable}" -c "import pathlib, time; '
+                            "pathlib.Path('shell-ready').touch(); time.sleep(60)\""
+                        ),
+                        "cwd": str(ready.parent),
                     },
                 )
             ]
@@ -46,7 +52,11 @@ async def test_api_cancels_exact_retained_tool_after_run_stop(tmp_path, monkeypa
             headers={"Authorization": f"Bearer {token}"},
         ) as client,
     ):
-        thread = (await client.post("/api/threads", json={})).json()["thread_id"]
+        created = await client.post(
+            "/api/threads", json={"defaults": {"project_id": "project-claw-main"}}
+        )
+        assert created.status_code == 201, created.text
+        thread = created.json()["thread_id"]
         other = (await client.post("/api/threads", json={})).json()["thread_id"]
         submitted = await client.post(f"/api/threads/{thread}/inputs", json={"text": "Start shell"})
         assert submitted.status_code == 202, submitted.text
@@ -55,7 +65,7 @@ async def test_api_cancels_exact_retained_tool_after_run_stop(tmp_path, monkeypa
         async with asyncio.timeout(20):
             while True:
                 executions = (await client.get(path)).json()
-                if executions and executions[0]["status"] == "running":
+                if executions and executions[0]["status"] == "running" and ready.exists():
                     break
                 await asyncio.sleep(0.05)
         execution_id = executions[0]["execution_id"]
