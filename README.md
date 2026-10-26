@@ -20,7 +20,7 @@ Claw embeds one Harness UI App from its published Python package. The Host owns 
 
 - Persistent Docker executor/browser, diagnostics, conservative retention, and offline backup/restore.
 
-The runtime frontend is Hello World; operational interaction uses IM and CLI/API. Workflow orchestration, rich interactive cards, token streaming, and full Console are outside this delivery. The `0.0.2` tagged artifacts contain the earlier informational placeholder; build this source for the embedded service.
+The [operator Console](docs/content/console.md) provides consumption and allowance, read-only Runs, Models & Accounts, and Schedules. IM remains the conversation surface. Workflow orchestration, rich interactive cards, and token streaming are outside this delivery. The `0.0.2` tagged artifacts contain the earlier informational placeholder; build this source for the embedded service.
 
 ## Start from source
 
@@ -48,12 +48,13 @@ Python 3.13, uv, Node.js 24, pnpm 10.30.3, and Make are used for source developm
 make install
 make check
 make test
+make console-test console-e2e
 make build
 make artifact-check
 make docs-build
 ```
 
-`a13n_claw/` is the Python package, `console/` the private Hello World frontend, and `docs/` the separate documentation site. `make build` compiles assets into the wheel and sdist. Installed serving and rebuilding the sdist need no Node.js. Docker installs the same wheel and requires explicit initialization and `serve`.
+`a13n_claw/` is the Python package, `console/` the private operator frontend, and `docs/` the separate documentation site. `make build` compiles assets into the wheel and sdist. Installed serving and rebuilding the sdist need no Node.js. Docker installs the same wheel and requires explicit initialization and `serve`.
 
 - [Contributing](CONTRIBUTING.md): setup, validation, and releases.
 - [Development standards](DEVELOPMENT.md): ownership and engineering conventions.

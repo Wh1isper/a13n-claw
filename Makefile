@@ -29,11 +29,24 @@ db-migrate: ## Generate a SQLite migration against a disposable database
 	uv run --locked python -m a13n_claw.database.generate "$(msg)"
 
 check: lint typecheck deps-check docs-check console-check ## Run static checks
-check-all: check test build artifact-check docs-build workflow-check image-check executor-check ## Run the complete CI-equivalent gates (Docker for workflows)
+check-all: check test console-schema-check console-test console-e2e build artifact-check docs-build workflow-check image-check executor-check ## Run the complete CI-equivalent gates (Docker for workflows)
 console-install: ## Install locked console dependencies
 	pnpm --dir console install --frozen-lockfile
 console-check: ## Type-check and format-check the console
 	pnpm --dir console check
+.PHONY: console-schema console-schema-check console-test console-e2e
+console-schema: ## Regenerate the typed client from the operator API
+	uv run --locked python scripts/export_console_schema.py
+	pnpm --dir console/codegen install --frozen-lockfile
+	pnpm --dir console/codegen generate
+	pnpm --dir console exec prettier --write src/api/schema.d.ts
+console-schema-check: console-schema ## Reject drift between the API and checked-in client types
+	git diff --exit-code -- console/src/api/schema.d.ts
+console-test: ## Test Console behavior without external providers
+	pnpm --dir console test
+console-e2e: console-build ## Test the built Console against a disposable real Host
+	pnpm --dir console exec playwright install chromium
+	pnpm --dir console test:e2e
 console-build: console-install ## Build the console into Python package assets
 	pnpm --dir console build
 console-dev: ## Serve the console with hot reload on loopback port 5173

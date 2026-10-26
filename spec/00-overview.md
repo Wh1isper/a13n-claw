@@ -4,7 +4,7 @@
 
 Claw brings Harness UI's interactive Agent experience to messaging platforms. Users send work, add context during execution, answer questions and approvals, stop a selected operation, collaborate with workers, and receive results and files in IM. Claw adapts those interactions to each platform while the embedded Host keeps its native execution and collaboration semantics.
 
-IM is the primary conversation surface; CLI/API provide setup, inspection, and operations. The runtime frontend is a Hello World placeholder in this replacement scope. Neither a full Console nor a workflow engine is required for the messaging path.
+IM is the primary conversation surface; CLI/API provide setup, inspection, and operations. The [operator Console](06-api-console-and-access.md) adds consumption, read-only run investigation, models/accounts, and schedules. The messaging path operates independently of browser presence.
 
 Claw deploys as one process with one embedded `HarnessUiApp`. Direct Python calls connect product services to the App. The supported dependency is the `a13n-harness-ui` package; Harness remains its execution foundation. There is no internal HTTP hop or separately managed Harness UI service.
 

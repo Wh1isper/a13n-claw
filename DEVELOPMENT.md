@@ -4,7 +4,7 @@
 
 Prefer direct flows, cohesive modules, and explicit ownership. Fix causes at their owner instead of adding overlapping wrappers. Add abstractions, persistence, infrastructure, and dependencies only when an implemented feature requires them. Read affected tests and specifications before editing.
 
-The backend embeds one published Harness UI App, an authenticated operator API, Lark/GitHub connections, isolated schedules, and durable SQLite business state. The runtime frontend is a Hello World placeholder. Keep readiness specific: constructing a client or starting the dispatcher does not prove provider or MCP connectivity. Test fixtures must stay outside production entry points.
+The backend embeds one published Harness UI App, an authenticated operator API, Lark/GitHub connections, isolated schedules, and durable SQLite business state. The operator Console composes typed API views for consumption, read-only run investigation, models/accounts, and schedules. Keep readiness specific: constructing a client or starting the dispatcher does not prove provider or MCP connectivity. Test fixtures must stay outside production entry points.
 
 ## Python
 
@@ -32,7 +32,7 @@ Migrate under the Instance lease before application state is loaded. Schema chan
 
 Keep user content in portable Markdown under `docs/content/`, with front matter and `meta.json` navigation. The private Fumadocs application uses Next.js static export. Its build checks internal links and anchors. Avoid duplicated documentation sources and external font requests at build time. Use Mermaid for diagrams when needed; ensure the site renderer supports any introduced syntax.
 
-The runtime frontend is a separate private React/TypeScript/Vite application under `console/`, reduced to Hello World for the replacement scope. IM and CLI/API provide the functional interaction surfaces. Any later Console uses authoritative saved API views, explicit pending states, exact decision correlation, and version-preconditioned forms. Keep tokens and unsaved drafts in tab memory; render retained output as untrusted text. Reconcile ambiguous submissions by their original identity, never silently submit a new command. Use accessible semantic controls, responsive layouts, and local system fonts. Verify the rendered result and affected interactions in a browser.
+The runtime frontend is a separate private React/TypeScript/Vite application under `console/`. IM owns conversation; the Console owns four operator pages and uses authoritative saved API views, explicit pending states, and version-preconditioned forms. Generate client types from the FastAPI schema with `make console-schema`; native Host response models remain authoritative. React Query owns server cache and mutation status, local component state owns forms, and URL parameters own navigable filters. Share semantic controls and recurring presentation, not a second application state framework. Keep tokens and unsaved drafts in tab memory; render retained output as untrusted text. Reconcile ambiguous submissions by their original identity, never silently submit a new command. Use accessible semantic controls, responsive layouts, and local system fonts. Verify the rendered result and affected interactions in a browser.
 
 ## Automation and distribution
 

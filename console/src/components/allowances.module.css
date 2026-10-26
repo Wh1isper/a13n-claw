@@ -1,0 +1,48 @@
+.body {
+  display: grid;
+  gap: 14px;
+}
+.quota {
+  display: grid;
+  gap: 7px;
+}
+.label,
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+}
+.label strong {
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+.quota meter {
+  display: block;
+  width: 100%;
+  height: 8px;
+  appearance: none;
+  border: 0;
+  border-radius: 4px;
+  background: var(--subtle);
+}
+.quota meter::-webkit-meter-bar {
+  background: var(--subtle);
+  border: 0;
+  border-radius: 4px;
+}
+.quota meter::-webkit-meter-optimum-value {
+  background: var(--accent);
+  border-radius: 4px;
+}
+.quota meter::-moz-meter-bar {
+  background: var(--accent);
+  border-radius: 4px;
+}
+.footer {
+  margin-top: auto;
+  align-items: center;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}

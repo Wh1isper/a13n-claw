@@ -64,3 +64,25 @@ def test_serve_missing_bundle_starts_api(console):
     with patch("uvicorn.run") as run:
         main(["serve"])
     assert run.call_args.kwargs == {"host": "127.0.0.1", "port": 8080}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/runs",
+        "/runs/thread-test",
+        "/models",
+        "/schedules",
+        "/schedules/daily",
+        "/occurrences/occurrence-test",
+    ],
+)
+def test_console_deep_links_preserve_asset_and_api_boundaries(console, path):
+    with TestClient(app.create_app()) as client:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "Console" in response.text
+        assert client.head(path).content == b""
+        assert client.post(path).status_code == 405
+        assert client.get("/api/not-a-route").status_code == 404
+        assert client.get("/assets/missing.js").status_code == 404

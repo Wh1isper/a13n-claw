@@ -57,9 +57,9 @@ Use `https://open.larksuite.com` for Lark. Restart Claw and inspect `status`. A 
 
 One Thread shares Main's context and Project memory across all bound Channels. Channel operators can inspect Main decisions, which may contain shared context. Only grant this role to participants trusted for that context. See [routing and commands](./one-thread.md).
 
-## Optional page and containers
+## Operator Console and containers
 
-The runtime page is Hello World. IM and CLI/API provide operational interaction. To serve the page from source, run `make console-build`, then omit `--no-console`. Installed wheels and sdist rebuilds need no Node.js. The `0.0.2` tagged artifacts contain the earlier informational placeholder; use a build of this source for these capabilities.
+To use the [operator Console](./console.md) from source, run `make console-build`, then omit `--no-console`. Open `http://127.0.0.1:8080` and enter the token from the Instance's `operator.token` file. The Console provides usage, read-only Runs, Models & Accounts, and Schedules; IM remains the conversation surface. Installed wheels and sdist rebuilds need no Node.js. The `0.0.2` tagged artifacts contain the earlier informational placeholder; use a build of this source for these capabilities.
 
 ```bash
 make build

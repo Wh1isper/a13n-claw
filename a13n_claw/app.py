@@ -7,9 +7,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from a13n_harness_ui.errors import HarnessUiError
+from a13n_harness_ui.model_accounts.models import AccountStoreError
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
@@ -33,21 +34,25 @@ def create_app(*, root: Path | None = None, console: bool = True) -> FastAPI:
 
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None, lifespan=lifespan)
 
+    @app.exception_handler(AccountStoreError)
     @app.exception_handler(HarnessUiError)
-    async def host_error(request: Request, error: HarnessUiError):
+    async def host_error(request: Request, error: HarnessUiError | AccountStoreError):
         return JSONResponse(
             status_code=409, content={"error": {"code": error.code, "message": str(error)}}
         )
 
     @app.exception_handler(RequestValidationError)
     @app.exception_handler(ValidationError)
-    async def validation_error(request: Request, error: Exception):
+    async def validation_error(request: Request, error: RequestValidationError | ValidationError):
         return JSONResponse(
             status_code=422,
             content={
                 "error": {
                     "code": "invalid_request",
                     "message": "Invalid fields; preserve your draft and check the request",
+                    "fields": [
+                        {"path": list(item["loc"]), "code": item["type"]} for item in error.errors()
+                    ],
                 }
             },
         )
@@ -86,5 +91,18 @@ def create_app(*, root: Path | None = None, console: bool = True) -> FastAPI:
 
     app.include_router(router)
     if console and read_settings(selected).console and (CONSOLE_DIRECTORY / "index.html").is_file():
+
+        async def console_entry():
+            return FileResponse(CONSOLE_DIRECTORY / "index.html")
+
+        for path in (
+            "/runs",
+            "/runs/{thread_id}",
+            "/models",
+            "/schedules",
+            "/schedules/{schedule_id}",
+            "/occurrences/{occurrence_id}",
+        ):
+            app.add_api_route(path, console_entry, methods=["GET", "HEAD"], include_in_schema=False)
         app.mount("/", StaticFiles(directory=CONSOLE_DIRECTORY, html=True), name="console")
     return app

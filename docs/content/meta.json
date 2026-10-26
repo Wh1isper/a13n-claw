@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "getting-started",
+    "console",
     "configuration",
     "configuration-reference",
     "one-thread",
