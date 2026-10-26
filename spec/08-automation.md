@@ -28,9 +28,13 @@ Occurrence dispositions distinguish pending, calling, accepted, waiting, unknown
 
 Suspension retains waiting work. Native decision responses and authorized continuation correlate a new receipt to the same occurrence Thread; ambiguous continuation is blocked. An operator can attach an observed continuation receipt or record a reconciliation with evidence. Cancellation before admission skips work; cancellation after acceptance requests native Host cancellation. Cancelling waiting business work does not erase its native decisions or reverse effects.
 
+The originating Lark Channel operator can inspect retained occurrence history and result previews, query exact native decisions, answer a native batch, or cancel the exact current occurrence receipt. These controls require the original author and qualified source, current grants, and the retained Project association. An occurrence ID does not grant arbitrary Thread access. Agent schedule tools expose scoped history but do not answer human decisions.
+
 ## Result Notification
 
 An occurrence's final result and its external notification are separate durable facts. Notification policy is `always`, `error`, or `never`. The service retains completed result content and creates at most one correlated delivery obligation for the configured destination. Missing or truncated retained output is identified explicitly rather than reconstructed by rerunning the Agent.
+
+For `always` and `error`, suspension also retains one bounded attention notification per exact operation at the configured destination. `never` suppresses it. Pending attention notifications are discarded as confirmed unsent when that waiting operation is superseded; a send already attempted retains its actual outcome. The notification points to authorized controls without answering the decision or disclosing its payload automatically.
 
 The scheduler's result notification is a bounded service action authorized by the schedule. It is not a general send capability for the scheduled Thread. In One Thread mode all Agent-originated Channel publication remains Main-only. Native worker collaboration and Main's private final output keep their existing rules.
 

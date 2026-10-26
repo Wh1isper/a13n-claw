@@ -71,7 +71,13 @@ class Ingress:
             )
             if previous:
                 if previous[0]["fingerprint"] != fingerprint:
-                    raise ValueError("Conflicting reuse of platform event identity")
+                    # Older Lark captures did not retain parent_id. A duplicate keeps its
+                    # original snapshot; newly observed reply metadata cannot enrich it.
+                    legacy = hashlib.sha256(
+                        encode(message.model_dump(mode="json", exclude={"reply_to"})).encode()
+                    ).hexdigest()
+                    if message.platform != "lark" or previous[0]["fingerprint"] != legacy:
+                        raise ValueError("Conflicting reuse of platform event identity")
                 return
             matched = self.binding(message)
             channel_id, binding = matched if matched else (None, None)

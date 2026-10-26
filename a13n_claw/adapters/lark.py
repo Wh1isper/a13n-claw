@@ -114,6 +114,7 @@ def normalize_message(
         message_id=message["message_id"],
         chat_id=message["chat_id"],
         topic_id=message.get("thread_id"),
+        reply_to=message.get("parent_id") or None,
         sender_id=sender_id,
         is_group=message.get("chat_type") == "group",
         mentioned=mentioned,

@@ -49,6 +49,14 @@ async def test_operator_api_uses_one_host_and_exact_receipts(tmp_path, monkeypat
             assert saved.json()["receipt"]["thread_id"] == main
             history = await client.get(f"/api/threads/{main}/history", headers=headers)
             assert "API reply" in history.text
+            tools_path = f"/api/threads/{main}/tool-executions"
+            assert (await client.get(tools_path)).status_code == 401
+            assert (await client.get(tools_path, headers=headers)).json() == []
+            assert (await client.get(tools_path + "?offset=-1", headers=headers)).status_code == 422
+            assert (await client.get(tools_path + "?limit=101", headers=headers)).status_code == 422
+            unavailable = await client.post(tools_path + "/missing/cancel", headers=headers)
+            assert unavailable.status_code == 409, unavailable.text
+            assert "tool_execution_unavailable" in unavailable.text
             sources = await client.get("/api/configuration", headers=headers)
             assert sources.status_code == 200
             source = (
@@ -69,6 +77,48 @@ async def test_operator_api_uses_one_host_and_exact_receipts(tmp_path, monkeypat
                 await client.put("/api/configuration/source", json=candidate, headers=headers)
             ).status_code == 409
             assert id(app.state.service.host) == host_identity
+            inspection = await client.get(f"/api/threads/{main}/configuration", headers=headers)
+            assert inspection.status_code == 200, inspection.text
+            assert (
+                await client.post(f"/api/threads/{main}/fork", headers=headers)
+            ).status_code == 409
+            original = (
+                await client.post("/api/threads", headers=headers, json={"title": "Fork source"})
+            ).json()["thread_id"]
+            receipt = (
+                await client.post(
+                    f"/api/threads/{original}/inputs",
+                    headers=headers,
+                    json={"text": "Save fork history"},
+                )
+            ).json()["receipt_id"]
+            await app.state.service.host.wait_root_operation(receipt, timeout_seconds=20)
+            upload = await client.post(
+                f"/api/threads/{original}/attachments?name=proof.txt",
+                headers=headers,
+                content=b"fork proof",
+            )
+            assert upload.status_code == 201, upload.text
+            fork_path = f"/api/threads/{original}/fork"
+            assert (await client.post(fork_path)).status_code == 401
+            copied = await client.post(fork_path, headers=headers)
+            assert copied.status_code == 201, copied.text
+            fork_id = copied.json()["thread_id"]
+            assert fork_id != original
+            assert (
+                await client.get(f"/api/threads/{fork_id}/active", headers=headers)
+            ).json() is None
+            assert (
+                "API reply"
+                in (await client.get(f"/api/threads/{fork_id}/history", headers=headers)).text
+            )
+            assert (
+                await client.get(
+                    f"/api/threads/{fork_id}/attachments/{upload.json()['attachment_id']}",
+                    headers=headers,
+                )
+            ).content == b"fork proof"
+            receipt = operation.receipt.receipt_id
     async with (
         app.router.lifespan_context(app),
         httpx.AsyncClient(

@@ -164,7 +164,7 @@ class GitHubAdapter:
                     if updated < state["cursor"] - 1 or updated > now:
                         continue
                     # Do not retain notification titles or repository metadata before filtering.
-                    notification = self.metadata(item)
+                    notification = {**self.metadata(item), "since": state["cursor"] - 1}
                     await database(
                         self.store.stage, notification, updated, self.settings.delay_seconds
                     )
@@ -185,7 +185,21 @@ class GitHubAdapter:
         self.error = None
         self.status = "connected"
 
-    async def prepare(self, row: dict[str, Any]) -> InboundMessage | None:
+    async def comments(self, path: str, since: float) -> list[dict]:
+        comments = []
+        for page in range(1, 101):
+            response = await self.request(
+                "GET", path, params={"since": iso(since), "per_page": 100, "page": page}
+            )
+            values = response.json()
+            if not isinstance(values, list):
+                raise ValueError("Unexpected GitHub comments response")
+            comments.extend(values)
+            if "next" not in response.links:
+                return comments
+        raise ValueError("GitHub comments exceeded 100 pages; capture remains pending")
+
+    async def prepare(self, row: dict[str, Any]) -> list[tuple[str, dict | None]]:
         notification = json.loads(row["notification"])
         repository = notification["repository"]
         binding = self.binding(repository)
@@ -195,47 +209,69 @@ class GitHubAdapter:
             or subject["type"] not in {"Issue", "PullRequest"}
             or (self.settings.reasons and notification["reason"] not in self.settings.reasons)
         ):
-            return None
+            return []
         path = self.subject_path(subject["url"], repository)
         issue = (await self.request("GET", path)).json()
-        latest = issue
-        if subject["latest_comment_url"]:
-            comment_path = self.subject_path(
-                subject["latest_comment_url"], repository, comment=True
-            )
-            latest = (await self.request("GET", comment_path)).json()
-        author = latest.get("user", {}).get("login", "")
-        allowed = {name.casefold() for name in binding.allowed_senders}
-        if (
-            author.casefold() not in allowed
-            or author.casefold() == self.settings.account_login.casefold()
-        ):
-            return None
-        if "<!-- a13n-claw:" in (latest.get("body") or ""):
-            return None
         number = path.rsplit("/", 1)[1]
-        # Context is refreshed after the delay. Only allowed participants' content is retained.
-        root_allowed = issue.get("user", {}).get("login", "").casefold() in allowed
-        text = (
-            f"GitHub {subject['type']} {repository}#{number}; reason={notification['reason']}\n"
-            f"https://github.com/{repository}/issues/{number}\n"
-            f"State: {issue.get('state', 'unknown')}\n"
+        since = notification.get("since", row["updated"] - 1)
+        candidates = [(f"/repos/{repository}/issues/{number}", issue, True)]
+        for kind in ("issues", "pulls") if subject["type"] == "PullRequest" else ("issues",):
+            for comment in await self.comments(
+                f"/repos/{repository}/{kind}/{number}/comments", since
+            ):
+                comment_path = self.subject_path(comment["url"], repository, comment=True)
+                candidates.append((comment_path, comment, False))
+        allowed = {name.casefold() for name in binding.allowed_senders}
+        mention = re.compile(
+            r"(?<![\w@/])@" + re.escape(self.settings.account_login) + r"(?![\w-])", re.I
         )
-        if root_allowed:
-            text += f"Title: {issue.get('title', '')}\n{(issue.get('body') or '')[:30000]}\n"
-        if latest is not issue:
-            text += f"Latest comment by {author}:\n{(latest.get('body') or '')[:30000]}\n"
-        text += "Use an explicit Claw reply to comment on this issue/PR; intake is not completion."
-        return InboundMessage(
-            platform="github",
-            connection=self.connection_id,
-            event_id=row["event_key"],
-            message_id=number,
-            chat_id=repository,
-            sender_id=author,
-            account_id=self.settings.account_login.casefold(),
-            text=text[:100000],
-        )
+        requests = []
+        for source_path, content, root in candidates:
+            updated = timestamp(content["updated_at"])
+            if not since <= updated <= row["updated"]:
+                continue
+            author = content.get("user", {}).get("login", "")
+            body = content.get("body") or ""
+            # Root state/label changes are not fresh requests. Comment edits have native versions.
+            version = body if root else f"{content['updated_at']}:{body}"
+            key = (
+                "ghreq-"
+                + hashlib.sha256(
+                    json.dumps(
+                        [self.store.account, source_path, author.casefold(), version]
+                    ).encode()
+                ).hexdigest()
+            )
+            if (
+                author.casefold() not in allowed
+                or author.casefold() == self.store.account
+                or "<!-- a13n-claw:" in body
+                or not mention.search(body)
+            ):
+                requests.append((key, None))
+                continue
+            # Only the explicitly admitted request body enters context. Other comments and the
+            # root body may have been ignored earlier, even when their author is allowed now.
+            text = (
+                f"GitHub {subject['type']} {repository}#{number}\n"
+                f"Source: {self.settings.api_url}{source_path}\n"
+                f"State: {issue.get('state', 'unknown')}\n"
+                f"Request by {author}:\n{body[:90000]}\n"
+                "Use an explicit Claw reply to comment on this issue/PR; intake is not completion."
+            )
+            message = InboundMessage(
+                platform="github",
+                connection=self.connection_id,
+                event_id=key,
+                message_id=number,
+                chat_id=repository,
+                sender_id=author,
+                account_id=self.store.account,
+                source_ref=source_path,
+                text=text,
+            )
+            requests.append((key, message.model_dump(mode="json")))
+        return requests
 
     async def capture(self, receive: MessageHandler, now: float) -> None:
         for row in await database(self.store.ready, now):
@@ -266,48 +302,40 @@ class GitHubAdapter:
                                 continue
                             if updated != row["updated"]:
                                 raise ValueError("GitHub notification version moved backwards")
-                            row["notification"] = json.dumps(self.metadata(current))
-                    message = (
-                        InboundMessage.model_validate_json(row["message"])
-                        if row["message"]
-                        else await self.prepare(row)
-                    )
-                    if message is None:
-                        await database(
-                            self.store.finish,
-                            row["event_key"],
-                            "ignored",
-                            "skipped",
-                            "Repository, reason, subject, sender, or echo policy",
-                        )
-                        continue
+                            row["notification"] = json.dumps(
+                                {
+                                    **self.metadata(current),
+                                    "since": notification.get("since", updated - 1),
+                                }
+                            )
                     if row["message"] is None:
                         await database(
-                            self.store.prepared, row["event_key"], message.model_dump(mode="json")
+                            self.store.prepared, row["event_key"], await self.prepare(row)
                         )
-                    await receive(message)
-                    items = await database(
-                        self.business.rows,
-                        "SELECT disposition FROM inbox WHERE connection=? AND event_id=?",
-                        (self.connection_id, row["event_key"]),
-                    )
-                    if not items:
-                        raise ValueError("GitHub handler returned without durable intake evidence")
-                    state = "ignored" if items[0]["disposition"] == "ignored" else "captured"
-                    read_status = (
-                        "pending" if self.settings.mark_read and state == "captured" else "skipped"
-                    )
+                    messages = await database(self.store.messages, row["event_key"])
+                    admitted = False
+                    for saved in messages:
+                        message = InboundMessage.model_validate_json(saved["message"])
+                        await receive(message)
+                        items = await database(
+                            self.business.rows,
+                            "SELECT disposition FROM inbox WHERE connection=? AND event_id=?",
+                            (self.connection_id, message.event_id),
+                        )
+                        if not items:
+                            raise ValueError(
+                                "GitHub handler returned without durable intake evidence"
+                            )
+                        admitted |= items[0]["disposition"] != "ignored"
+                    state = "captured" if admitted else "ignored"
+                    read_status = "pending" if self.settings.mark_read and admitted else "skipped"
                     await database(self.store.finish, row["event_key"], state, read_status)
                     if read_status != "pending":
                         continue
-                    row["message"] = message.model_dump_json()
-                captured = InboundMessage.model_validate_json(row["message"])
-                binding = self.binding(captured.chat_id)
-                if (
-                    binding is None
-                    or captured.sender_id.casefold()
-                    not in {sender.casefold() for sender in binding.allowed_senders}
-                    or captured.account_id != self.settings.account_login.casefold()
+                messages = await database(self.store.messages, row["event_key"], through=True)
+                if not all(
+                    self.authorized(InboundMessage.model_validate_json(s["message"]))
+                    for s in messages
                 ):
                     await database(
                         self.store.finish,
@@ -342,6 +370,15 @@ class GitHubAdapter:
                 if self._rate_until > now:
                     break
 
+    def authorized(self, message: InboundMessage) -> bool:
+        binding = self.binding(message.chat_id)
+        return bool(
+            binding is not None
+            and self.settings.enabled
+            and message.sender_id.casefold() in {s.casefold() for s in binding.allowed_senders}
+            and message.account_id == self.store.account
+        )
+
     async def run(self, receive: MessageHandler) -> None:
         while not self._closed.is_set():
             now = time.time()
@@ -359,7 +396,7 @@ class GitHubAdapter:
     async def send(
         self, destination: Destination, message: OutboundMessage, *, request_id: str
     ) -> SendResult:
-        if message.file is not None or message.reaction is not None:
+        if message.file is not None:
             return SendResult(
                 "not_sent", "GitHub comments accept text; publish file links explicitly"
             )
@@ -375,15 +412,28 @@ class GitHubAdapter:
             return SendResult("not_sent", "GitHub authentication unavailable")
         marker = hashlib.sha256(request_id.encode()).hexdigest()
         path = f"/repos/{destination.chat_id}/issues/{destination.reply_to}/comments"
+        payload = {"body": f"{message.text}\n\n<!-- a13n-claw:{marker} -->"}
+        if message.reaction is not None:
+            source = destination.reaction_to or ""
+            prefix = f"/repos/{destination.chat_id}/"
+            if (
+                message.reaction != "eyes"
+                or not source.startswith(prefix)
+                or not re.fullmatch(
+                    r"(?:issues/[0-9]+|(?:issues|pulls)/comments/[0-9]+)", source[len(prefix) :]
+                )
+            ):
+                return SendResult(
+                    "not_sent", "GitHub reaction requires the original request source"
+                )
+            path, payload = source + "/reactions", {"content": "eyes"}
         try:
             if time.time() < self._rate_until:
                 return SendResult("not_sent", "GitHub rate limit backoff is active")
             response = await self.request(
                 "POST",
                 path,
-                json={
-                    "body": f"{message.text}\n\n<!-- a13n-claw:{marker} -->",
-                },
+                json=payload,
             )
             comment_id = response.json().get("id")
             return (

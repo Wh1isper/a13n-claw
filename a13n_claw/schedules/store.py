@@ -190,6 +190,58 @@ class ScheduleStore:
                 (status, detail, receipt_id, time.time() + delay, occurrence_id),
             )
 
+    def supersede_notification(self, delivery_id: str) -> None:
+        with self.business.transaction() as db:
+            db.execute(
+                "UPDATE deliveries SET status='not_sent',"
+                "evidence='Waiting notification superseded' "
+                "WHERE id=? AND status='pending'",
+                (delivery_id,),
+            )
+
+    def waiting(self, occurrence_id: str) -> None:
+        """Retain suspension and one notification per exact operation atomically."""
+        with self.business.transaction() as db:
+            row = db.execute("SELECT * FROM occurrences WHERE id=?", (occurrence_id,)).fetchone()
+            if row is None or row["status"] not in {"accepted", "unknown"}:
+                return
+            db.execute(
+                "UPDATE occurrences SET status='waiting',detail=? WHERE id=?",
+                ("Native decision/continuation required", occurrence_id),
+            )
+            definition = ScheduleDefinition.model_validate_json(row["definition"])
+            if definition.notification == "never" or row["destination"] is None:
+                return
+            key = f"occurrence:{occurrence_id}:waiting:{row['receipt_id']}"
+            if db.execute("SELECT 1 FROM deliveries WHERE request_key=?", (key,)).fetchone():
+                return
+            text = (
+                f"{definition.name}: waiting for a native decision or continuation.\n"
+                f"Occurrence: {occurrence_id}\nThread: {row['thread_id']}\n"
+                f"CLI: a13n-claw threads decisions {row['thread_id']}"
+            )
+            if definition.author != "operator":
+                text += f"\nIM: /claw occurrence-decisions {occurrence_id}"
+            self._notify(db, row, key, text)
+
+    @staticmethod
+    def _notify(db: sqlite3.Connection, row: sqlite3.Row, key: str, text: str) -> None:
+        destination = json.loads(row["destination"])
+        delivery_id = identifier("delivery")
+        db.execute(
+            "INSERT INTO deliveries VALUES(?,?,?,?,?,NULL,?,'pending','',?)",
+            (
+                delivery_id,
+                key,
+                destination["channel_id"],
+                encode({"chat_id": destination["chat_id"], "reply_to": destination["reply_to"]}),
+                row["thread_id"],
+                encode({"text": text, "file": None}),
+                time.time(),
+            ),
+        )
+        db.execute("INSERT INTO job_deliveries VALUES(?,?)", (delivery_id, row["id"]))
+
     def complete(self, occurrence_id: str, status: str, result: str) -> None:
         """Publish exact outcome and its configured notification together."""
         with self.business.transaction() as db:
@@ -207,26 +259,10 @@ class ScheduleStore:
                 definition.notification == "error" and status != "completed"
             )
             if notify and row["destination"] is not None:
-                destination = json.loads(row["destination"])
-                delivery_id = identifier("delivery")
                 text = f"{definition.name}: {status}\n{result}"[:19_800]
                 if len(result) > 19_000:
                     text += f"\nFull result: occurrence {occurrence_id} (operator API)."
-                db.execute(
-                    "INSERT INTO deliveries VALUES(?,?,?,?,?,NULL,?,'pending','',?)",
-                    (
-                        delivery_id,
-                        f"occurrence:{occurrence_id}",
-                        destination["channel_id"],
-                        encode(
-                            {"chat_id": destination["chat_id"], "reply_to": destination["reply_to"]}
-                        ),
-                        row["thread_id"],
-                        encode({"text": text, "file": None}),
-                        time.time(),
-                    ),
-                )
-                db.execute("INSERT INTO job_deliveries VALUES(?,?)", (delivery_id, occurrence_id))
+                self._notify(db, row, f"occurrence:{occurrence_id}", text)
 
     def resolve(self, occurrence_id: str, action: str, evidence: str) -> dict[str, Any]:
         if not evidence.strip() or action not in {"retry", "abandon"}:

@@ -14,7 +14,7 @@ from a13n_claw.async_utils import database
 from a13n_claw.configuration.models import LarkConnection, connection_identity
 from a13n_claw.encoding import encode
 from a13n_claw.messaging.transport import Destination
-from a13n_claw.runtime.observations import REJECTED, retained_output
+from a13n_claw.runtime.observations import DECISION_REJECTED, REJECTED, retained_output
 from a13n_claw.schedules.models import (
     ScheduleCatalog,
     ScheduleDefinition,
@@ -284,12 +284,7 @@ class Scheduler:
                     else f"Operation {status}; inspect Thread {row['thread_id']}"
                 )
             if status == "suspended":
-                await database(
-                    self.store.status,
-                    row["id"],
-                    "waiting",
-                    "Native decision/continuation required; inspect the occurrence Thread",
-                )
+                await database(self.store.waiting, row["id"])
             elif status in {"completed", "failed", "cancelled"}:
                 await database(self.store.complete, row["id"], status, result)
 
@@ -338,13 +333,19 @@ class Scheduler:
                 receipt = await self.service.host.submit_thread(
                     thread_id=thread_id, prompt=prompt, attachment_ids=attachment_ids
                 )
-        except BaseException:
+        except BaseException as exc:
             if row is not None:
+                rejected = (
+                    isinstance(exc, HarnessUiError) and exc.code in REJECTED | DECISION_REJECTED
+                )
                 await database(
                     self.store.status,
                     row["id"],
-                    "unknown",
-                    "Continuation admission outcome requires operator reconciliation",
+                    "waiting" if rejected else "unknown",
+                    str(exc)
+                    if rejected
+                    else "Continuation admission outcome requires operator reconciliation",
+                    receipt_id=row["receipt_id"] if rejected else None,
                 )
             raise
         if row is not None:
@@ -396,6 +397,13 @@ class Scheduler:
         if not rows:
             raise ValueError("Delivery has no authorized schedule occurrence")
         row = rows[0]
+        waiting_key = f"occurrence:{row['id']}:waiting:"
+        if delivery["request_key"].startswith(waiting_key) and (
+            row["status"] != "waiting"
+            or delivery["request_key"] != waiting_key + str(row["receipt_id"])
+        ):
+            await database(self.store.supersede_notification, delivery["id"])
+            raise ValueError("Waiting notification is no longer current")
         definition = ScheduleDefinition.model_validate_json(row["definition"])
         current = self.catalog.schedules.get(row["schedule_id"])
         if current is None or not current.enabled:
@@ -411,6 +419,85 @@ class Scheduler:
             raise ValueError("Scheduled delivery destination mismatch")
         return destination["connection"], expected
 
+    def operator_source(self, item: dict[str, Any]) -> tuple[str, ScheduleSource]:
+        message, _ = self.service.ingress.source(item)
+        channel = self.service.settings.channels[item["channel_id"]]
+        if message.sender_id not in channel.operators:
+            raise ValueError("Scheduling requires a Channel operator's request")
+        project = (
+            self.service.settings.main_project_id
+            if self.service.settings.mode == "one_thread"
+            else channel.project_id
+        )
+        if item["project_id"] != project:
+            raise ValueError("Schedule source Project changed after intake")
+        connection = self.service.settings.connections[channel.connection]
+        if not isinstance(connection, LarkConnection):
+            raise ValueError("Schedule management requires a Lark operator source")
+        return message.sender_id, ScheduleSource(
+            connection=channel.connection,
+            app_id=connection.app_id,
+            domain=connection.domain,
+            chat_id=message.chat_id,
+            topic_id=channel.topic_id,
+        )
+
+    async def history(
+        self, item: dict[str, Any], schedule_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        author, source = self.operator_source(item)
+        rows = await database(
+            self.service.store.rows,
+            "SELECT * FROM occurrences WHERE json_extract(definition,'$.author')=? "
+            "AND json_extract(definition,'$.source_channel')=? "
+            "AND json_extract(definition,'$.source')=json(?) "
+            "AND json_extract(definition,'$.project_id')=? "
+            "AND (? IS NULL OR schedule_id=?) ORDER BY created DESC,id DESC LIMIT 20",
+            (
+                author,
+                item["channel_id"],
+                encode(source.model_dump()),
+                item["project_id"],
+                schedule_id,
+                schedule_id,
+            ),
+        )
+        # Keep all IDs/statuses usable in one IM response; detail has a larger preview.
+        return [self.occurrence_view(row, preview_limit=200) for row in rows]
+
+    @staticmethod
+    def occurrence_view(row: dict[str, Any], *, preview_limit: int = 2000) -> dict[str, Any]:
+        return {
+            key: row[key]
+            for key in ("id", "schedule_id", "due", "status", "thread_id", "receipt_id")
+        } | {
+            "detail": row["detail"][:preview_limit],
+            "detail_truncated": len(row["detail"]) > preview_limit,
+            "result": (row["result"] or "")[:preview_limit],
+            "result_truncated": len(row["result"] or "") > preview_limit,
+        }
+
+    async def owned_occurrence(self, item: dict[str, Any], occurrence_id: str) -> dict[str, Any]:
+        author, source = self.operator_source(item)
+        row = await database(self.store.get, occurrence_id)
+        definition = ScheduleDefinition.model_validate_json(row["definition"])
+        if (
+            definition.author != author
+            or definition.source_channel != item["channel_id"]
+            or definition.source != source
+            or definition.project_id != item["project_id"]
+        ):
+            raise ValueError("Occurrence belongs to another author or source")
+        self.authorize(definition)
+        if row["thread_id"]:
+            detail = await self.service.host.get_thread(row["thread_id"])
+            if (
+                detail.thread.archived
+                or detail.thread.configuration.project_id != definition.project_id
+            ):
+                raise ValueError("Occurrence Thread is archived or its Project changed")
+        return row
+
     async def manage(
         self,
         thread_id: str,
@@ -425,26 +512,15 @@ class Scheduler:
         async with self.service.lock:
             receipt = await self.service.inbox.authorize_caller(thread_id, run_id)
             row = await self.service.inbox.readable(thread_id, receipt, item_id)
-            message, _ = self.service.ingress.source(row)
-            channel = self.service.settings.channels[row["channel_id"]]
-            if message.sender_id not in channel.operators:
-                raise ValueError("Scheduling requires a Channel operator's request")
-            connection = self.service.settings.connections[channel.connection]
-            if not isinstance(connection, LarkConnection):
-                raise ValueError("Agent schedule management requires a Lark operator source")
-            source = ScheduleSource(
-                connection=channel.connection,
-                app_id=connection.app_id,
-                domain=connection.domain,
-                chat_id=message.chat_id,
-                topic_id=channel.topic_id,
-            )
+            author, source = self.operator_source(row)
+            if action == "history":
+                return {"occurrences": await self.history(row, schedule_id)}
             # Read disk under the same editor lock. Include un-reloaded edits in CAS checks.
             catalog, digest = await database(read_catalog, self.path)
             owned = {
                 key: value
                 for key, value in catalog.schedules.items()
-                if value.author == message.sender_id
+                if value.author == author
                 and value.source_channel == row["channel_id"]
                 and value.source == source
             }
@@ -477,12 +553,12 @@ class Scheduler:
                         **task.model_dump(mode="json"),
                         "destination": {"channel_id": row["channel_id"]},
                         "project_id": row["project_id"],
-                        "author": message.sender_id,
+                        "author": author,
                         "source_channel": row["channel_id"],
                         "source": source.model_dump(),
                     }
                 )
                 await self.put(schedule_id, definition, expected_digest)
             else:
-                raise ValueError("Expected list, put, remove, or trigger")
+                raise ValueError("Expected list, history, put, remove, or trigger")
             return {"schedule_id": schedule_id, "digest": self.digest, "action": action}

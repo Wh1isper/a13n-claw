@@ -63,6 +63,8 @@ Claw may retain the platform message/callback association needed to address and 
 
 Stopping addresses one current Host operation, invokes native cancellation, and reports request acceptance separately from observed termination. It does not stop every worker, undo effects, settle Inbox items, or disable future messages and native follow-up. Interrupted business work is reconciled before any retry; cancellation is not proof that its effects did not occur. Claw adds no durable global pause state and does not intercept all Host starts. Connection enablement, automation enablement, and shutdown keep their separate scopes.
 
+Retained tool executions have separate native identities and cancellation controls. Operators can page through a Thread's retained tools and cancel one exact execution through CLI/API; authorized IM controls resolve the Thread from a retained Inbox association. Stopping a root operation does not imply that a retained shell or other tool execution terminated. Tool cancellation reports the native observation, and unavailable execution state never authorizes replay.
+
 ## Delegation and Persistent Workers
 
 Host-native delegated children and Coordinator-owned worker roots keep their native distinction. Claw does not recreate either mechanism, synchronize their histories into Main, or wrap them in durable Claw Runs. Creation and first-prompt admission retain their separate Host outcomes; a partial failure reports the known Thread identity.

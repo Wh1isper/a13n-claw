@@ -34,6 +34,9 @@ def test_identity_mentions_and_app_scope():
     payload = event()
     message = normalize_message(payload, connection="connection", app_id="app", bot_open_id="bot")
     assert message is not None and message.mentioned and message.text == "hello"
+    payload["event"]["message"]["parent_id"] = "original"
+    reply = normalize_message(payload, connection="connection", app_id="app", bot_open_id="bot")
+    assert reply is not None and reply.reply_to == "original"
     payload["event"]["message"]["mentions"] = []
     message = normalize_message(payload, connection="connection", app_id="app", bot_open_id="bot")
     assert message is not None and not message.mentioned

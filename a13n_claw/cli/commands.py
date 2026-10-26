@@ -89,6 +89,8 @@ def invoke(args: argparse.Namespace, root: Path):
         if args.id is None:
             raise ValueError("This Thread operation requires an ID")
         path = "/api/threads/" + quote(args.id, safe="")
+        if args.action == "fork":
+            return request(args, root, "POST", path + "/fork")
         if args.action == "send":
             text = (
                 args.text
@@ -120,6 +122,13 @@ def invoke(args: argparse.Namespace, root: Path):
             path + "/" + args.action,
             {"text": args.text} if args.action == "steer" else None,
         )
+    if args.command == "tools":
+        path = "/api/threads/" + quote(args.thread_id, safe="") + "/tool-executions"
+        if args.action == "list":
+            return request(args, root, "GET", f"{path}?offset={args.offset}&limit={args.limit}")
+        if args.id is None:
+            raise ValueError("Tool cancellation requires an execution ID")
+        return request(args, root, "POST", path + "/" + quote(args.id, safe="") + "/cancel")
     if args.command == "schedules":
         if args.action == "list":
             return request(args, root, "GET", "/api/schedules")

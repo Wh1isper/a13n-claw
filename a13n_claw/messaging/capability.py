@@ -34,6 +34,7 @@ def messaging_integrations(service: ClawService | None = None) -> HarnessUiInteg
                 tools=[
                     claw_inbox_list,
                     claw_inbox_read,
+                    claw_inbox_context,
                     claw_inbox_file,
                     claw_inbox_settle,
                     claw_send_message,
@@ -54,6 +55,18 @@ def messaging_integrations(service: ClawService | None = None) -> HarnessUiInteg
         """Read an admitted Inbox item's message, version, and attachment availability."""
         try:
             return await bound().inbox.read(ctx.deps.thread_id, ctx.deps.run_id, item_id)
+        except ValueError as exc:
+            return {"error": str(exc)}
+
+    async def claw_inbox_context(ctx: RunContext[AgentContext], item_id: str) -> dict[str, Any]:
+        """Read up to ten earlier authorized Lark messages around an admitted Inbox item.
+
+        Returns bounded text from this Thread and Channel/topic, prioritizing the reply target.
+        Ignored, pruned, revoked, other-task and uncertain-dispatch content is unavailable.
+        No platform history is fetched; use this only when earlier context is relevant.
+        """
+        try:
+            return await bound().inbox.context(ctx.deps.thread_id, ctx.deps.run_id, item_id)
         except ValueError as exc:
             return {"error": str(exc)}
 
@@ -172,7 +185,7 @@ def messaging_integrations(service: ClawService | None = None) -> HarnessUiInteg
     async def claw_schedules(
         ctx: RunContext[AgentContext],
         item_id: str,
-        action: Literal["list", "put", "remove", "trigger"],
+        action: Literal["list", "history", "put", "remove", "trigger"],
         schedule_id: str | None = None,
         task: ScheduleTask | None = None,
         expected_digest: str | None = None,
@@ -184,8 +197,9 @@ def messaging_integrations(service: ClawService | None = None) -> HarnessUiInteg
         task specifies name, prompt, timing (cron/interval/once), notification and policies.
         Omit destination: Project, actor and reply destination come from the original Inbox.
         Only schedules authored by this sender in this source are visible/editable.
-        Trigger uses a stable request_key. Execution is a fresh native Host root; status and
-        recovery are available in the operator occurrences CLI/API.
+        Trigger uses a stable request_key. History returns the latest 20 owned occurrences,
+        optionally filtered by schedule_id, including waiting states and result previews.
+        Execution uses a fresh native Host root; decisions use human IM or operator controls.
         """
         try:
             return await bound().scheduler.manage(

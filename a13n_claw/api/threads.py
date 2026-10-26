@@ -55,6 +55,16 @@ async def thread(thread_id: str, app: Application):
     return await app.host.get_thread(thread_id)
 
 
+@router.post("/threads/{thread_id}/fork", status_code=201)
+async def fork(thread_id: str, app: Application):
+    return await app.host.fork_thread(thread_id)
+
+
+@router.get("/threads/{thread_id}/configuration")
+async def inspect_configuration(thread_id: str, app: Application):
+    return await app.host.inspect_thread_configuration(thread_id)
+
+
 @router.get("/threads/{thread_id}/events")
 async def events(thread_id: str, app: Application):
     # Check the target before sending headers. Watch still validates its own cutover.
@@ -105,6 +115,21 @@ async def submit(thread_id: str, body: Input, app: Application):
 @router.get("/threads/{thread_id}/active")
 async def active(thread_id: str, app: Application):
     return await app.host.active_root_operation(thread_id)
+
+
+@router.get("/threads/{thread_id}/tool-executions")
+async def tool_executions(
+    thread_id: str,
+    app: Application,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    return await app.host.tool_executions(thread_id, offset=offset, limit=limit)
+
+
+@router.post("/threads/{thread_id}/tool-executions/{execution_id}/cancel")
+async def cancel_tool_execution(thread_id: str, execution_id: str, app: Application):
+    return await app.host.cancel_tool_execution(thread_id, execution_id)
 
 
 @router.get("/operations/{receipt_id}")

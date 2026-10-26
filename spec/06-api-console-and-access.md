@@ -14,10 +14,12 @@ The runtime frontend is a Hello World placeholder in the replacement scope. A fu
 | Threads, history, execution, decisions, workers, and children | Supported Host commands, queries, and controls                     |
 | Environments, files, and memory                               | Supported Host resource operations, restricted by product exposure |
 | Connections, Channels, Inbox, and delivery                    | Claw product services                                              |
-| Schedules, occurrences, and workflows                         | Claw automation services                                           |
+| Schedules and occurrences                                     | Claw automation services                                           |
 | Readiness, cancellation, blockage, and reconciliation         | Clearly distinguished Host observations and Claw business facts    |
 
 The API need not reproduce every Host feature. Missing capabilities are reported explicitly rather than reconstructed through private modules. Payloads may reuse detached Host values where suitable; Claw does not publish native execution objects, credentials, storage sessions, or raw checkpoint internals.
+
+Operators can fork an independent ordinary Thread through the public Host operation. A fork copies saved conversation and Thread-owned files without starting execution or rebinding a Claw Channel; native Main/worker restrictions remain in force. Lost fork responses are not automatically retried. Configuration inspection distinguishes next-run selections from captured execution configuration.
 
 The CLI remains a headless product surface over the same owners. Offline administration uses exclusive ownership and supported library operations. A failed network call never authorizes offline mutation of a running Host store.
 

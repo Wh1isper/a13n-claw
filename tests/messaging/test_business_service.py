@@ -344,6 +344,10 @@ async def test_im_commands_are_scoped_deduplicated_and_control_exact_operations(
         assert len(service.store.rows("SELECT * FROM attempts WHERE kind='control'")) == 1
         await command(service, "tasks", "/claw tasks")
         assert item["id"] in transport.sent[-1][1].text
+        await command(service, "tools", f"/claw tools {item['id']}")
+        assert json.loads(transport.sent[-1][1].text) == []
+        await command(service, "bad-offset", f"/claw tools {item['id']} -1")
+        assert "non-negative" in transport.sent[-1][1].text
         # A Channel binding, not a text-supplied ID, owns authority.
         other = service.settings.channels["room"].model_copy(update={"chat_id": "other"})
         service.settings = service.settings.model_copy(
@@ -770,3 +774,87 @@ async def test_delivery_reconciliation_does_not_starve_after_revoked_page(tmp_pa
         assert all(
             service.store.delivery(row["id"])["status"] == "pending" for row in deliveries[:50]
         )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("lost_response", [False, True])
+async def test_im_retained_tool_cancel_scope_dedup_and_unknown(
+    tmp_path, monkeypatch, lost_response
+):
+    import asyncio
+    import json
+    import sys
+
+    async def model(messages, info):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "shell_exec",
+                    {
+                        "command": f'"{sys.executable}" -c "import time; time.sleep(60)"',
+                    },
+                )
+            ]
+        )
+
+    root, service, transport = await setup(tmp_path, monkeypatch, model=streaming_model(model))
+    enable_operator(service)
+    async with open_host(
+        root, service.settings, integrations=messaging_integrations(service)
+    ) as host:
+        service.bind(host)
+        await service.ingress.receive(message("shell-task"))
+        await service.reconcile()
+        item = service.store.rows("SELECT * FROM inbox WHERE event_id='shell-task'")[0]
+        attempt = service.store.rows("SELECT * FROM attempts")[0]
+        async with asyncio.timeout(20):
+            while not (tools := await host.tool_executions(item["thread_id"])):
+                await asyncio.sleep(0.05)
+        execution_id = tools[0].execution_id
+        await host.cancel_root_operation(attempt["receipt_id"])
+        await host.wait_root_operation(attempt["receipt_id"], timeout_seconds=10)
+        await command(service, "tools-live", f"/claw tools {item['id']}")
+        assert json.loads(transport.sent[-1][1].text)[0]["execution_id"] == execution_id
+        other = service.settings.channels["room"].model_copy(update={"chat_id": "other"})
+        service.settings = service.settings.model_copy(
+            update={"channels": {**service.settings.channels, "other": other}}
+        )
+        await command(
+            service,
+            "wrong-channel",
+            f"/claw cancel-tool {item['id']} {execution_id}",
+            chat_id="other",
+        )
+        assert "outside this Channel" in transport.sent[-1][1].text
+        assert (await host.tool_executions(item["thread_id"]))[0].status == "running"
+        await command(service, "missing-tool", f"/claw cancel-tool {item['id']} exec-missing")
+        assert "tool_execution_unavailable" in transport.sent[-1][1].text
+        cancel = host.cancel_tool_execution
+        calls = []
+
+        async def controlled(thread_id, execution_id):
+            calls.append(execution_id)
+            result = await cancel(thread_id, execution_id)
+            if lost_response:
+                raise RuntimeError("Response lost after cancellation")
+            return result
+
+        monkeypatch.setattr(host, "cancel_tool_execution", controlled)
+        incoming = message("cancel-tool", is_group=True).model_copy(
+            update={"text": f"/claw cancel-tool {item['id']} {execution_id}"}
+        )
+        await service.ingress.receive(incoming)
+        if lost_response:
+            with pytest.raises(RuntimeError, match="Response lost"):
+                await service.reconcile()
+        else:
+            await service.reconcile()
+        async with asyncio.timeout(15):
+            while (await host.tool_executions(item["thread_id"]))[0].status == "running":
+                await asyncio.sleep(0.05)
+        await service.ingress.receive(incoming)
+        await service.reconcile()
+        assert calls == [execution_id]
+        row = service.store.rows("SELECT * FROM attempts WHERE kind='control' ORDER BY created")[-1]
+        assert row["status"] == ("unknown" if lost_response else "observed")
+        assert (await host.tool_executions(item["thread_id"]))[0].status == "cancelled"

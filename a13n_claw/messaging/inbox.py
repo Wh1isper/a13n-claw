@@ -77,6 +77,70 @@ class Inbox:
                 "files": [{"index": i, "name": f["name"]} for i, f in enumerate(body["files"])],
             }
 
+    async def context(self, thread_id: str, run_id: str, item_id: str) -> dict[str, Any]:
+        """Read bounded retained Lark context without expanding ordinary Inbox authority."""
+        async with self.service.lock:
+            receipt = await self.authorize_caller(thread_id, run_id)
+            anchor = await self.readable(thread_id, receipt, item_id)
+            message, _ = self.service.ingress.source(anchor)
+            if message.platform != "lark":
+                raise ValueError("Retained conversation context is available for Lark only")
+            rows = await database(
+                self.service.store.rows,
+                "SELECT * FROM inbox WHERE thread_id=? AND channel_id=? AND project_id=? "
+                "AND mode=? AND (created,id)<(?,?) AND body IS NOT NULL "
+                "AND json_extract(body,'$.control') IS NULL "
+                "AND (json_extract(body,'$.message.topic_id') IS ? "
+                "OR json_extract(body,'$.message.message_id')=?) "
+                "ORDER BY (json_extract(body,'$.message.message_id')=?) DESC,created DESC,id DESC "
+                "LIMIT 20",
+                (
+                    thread_id,
+                    anchor["channel_id"],
+                    anchor["project_id"],
+                    anchor["mode"],
+                    anchor["created"],
+                    anchor["id"],
+                    message.topic_id,
+                    message.reply_to,
+                    message.reply_to,
+                ),
+            )
+            result = []
+            budget = 10_000
+            for candidate in rows:
+                try:
+                    row = await self.readable(thread_id, receipt, candidate["id"])
+                    prior, _ = self.service.ingress.source(row)
+                except ValueError:
+                    continue
+                if (prior.platform, prior.connection, prior.chat_id) != (
+                    message.platform,
+                    message.connection,
+                    message.chat_id,
+                ):
+                    continue
+                text = prior.text[: min(2000, budget)]
+                result.append(
+                    {
+                        "id": row["id"],
+                        "message_id": prior.message_id,
+                        "sender_id": prior.sender_id,
+                        "text": text,
+                        "truncated": len(text) < len(prior.text),
+                        "is_reply_target": prior.message_id == message.reply_to,
+                    }
+                )
+                budget -= len(text)
+                if len(result) == 10 or budget == 0:
+                    break
+            return {
+                "items": result,
+                "reply_available": any(value["is_reply_target"] for value in result),
+                "scope": "Retained readable messages in this Thread and Channel only; "
+                "reply target first, then recent messages. No platform history is fetched.",
+            }
+
     async def file(
         self, thread_id: str, run_id: str, item_id: str, index: int
     ) -> tuple[str, bytes]:

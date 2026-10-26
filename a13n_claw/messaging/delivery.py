@@ -50,9 +50,16 @@ class Delivery:
                     ):
                         raise ValueError("Control disclosure grant was revoked")
                     destination = Destination.model_validate_json(row["destination"])
+                    outbound = OutboundMessage.model_validate_json(row["body"])
+                    expected_reaction = (
+                        message.source_ref
+                        if message.platform == "github" and outbound.reaction
+                        else None
+                    )
                     if (
                         destination.chat_id != message.chat_id
                         or destination.reply_to != message.message_id
+                        or destination.reaction_to != expected_reaction
                     ):
                         raise ValueError("Retained destination differs from original source")
                     connection = message.connection

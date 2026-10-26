@@ -146,6 +146,28 @@ sa.Table(
     sa.Column("detail", sa.Text, nullable=False),
 )
 
+# Request identities survive coalesced notification versions and repeated scans.
+sa.Table(
+    "github_requests",
+    metadata,
+    sa.Column("connection", sa.Text, primary_key=True),
+    sa.Column("request_key", sa.Text, primary_key=True),
+    sa.Column("message", sa.Text),
+)
+sa.Table(
+    "github_event_requests",
+    metadata,
+    sa.Column("connection", sa.Text, primary_key=True),
+    sa.Column("event_key", sa.Text, primary_key=True),
+    sa.Column("request_key", sa.Text, primary_key=True),
+    sa.ForeignKeyConstraint(
+        ["connection", "event_key"], ["github_events.connection", "github_events.event_key"]
+    ),
+    sa.ForeignKeyConstraint(
+        ["connection", "request_key"], ["github_requests.connection", "github_requests.request_key"]
+    ),
+)
+
 # Service feedback does not settle or block business execution when transport is unknown.
 sa.Table(
     "feedback_deliveries",

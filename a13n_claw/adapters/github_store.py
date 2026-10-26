@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from a13n_claw.database.store import BusinessStore
 from a13n_claw.encoding import encode
 
 _SETTLED = """
-    EXISTS (SELECT 1 FROM inbox i
-            WHERE i.connection=github_events.connection AND i.event_id=github_events.event_key
+    EXISTS (SELECT 1 FROM github_event_requests er
+            WHERE er.connection=github_events.connection AND er.event_key=github_events.event_key)
+    AND NOT EXISTS (
+        SELECT 1 FROM github_event_requests er
+        JOIN github_requests r USING(connection,request_key)
+        JOIN github_events e ON e.connection=er.connection AND e.event_key=er.event_key
+        WHERE er.connection=github_events.connection
+        AND e.notification_id=github_events.notification_id AND e.updated<=github_events.updated
+        AND r.message IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM inbox i WHERE i.connection=r.connection AND i.event_id=r.request_key
             AND i.disposition IN ('handled','ignored') AND i.blocked IS NULL
             AND NOT EXISTS (SELECT 1 FROM attempt_items ai JOIN attempts a ON a.id=ai.attempt_id
                             WHERE ai.item_id=i.id AND a.status IN ('calling','accepted','unknown'))
-            AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.item_id=i.id AND d.status!='sent'))
+            AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.item_id=i.id AND d.status!='sent'
+                            AND NOT EXISTS (SELECT 1 FROM feedback_deliveries f
+                                            WHERE f.delivery_id=d.id))))
 """
 
 
@@ -52,7 +63,16 @@ class GitHubStore:
                 (self.connection, str(notification["id"]), updated),
             ).fetchone():
                 return
-            # A fresh update supersedes only delayed work that has never reached Inbox.
+            notification = dict(notification)
+            since = notification.get("since", updated - 1)
+            for older in db.execute(
+                "SELECT notification FROM github_events WHERE connection=? AND notification_id=? "
+                "AND state='pending' AND message IS NULL",
+                (self.connection, str(notification["id"])),
+            ):
+                since = min(since, json.loads(older[0]).get("since", updated - 1))
+            notification["since"] = since
+            # Coalesce discovery windows, never individual request identities.
             db.execute(
                 "UPDATE github_events SET state='ignored',detail='Superseded before capture' "
                 "WHERE connection=? AND notification_id=? AND updated<? "
@@ -88,12 +108,39 @@ class GitHubStore:
             )
         )
 
-    def prepared(self, key: str, message: dict) -> None:
+    def prepared(self, key: str, requests: list[tuple[str, dict | None]]) -> None:
+        """Freeze all request snapshots and their notification association atomically."""
         with self.store.transaction() as db:
+            for request_key, message in requests:
+                db.execute(
+                    "INSERT OR IGNORE INTO github_requests VALUES(?,?,?)",
+                    (self.connection, request_key, encode(message) if message else None),
+                )
+                db.execute(
+                    "INSERT OR IGNORE INTO github_event_requests VALUES(?,?,?)",
+                    (self.connection, key, request_key),
+                )
             db.execute(
-                "UPDATE github_events SET message=? WHERE connection=? AND event_key=?",
-                (encode(message), self.connection, key),
+                "UPDATE github_events SET message='{}' WHERE connection=? AND event_key=?",
+                (self.connection, key),
             )
+
+    def messages(self, key: str, *, through: bool = False) -> list[dict[str, Any]]:
+        scope = (
+            "e.notification_id=selected.notification_id AND e.updated<=selected.updated"
+            if through
+            else "e.event_key=selected.event_key"
+        )
+        return self.store.rows(
+            "SELECT DISTINCT r.rowid,r.message FROM github_event_requests er "
+            "JOIN github_requests r "
+            "USING(connection,request_key) JOIN github_events e "
+            "ON e.connection=er.connection AND e.event_key=er.event_key "
+            "JOIN github_events selected ON selected.connection=e.connection "
+            f"WHERE selected.connection=? AND selected.event_key=? AND {scope} "
+            "AND r.message IS NOT NULL ORDER BY r.rowid",
+            (self.connection, key),
+        )
 
     def finish(self, key: str, state: str, read_status: str, detail: str = "") -> None:
         with self.store.transaction() as db:

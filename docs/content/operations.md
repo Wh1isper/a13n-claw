@@ -29,6 +29,21 @@ Use `threads active`, `threads decisions`, `operations show`, and `threads histo
 
 Direct operator submission retains native Host admission semantics and is never automatically retried. Receipts are process-local. After restart, inspect saved Thread history and exact available execution evidence. Missing correlation means unknown, not failed. The product stores its own Inbox/dispatch/delivery evidence without writing Host tables.
 
+### Retained tools and Thread copies
+
+Stopping a Run and cancelling a retained tool are separate operations. A shell can remain alive after `operations cancel RECEIPT_ID`. Inspect and cancel its exact execution explicitly:
+
+```bash
+a13n-claw tools list THREAD_ID --offset 0 --limit 20
+a13n-claw tools cancel THREAD_ID EXECUTION_ID
+a13n-claw threads configuration THREAD_ID
+a13n-claw threads fork THREAD_ID
+```
+
+Tool cancellation requests native cancellation; inspect the execution again to confirm its final status. Channel operators can use `/claw tools INBOX_ID [OFFSET]` and `/claw cancel-tool INBOX_ID EXECUTION_ID` for work associated with their current Channel. These commands retain mutation intent and do not automatically repeat an uncertain cancellation.
+
+Fork copies an ordinary independent Thread's saved conversation and Thread-owned files into a new idle Thread. It does not copy unsaved in-flight output, create a new workspace, move a Channel binding, or start inference. Main/coordinators, owned workers, child Threads, and memory Threads cannot be forked. Fork has no idempotency key: after a lost response, inspect the Thread list before considering another call.
+
 ### Dispatch attempts
 
 Inspect `a13n-claw attempts`. Interrupted calls and receipts lacking exact evidence remain blocked. Inspect actual effects before explicitly resolving an attempt:

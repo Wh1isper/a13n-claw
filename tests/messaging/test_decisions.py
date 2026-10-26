@@ -245,3 +245,30 @@ async def test_lost_decision_receipt_stays_unknown_after_native_acceptance(
         await service.reconcile()
         assert len(accepted) == 1
         assert service.store.item(item["id"])["blocked"] is not None
+
+
+@pytest.mark.anyio
+async def test_ordered_im_response_resolves_complete_native_batch_once(tmp_path, monkeypatch):
+    async with decision_service(tmp_path, monkeypatch) as data:
+        service, transport, item, response, effects, _ = data
+        await command(service, "review", f"/claw review {item['id']}")
+        review = transport.sent[-1][1].text
+        assert "Which option?" in review and "First option" in review
+        assert "/claw respond" in review and response["expected_continuation_id"] in review
+        prefix = f"/claw respond {item['id']} {response['expected_continuation_id']} "
+        for index, values in enumerate(["[true]", '["true", "One"]', '[true, ""]']):
+            await command(service, f"invalid-ordered-{index}", prefix + values)
+            assert not service.store.rows("SELECT * FROM attempts WHERE kind='continue'")
+            assert effects == []
+        pending = await service.host.thread_decisions(thread_id=item["thread_id"])
+        values = json.dumps([True if r.kind == "approval" else "One" for r in pending.requests])
+        incoming = await command(service, "ordered", prefix + values)
+        assert transport.sent[-1][1].text.startswith("{"), transport.sent[-1][1].text
+        receipt = json.loads(transport.sent[-1][1].text)
+        result = await service.host.wait_root_operation(receipt["receipt_id"], timeout_seconds=20)
+        assert result.status == "completed"
+        assert effects == ["approved once"]
+        await service.ingress.receive(incoming)
+        await command(service, "stale-ordered", prefix + values)
+        assert len(service.store.rows("SELECT * FROM attempts WHERE kind='continue'")) == 1
+        assert effects == ["approved once"]

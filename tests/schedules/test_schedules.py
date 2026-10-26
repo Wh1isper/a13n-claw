@@ -289,11 +289,14 @@ def test_pending_has_no_terminal_notification(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_scheduled_native_decision_resumes_same_occurrence(tmp_path, monkeypatch):
+@pytest.mark.parametrize("surface", ["api", "im", "im-cancel"])
+async def test_scheduled_native_decision_resumes_same_occurrence(tmp_path, monkeypatch, surface):
+    import json
+
     from a13n_harness_ui.surfaces import DecisionResponseBatch
     from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 
-    from tests.helpers import streaming_model
+    from tests.helpers import command, enable_operator, streaming_model
 
     async def model(messages, info):
         returned = [p for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
@@ -321,7 +324,20 @@ async def test_scheduled_native_decision_resumes_same_occurrence(tmp_path, monke
         return ModelResponse(parts=[TextPart("Scheduled question answered")])
 
     root, service, transport = await setup(tmp_path, monkeypatch, model=streaming_model(model))
-    await service.scheduler.put("daily", definition(), None)
+    enable_operator(service)
+    job = definition(
+        notification="error",
+        destination={"channel_id": "room"},
+        author="user",
+        source_channel="room",
+        source={
+            "connection": "lark",
+            "app_id": "test-app",
+            "domain": "https://open.feishu.cn",
+            "chat_id": "chat",
+        },
+    )
+    await service.scheduler.put("daily", job, None)
     async with open_host(
         root, service.settings, integrations=messaging_integrations(service)
     ) as host:
@@ -345,17 +361,68 @@ async def test_scheduled_native_decision_resumes_same_occurrence(tmp_path, monke
                 ),
             }
         )
-        async with service.lock:
-            receipt = await service.scheduler.respond(row["thread_id"], response)
-        assert receipt.receipt_id != row["receipt_id"]
-        resumed = await host.wait_root_operation(receipt.receipt_id, timeout_seconds=20)
+        if surface != "api":
+            await command(service, "inspect", f"/claw occurrence-decisions {row['id']}")
+            assert pending.continuation_id in transport.sent[-1][1].text
+            await command(service, "history", "/claw occurrences daily")
+            assert json.loads(transport.sent[-1][1].text)[0]["status"] == "waiting"
+            if surface == "im-cancel":
+                await command(service, "stale-cancel", f"/claw occurrence-cancel {row['id']} old")
+                assert "exact current" in transport.sent[-1][1].text
+                assert service.scheduler.store.get(row["id"])["status"] == "waiting"
+                incoming = await command(
+                    service, "cancel", f"/claw occurrence-cancel {row['id']} {row['receipt_id']}"
+                )
+                assert service.scheduler.store.get(row["id"])["status"] == "cancelled"
+                # Abandoning business work does not silently answer native decisions.
+                assert (
+                    await host.thread_decisions(thread_id=row["thread_id"])
+                ).continuation_id == (pending.continuation_id)
+                attempts = service.store.rows("SELECT * FROM attempts WHERE kind='control'")
+                await service.ingress.receive(incoming)
+                await service.reconcile()
+                assert service.store.rows("SELECT * FROM attempts WHERE kind='control'") == attempts
+                return
+            bad = response.model_dump(mode="json")
+            bad["responses"][0]["request_id"] = "not-pending"
+            await command(
+                service, "invalid", f"/claw occurrence-answer {row['id']} {json.dumps(bad)}"
+            )
+            assert service.scheduler.store.get(row["id"])["status"] == "waiting"
+            incoming = await command(
+                service,
+                "answer",
+                f"/claw occurrence-answer {row['id']} {response.model_dump_json()}",
+            )
+            receipt_id = service.scheduler.store.get(row["id"])["receipt_id"]
+            await service.ingress.receive(incoming)
+            assert service.scheduler.store.get(row["id"])["receipt_id"] == receipt_id
+        else:
+            async with service.lock:
+                receipt = await service.scheduler.respond(row["thread_id"], response)
+            receipt_id = receipt.receipt_id
+        assert receipt_id != row["receipt_id"]
+        resumed = await host.wait_root_operation(receipt_id, timeout_seconds=20)
         assert resumed.status == "completed"
         await service.reconcile()
         saved = service.scheduler.store.get(row["id"])
         assert saved["status"] == "completed"
         assert saved["result"] == "Scheduled question answered"
-        assert saved["receipt_id"] == receipt.receipt_id
+        assert saved["receipt_id"] == receipt_id
         assert len(service.scheduler.store.list()) == 1
+        notifications = service.store.rows(
+            "SELECT * FROM deliveries WHERE request_key LIKE 'occurrence:%:waiting:%'"
+        )
+        assert len(notifications) == 1
+        await service.reconcile()
+        assert (
+            len(
+                service.store.rows(
+                    "SELECT * FROM deliveries WHERE request_key LIKE 'occurrence:%:waiting:%'"
+                )
+            )
+            == 1
+        )
 
 
 @pytest.mark.anyio
@@ -421,3 +488,160 @@ async def test_native_schedule_tool_binds_actual_source_and_operator(
         else:
             assert "operator" in results[0]["error"]
             assert not service.scheduler.catalog.schedules
+
+
+@pytest.mark.parametrize("policy", ["always", "error", "never"])
+def test_waiting_notification_atomic_restart_and_exact_receipt(tmp_path, monkeypatch, policy):
+    import sqlite3
+
+    business = BusinessStore(tmp_path / "business.sqlite3", ClawSettings())
+    store = ScheduleStore(business)
+    job = definition(notification=policy, destination={"channel_id": "room"})
+    destination = {"channel_id": "room", "chat_id": "chat", "reply_to": None}
+    row = store.trigger("daily", job, destination, "waiting", 1000)
+    store.start(row["id"], "thread-test")
+    store.status(row["id"], "accepted", receipt_id="receipt-first")
+    if policy != "never":
+        notify = store._notify
+
+        def failed(db, row, key, text):
+            notify(db, row, key, text)
+            raise sqlite3.OperationalError("Injected commit failure")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(store, "_notify", failed)
+            with pytest.raises(sqlite3.OperationalError, match="Injected"):
+                store.waiting(row["id"])
+        assert store.get(row["id"])["status"] == "accepted"
+        assert business.rows("SELECT * FROM deliveries") == []
+        assert business.rows("SELECT * FROM job_deliveries") == []
+    store.waiting(row["id"])
+    reopened = ScheduleStore(BusinessStore(business.path, ClawSettings()))
+    reopened.restart()
+    reopened.waiting(row["id"])
+    assert reopened.get(row["id"])["status"] == "waiting"
+    assert len(business.rows("SELECT * FROM deliveries")) == (0 if policy == "never" else 1)
+    reopened.status(row["id"], "accepted", receipt_id="receipt-second")
+    reopened.waiting(row["id"])
+    assert len(business.rows("SELECT * FROM deliveries")) == (0 if policy == "never" else 2)
+
+
+@pytest.mark.anyio
+async def test_occurrence_history_and_controls_require_original_author_source(
+    tmp_path, monkeypatch
+):
+    import json
+
+    from tests.helpers import command, enable_operator
+
+    root, service, transport = await setup(tmp_path, monkeypatch)
+    enable_operator(service)
+    channel = service.settings.channels["room"].model_copy(
+        update={"allowed_senders": ("user", "other"), "operators": ("user", "other")}
+    )
+    service.settings = service.settings.model_copy(update={"channels": {"room": channel}})
+    job = definition(
+        author="user",
+        source_channel="room",
+        source={
+            "connection": "lark",
+            "app_id": "test-app",
+            "domain": "https://open.feishu.cn",
+            "chat_id": "chat",
+        },
+    )
+    await service.scheduler.put("daily", job, None)
+    async with open_host(
+        root, service.settings, integrations=messaging_integrations(service)
+    ) as host:
+        service.bind(host)
+        row = await service.scheduler.trigger("daily", "private-result")
+        await service.reconcile()
+        row = service.scheduler.store.get(row["id"])
+        await host.wait_root_operation(row["receipt_id"], timeout_seconds=20)
+        await service.reconcile()
+        await command(service, "own-history", "/claw occurrences")
+        assert json.loads(transport.sent[-1][1].text)[0]["result"] == "Not broadcast"
+        for name in ("occurrence", "occurrence-decisions", "occurrence-cancel"):
+            await command(service, name, f"/claw {name} {row['id']}", sender_id="other")
+            assert "another author or source" in transport.sent[-1][1].text
+        await command(service, "other-history", "/claw occurrences", sender_id="other")
+        assert json.loads(transport.sent[-1][1].text) == []
+        rebound = channel.model_copy(update={"chat_id": "rebound"})
+        service.settings = service.settings.model_copy(update={"channels": {"room": rebound}})
+        await command(service, "rebound-history", "/claw occurrences", chat_id="rebound")
+        assert json.loads(transport.sent[-1][1].text) == []
+        await command(service, "rebound-detail", f"/claw occurrence {row['id']}", chat_id="rebound")
+        assert "another author or source" in transport.sent[-1][1].text
+        revoked = rebound.model_copy(update={"operators": ()})
+        service.settings = service.settings.model_copy(update={"channels": {"room": revoked}})
+        count = len(transport.sent)
+        await command(service, "revoked", "/claw occurrences", chat_id="rebound")
+        assert len(transport.sent) == count
+        assert (
+            service.store.rows("SELECT disposition FROM inbox WHERE event_id='revoked'")[0][
+                "disposition"
+            ]
+            == "ignored"
+        )
+
+
+@pytest.mark.anyio
+async def test_superseded_waiting_notice_is_unsent_and_never_redirected(tmp_path, monkeypatch):
+    root, service, transport = await setup(tmp_path, monkeypatch)
+    job = definition(notification="always", destination={"channel_id": "room"})
+    await service.scheduler.put("daily", job, None)
+    row = await service.scheduler.trigger("daily", "notice")
+    service.scheduler.store.start(row["id"], "thread-test")
+    service.scheduler.store.status(row["id"], "accepted", receipt_id="receipt-first")
+    service.scheduler.store.waiting(row["id"])
+    notice = service.store.rows("SELECT * FROM deliveries")[0]
+    service.scheduler.store.status(row["id"], "accepted", receipt_id="receipt-second")
+    await service.delivery.send(notice["id"])
+    assert service.store.delivery(notice["id"])["status"] == "not_sent"
+    assert transport.sent == []
+    await service.delivery.reconcile()
+    assert transport.sent == []
+
+
+@pytest.mark.anyio
+async def test_history_rechecks_project_after_intake_and_bounds_complete_list(
+    tmp_path, monkeypatch
+):
+    import json
+
+    from a13n_claw.schedules import controls
+    from tests.helpers import enable_operator, message
+
+    _, service, _ = await setup(tmp_path, monkeypatch, mode="per_trigger")
+    enable_operator(service)
+    job = definition(
+        project_id="project-channel",
+        author="user",
+        source_channel="room",
+        source={
+            "connection": "lark",
+            "app_id": "test-app",
+            "domain": "https://open.feishu.cn",
+            "chat_id": "chat",
+        },
+    )
+    for index in range(20):
+        row = service.scheduler.store.trigger("history", job, None, str(index), 1000 + index)
+        service.scheduler.store.start(row["id"], "thread-test")
+        service.scheduler.store.status(row["id"], "accepted", receipt_id="receipt-test")
+        service.scheduler.store.complete(row["id"], "completed", "结果" * 2000)
+    incoming = message("history-control").model_copy(update={"text": "/claw occurrences"})
+    await service.ingress.receive(incoming)
+    item = service.store.rows("SELECT * FROM inbox")[0]
+    async with service.lock:
+        await controls.execute(service, item, "occurrences", "")
+    reply = json.loads(service.store.rows("SELECT body FROM deliveries")[0]["body"])["text"]
+    assert len(reply) <= 20_000
+    results = json.loads(reply)
+    assert len(results) == 20
+    assert all(row["result_truncated"] for row in results)
+    channel = service.settings.channels["room"].model_copy(update={"project_id": "new-project"})
+    service.settings = service.settings.model_copy(update={"channels": {"room": channel}})
+    with pytest.raises(ValueError, match="Project"):
+        await service.scheduler.history(item)

@@ -92,7 +92,7 @@ Claw promptly distinguishes retained, admitted, running, awaiting a decision, bl
 
 Adapters present only interactions supported by both platform capability and caller authority. A callback identifies the external actor, original conversation, selected Thread, and exact Host request/continuation. Claw verifies that association and current permission before forwarding the native response. Button delivery, ordinary chat, repeated callbacks, and quoted approval text cannot authorize execution.
 
-Approvals and structured questions preserve request kind, choices, and Host response/batch rules. Repeated or stale callbacks report the known outcome or require refetch; they cannot answer a later request. Claw may retain callback correlation but keeps no second decision engine. Loss of a response is reconciled under [execution controls](03-execution-lifecycle.md#decisions-and-controls).
+Approvals and structured questions preserve request kind, choices, and Host response/batch rules. A concise ordered response includes the exact continuation and one value for every pending request; incomplete or mistyped arrays fail before native admission. Approval values are explicit booleans and question values are free-text answers. The native complete response format remains available for structured choices and advanced responses. Repeated or stale callbacks report the known outcome or require refetch; they cannot answer a later request. Claw may retain callback correlation but keeps no second decision engine. Loss of a response is reconciled under [execution controls](03-execution-lifecycle.md#decisions-and-controls).
 
 A shared Main request or worker request has no automatically safe Channel destination. It is presented only where the requesting context and operator policy permit disclosure and response; otherwise it remains available to an authorized operator through CLI/API. One Thread access does not let every participant cancel shared Main, inspect workers, or approve tools. Each control requires its corresponding grant.
 
@@ -108,6 +108,10 @@ Retry delivery from saved content, never by rerunning the Agent. Inbox settlemen
 
 Outgoing files are read through supported Host operations or already authorized product attachments, then retained as deliverable content with their origin. Adapter size/type limits and partial uploads are explicit. A Host path or file-browser link is not automatically accessible from IM and is not a substitute for an authorized upload or usable protected download. Platform output excludes secrets, hidden reasoning, unrelated history, and unauthorized files.
 
+## Retained Lark Context
+
+Agents can explicitly request bounded previous/reply text for an admitted Inbox item. Context uses the same current caller, Thread, Project, source, and dispatch-read barriers as an ordinary Inbox read. It stays within the original Channel and topic, with an exact retained reply target permitted in the same Channel and Thread. It excludes controls, filtered/pruned content, and uncertain dispatches. It fetches no platform history and creates no copied conversation history for per-trigger tasks. Missing reply content is reported as unavailable rather than fetched through a broader authorization path.
+
 ## Lark Feedback and Result Selection
 
 Lark service feedback uses bounded retained status messages and optional reactions. Each update has a stable intent and original destination; unknown sends remain blocked. Status and exact decision prompts expose only authorized associations. Rich cards and token streaming are optional representations, not requirements for decision handling.
@@ -118,9 +122,13 @@ An enabled saved-result policy in per-Channel/per-trigger mode selects only the 
 
 GitHub connections capture notification versions through durable paginated polling. A version is qualified by connection/account, notification identity, and update time. The cursor advances only after all pages are retained. Configured initial lookback, bounded delayed capture, timestamp-boundary overlap, and durable deduplication constrain discovery; the feed is sampled state rather than a complete event archive.
 
-Delayed capture refreshes issue/PR context, applies repository and sender grants, and excludes own output. Only authorized participant content enters ordinary Inbox routing. Superseded uncaptured updates can coalesce. GitHub content does not enter the IM control parser.
+Delayed capture refreshes the issue/PR and paginates its ordinary comments and PR review comments over the retained discovery window. Each request requires an allowed author and a textual `@account_login` mention with an exact account boundary; notification reasons alone do not authorize input. Own output and Claw delivery markers are excluded. Each source/version retains its immutable admission or ignored disposition independently of notification versions. Coalescing discovery windows preserves their earliest start; it cannot discard separate requests. Deleted content and edits replaced before polling remain outside the sampled feed's guarantee. Only the admitted request body enters context; unrelated root and comment bodies are not imported through refresh. GitHub content does not enter the IM control parser.
 
-Explicit text comments retain the issue/PR number and ordinary delivery uncertainty. Mark-read is a separate idempotent operation after business settlement and all associated dispatch/delivery obligations. Each attempt rechecks the notification version and current grants. Newer updates are left for capture; polling includes read notifications to cover the remaining platform race. Failed read-state updates retain retry/backoff evidence without repeating Agent execution or comment publication.
+Per-Channel routing retains one Thread per repository binding and issue/PR number, sharing the repository's configured Project. Per-trigger creates a new task for each distinct admitted request; One Thread routes to Main. Explicit text replies keep the original issue/PR number even when the request originated in a review comment.
+
+An enabled reactions policy retains an `eyes` acknowledgement for the exact request source through ordinary delivery intent. It acknowledges business retention, not execution completion. Unknown acknowledgements are not automatically resent and do not block business execution or mark-read settlement.
+
+Explicit text comments retain the issue/PR number and ordinary delivery uncertainty. Mark-read is a separate idempotent operation after business settlement and all associated dispatch/business-delivery obligations, including requests captured through earlier versions of the same notification. Each attempt rechecks the notification version and current grants. Newer updates are left for capture; polling includes read notifications to cover the remaining platform race. Failed read-state updates retain retry/backoff evidence without repeating Agent execution or comment publication.
 
 ## Invariants
 

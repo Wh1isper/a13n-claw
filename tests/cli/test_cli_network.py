@@ -180,6 +180,7 @@ def test_cli_provider_request_saved_history_and_restart(tmp_path):
             assert operation["status"] == "completed", operation
             assert "Loopback provider reply" in json.dumps(cli("threads", "history", main))
             assert len(calls) == 1
+            assert cli("tools", "list", main, "--offset", "0", "--limit", "10") == []
             candidate = tmp_path / "schedule.json"
             candidate.write_text(
                 json.dumps(

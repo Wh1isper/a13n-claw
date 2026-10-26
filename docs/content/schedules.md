@@ -62,3 +62,19 @@ Task results and notifications settle independently. A completed task with an un
 ## Manage from Lark
 
 A Channel operator can ask the Agent to list, create, change, remove, or trigger schedules through `claw_schedules`. The tool requires the originating admitted Inbox item and rechecks the sender's current operator grant. It restricts management to that author's schedules in that source Channel, its native Project defaults, and its destination. Ordinary allowed senders and other Channels cannot manage those definitions.
+
+The same tool's `history` action lists the latest 20 occurrences for that author and source, with bounded result previews. Channel operators can also inspect and control their own occurrences directly:
+
+```text
+/claw occurrences [schedule-id]
+/claw occurrence OCCURRENCE_ID
+/claw occurrence-decisions OCCURRENCE_ID
+/claw occurrence-answer OCCURRENCE_ID <DecisionResponseBatch JSON>
+/claw occurrence-cancel OCCURRENCE_ID RECEIPT_ID
+```
+
+Fetch the decision batch first and include its exact continuation ID in the answer. Include every intended response: omitted requests are declined by the native Host. Cancellation requires the current occurrence receipt from the detail command. Waiting-work cancellation abandons the business occurrence; it does not delete native decisions or undo tools. Pending occurrences without a Thread can be cancelled through the operator CLI.
+
+These commands require the original author, qualified source Channel, current grants, and retained Project association. They cannot access operator-authored schedules or another author's tasks. Use the trusted operator CLI/API for those.
+
+With `always` or `error` notification policy, a suspended occurrence also creates one attention notice per exact operation, pointing to its decision controls. `never` suppresses attention notices as well as final notifications. Unsent waiting notices are discarded when the operation is superseded; attempted sends retain their actual outcomes. Correcting an invalid answer preserves the same waiting occurrence, while an uncertain answer remains blocked for reconciliation.

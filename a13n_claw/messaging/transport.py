@@ -27,6 +27,8 @@ class InboundMessage(ProductModel):
     topic_id: str | None = None
     sender_id: str
     account_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    source_ref: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    reply_to: str | None = Field(default=None, exclude_if=lambda value: value is None)
     is_group: bool = False
     mentioned: bool = False
     text: str = Field(default="", max_length=100_000)
@@ -37,6 +39,7 @@ class InboundMessage(ProductModel):
 class Destination(ProductModel):
     chat_id: str
     reply_to: str | None = None
+    reaction_to: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class OutboundFile(ProductModel):

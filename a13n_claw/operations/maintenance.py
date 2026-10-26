@@ -25,6 +25,12 @@ _ELIGIBLE = """
     AND NOT EXISTS (SELECT 1 FROM github_events g WHERE g.connection=inbox.connection
                     AND g.event_key=inbox.event_id AND
                     (g.state='pending' OR g.read_status IN ('pending','unknown')))
+    AND NOT EXISTS (SELECT 1 FROM github_event_requests er JOIN github_events e
+                    ON e.connection=er.connection AND e.event_key=er.event_key
+                    JOIN github_events g ON g.connection=e.connection
+                    AND g.notification_id=e.notification_id AND g.updated>=e.updated
+                    WHERE er.connection=inbox.connection AND er.request_key=inbox.event_id
+                    AND (g.state='pending' OR g.read_status IN ('pending','unknown')))
 """
 
 
@@ -50,6 +56,21 @@ def prune(store: BusinessStore, before: float, ids: list[str]) -> int:
                 "UPDATE github_events SET message=NULL,notification='{}' "
                 "WHERE connection=? AND event_key=?",
                 (row["connection"], row["event_id"]),
+            )
+            db.execute(
+                "UPDATE github_requests SET message=NULL WHERE connection=? AND request_key=?",
+                (row["connection"], row["event_id"]),
+            )
+            db.execute(
+                "UPDATE github_events SET message=NULL,notification='{}' WHERE connection=? "
+                "AND state!='pending' AND read_status NOT IN ('pending','unknown') "
+                "AND event_key IN (SELECT event_key FROM github_event_requests "
+                "WHERE connection=? AND request_key=?) "
+                "AND NOT EXISTS (SELECT 1 FROM github_event_requests er "
+                "JOIN github_requests r USING(connection,request_key) "
+                "WHERE er.connection=github_events.connection "
+                "AND er.event_key=github_events.event_key AND r.message IS NOT NULL)",
+                (row["connection"], row["connection"], row["event_id"]),
             )
             count += 1
         if count:

@@ -337,6 +337,21 @@ class ClawService:
                         if item["mode"] == "per_channel"
                         else f"event:{item['id']}"
                     )
+                    if (
+                        item["mode"] == "per_channel"
+                        and body.get("message", {}).get("platform") == "github"
+                    ):
+                        key += f":github:{body['message']['message_id']}"
+                    if item["thread_id"] is not None:
+                        # Routing changes apply to new work, never to an admitted task.
+                        targets = await database(
+                            self.store.rows,
+                            "SELECT * FROM targets WHERE thread_id=? AND status='created'",
+                            (item["thread_id"],),
+                        )
+                        if not targets:
+                            raise ValueError("Retained Thread has no established target")
+                        key = targets[0]["key"]
                     thread_id = await self.ensure_target(key, item["project_id"])
                     await database(self.store.assign_thread, item["id"], thread_id)
                     item["thread_id"] = thread_id

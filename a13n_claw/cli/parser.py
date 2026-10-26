@@ -75,7 +75,18 @@ def parser() -> argparse.ArgumentParser:
     threads = commands.add_parser("threads", parents=[common])
     threads.add_argument(
         "action",
-        choices=["list", "create", "show", "history", "send", "decisions", "answer", "active"],
+        choices=[
+            "list",
+            "create",
+            "show",
+            "history",
+            "send",
+            "decisions",
+            "answer",
+            "active",
+            "fork",
+            "configuration",
+        ],
     )
     threads.add_argument("id", nargs="?")
     threads.add_argument("--text")
@@ -88,6 +99,14 @@ def parser() -> argparse.ArgumentParser:
     operations.add_argument("action", choices=["show", "steer", "cancel"])
     operations.add_argument("id")
     operations.add_argument("--text")
+    tools = commands.add_parser(
+        "tools", parents=[common], help="Inspect or cancel retained tool executions"
+    )
+    tools.add_argument("action", choices=["list", "cancel"])
+    tools.add_argument("thread_id")
+    tools.add_argument("id", nargs="?")
+    tools.add_argument("--offset", type=int, default=0)
+    tools.add_argument("--limit", type=int, default=20)
     schedules = commands.add_parser("schedules", parents=[common])
     schedules.add_argument("action", choices=["list", "put", "remove", "reload", "trigger"])
     schedules.add_argument("id", nargs="?")

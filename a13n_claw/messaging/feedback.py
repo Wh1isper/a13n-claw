@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
 from a13n_harness_ui.errors import HarnessUiError
 
 from a13n_claw.async_utils import database
+from a13n_claw.messaging.decisions import present
 from a13n_claw.messaging.transport import Destination, OutboundMessage
 from a13n_claw.runtime.observations import retained_output
 
@@ -34,7 +34,7 @@ class Feedback:
 
     def source(self, item):
         message, body = self.service.ingress.source(item)
-        if message.platform != "lark" or "control" in body:
+        if message.platform not in {"lark", "github"} or "control" in body:
             raise ValueError("No automatic feedback for this source")
         return message, self.service.settings.channels[item["channel_id"]]
 
@@ -52,7 +52,11 @@ class Feedback:
             request_key=request_key,
             channel_id=item["channel_id"],
             destination=Destination(
-                chat_id=message.chat_id, reply_to=message.message_id
+                chat_id=message.chat_id,
+                reply_to=message.message_id,
+                reaction_to=message.source_ref
+                if message.platform == "github" and body.reaction
+                else None,
             ).model_dump(),
             thread_id=item["thread_id"] if kind == "decision" else None,
             item_id=item["id"],
@@ -63,8 +67,12 @@ class Feedback:
 
     async def status(self, item: dict[str, Any], phase: str) -> None:
         try:
-            _, binding = self.source(item)
+            message, binding = self.source(item)
         except ValueError:
+            return
+        if message.platform == "github":
+            if phase == "retained" and binding.reactions and message.source_ref:
+                await self.enqueue(item, "eyes", OutboundMessage(reaction="eyes"), kind="reaction")
             return
         if binding.progress_updates:
             await self.enqueue(
@@ -90,7 +98,8 @@ class Feedback:
         # Shared Main has no automatically safe disclosure destination. Routed prompts
         # require an operator origin and a deliberately enabled destination policy.
         if (
-            not binding.decision_prompts
+            message.platform != "lark"
+            or not binding.decision_prompts
             or item["mode"] == "one_thread"
             or message.sender_id not in binding.operators
             or not item["thread_id"]
@@ -99,40 +108,7 @@ class Feedback:
         decisions = await self.service.host.thread_decisions(thread_id=item["thread_id"])
         if decisions is None:
             return
-        responses = []
-        for request in decisions.requests:
-            if request.kind == "approval":
-                responses.append(
-                    {"kind": "approval", "request_id": request.request_id, "approved": False}
-                )
-            elif request.kind == "question":
-                responses.append(
-                    {
-                        "kind": "question",
-                        "request_id": request.request_id,
-                        "response": "REPLACE WITH YOUR ANSWER",
-                    }
-                )
-            else:
-                # External tool results need the native operator surface, not fabricated values.
-                return
-        text = (
-            f"Native decisions for {item['id']}:\n{decisions.model_dump_json()}\n\n"
-            "Review every request, edit the complete response below, then send it. "
-            "Approvals default to denial; change approved to true only to authorize that request.\n"
-            f"/claw answer {item['id']} "
-            + json.dumps(
-                {
-                    "expected_continuation_id": decisions.continuation_id,
-                    "responses": responses,
-                }
-            )
-        )
-        if len(text) > 20_000:
-            text = (
-                f"Native decisions for {item['id']} exceed the IM limit. "
-                "Use the authenticated CLI/API to inspect and answer the complete batch."
-            )
+        text = present(item["id"], decisions)
         await self.enqueue(
             item,
             f"decision:{decisions.continuation_id}",
@@ -179,7 +155,7 @@ class Feedback:
             message, binding = self.source(item)
         except ValueError:
             return
-        if not binding.final_reply:
+        if message.platform != "lark" or not binding.final_reply:
             return
         related = await database(
             self.service.store.rows,

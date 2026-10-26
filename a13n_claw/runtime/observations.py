@@ -8,6 +8,14 @@ TERMINAL = {"completed", "failed", "cancelled", "suspended"}
 # These public errors conclusively reject admission. Shutdown cancellation can occur
 # after admission, so app_stopping must retain uncertainty like a lost response.
 REJECTED = {"thread_run_active", "thread_touch_failed"}
+DECISION_REJECTED = {
+    "thread_deferred_not_pending",
+    "thread_continuation_conflict",
+    "thread_interaction_expired",
+    "thread_deferred_response_incomplete",
+    "thread_deferred_response_kind_mismatch",
+    "thread_deferred_response_invalid",
+}
 
 
 async def exact_operation_status(host: HarnessUiApp, thread_id: str, receipt_id: str) -> str | None:

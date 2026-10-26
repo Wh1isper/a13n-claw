@@ -435,3 +435,37 @@ async def test_failed_restore_preserves_incomplete_marker_and_original(tmp_path,
         read_settings(restored)
     assert (root / "claw.yaml").read_bytes() == original
     assert verify(snapshot)["format"] == 1
+
+
+@pytest.mark.anyio
+async def test_retention_tracks_request_snapshots_and_later_notification_obligations(
+    tmp_path, monkeypatch
+):
+    from a13n_claw.adapters.github_store import GitHubStore
+    from a13n_claw.operations.maintenance import prune, retention_candidates
+
+    _, service, _ = await setup(tmp_path, monkeypatch)
+    await service.ingress.receive(message("request"))
+    item = service.store.rows("SELECT * FROM inbox")[0]
+    service.store.settle(item["id"], item["version"], "handled", "Completed")
+    store = GitHubStore(service.store, "lark", "account")
+    notification = {"id": "notice", "updated_at": "first", "repository": "owner/repo"}
+    store.stage(notification, 1, 0)
+    store.prepared("notice:first", [("request", message("request").model_dump(mode="json"))])
+    store.finish("notice:first", "captured", "pending")
+    before = time.time() + 1
+    assert retention_candidates(service.store, before) == []
+    assert prune(service.store, before, [item["id"]]) == 0
+    store.finish("notice:first", "captured", "read")
+    store.stage({**notification, "updated_at": "second"}, 2, 0)
+    assert retention_candidates(service.store, before) == []
+    store.prepared("notice:second", [("request", message("request").model_dump(mode="json"))])
+    store.finish("notice:second", "captured", "read")
+    assert prune(service.store, before, [item["id"]]) == 1
+    assert service.store.item(item["id"])["body"] is None
+    assert store.messages("notice:first") == store.messages("notice:second") == []
+    assert service.store.rows("SELECT * FROM github_requests")[0]["message"] is None
+    assert len(service.store.rows("SELECT * FROM github_event_requests")) == 2
+    # Re-discovery cannot restore a pruned request snapshot.
+    store.prepared("notice:second", [("request", {"text": "must not resurrect"})])
+    assert store.messages("notice:second") == []

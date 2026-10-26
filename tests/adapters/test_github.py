@@ -49,6 +49,27 @@ def notification(identity="1", updated=1000, repository="owner/repo"):
     }
 
 
+def comment(body="@claw-bot Task", author="alice", updated=1000, identity=7, kind="issues"):
+    return {
+        "id": identity,
+        "url": f"https://api.github.com/repos/owner/repo/{kind}/comments/{identity}",
+        "updated_at": iso(updated),
+        "user": {"login": author},
+        "body": body,
+    }
+
+
+def issue():
+    return {
+        "id": 42,
+        "updated_at": iso(1000),
+        "user": {"login": "alice"},
+        "title": "Task",
+        "body": "Issue context without a request",
+        "state": "open",
+    }
+
+
 def setup(tmp_path, monkeypatch, handler, **overrides):
     monkeypatch.setenv("CLAW_GITHUB_TOKEN", "fixture-token")
     config = settings(**overrides)
@@ -69,7 +90,7 @@ def setup(tmp_path, monkeypatch, handler, **overrides):
 async def test_delay_pagination_capture_before_mark_read_and_restart(tmp_path, monkeypatch):
     requests = []
     snapshots = [notification(), notification("2", repository="not/bound")]
-    context = {"body": "Fresh comment after delay"}
+    context = {"body": "@claw-bot Fresh comment after delay"}
 
     async def handler(request):
         requests.append((request.method, request.url.path))
@@ -90,15 +111,10 @@ async def test_delay_pagination_capture_before_mark_read_and_restart(tmp_path, m
         if request.url.path == "/repos/owner/repo/issues/42":
             return httpx.Response(
                 200,
-                json={
-                    "user": {"login": "alice"},
-                    "title": "Task",
-                    "body": "Issue body",
-                    "state": "open",
-                },
+                json=issue(),
             )
-        if request.url.path == "/repos/owner/repo/issues/comments/7":
-            return httpx.Response(200, json={"user": {"login": "alice"}, **context})
+        if request.url.path == "/repos/owner/repo/issues/42/comments":
+            return httpx.Response(200, json=[comment(context["body"])])
         if request.method == "GET" and request.url.path == "/notifications/threads/1":
             return httpx.Response(200, json=notification())
         if request.method == "PATCH":
@@ -120,7 +136,8 @@ async def test_delay_pagination_capture_before_mark_read_and_restart(tmp_path, m
         assert events[0]["state"] == "captured" and events[0]["read_status"] == "pending"
         assert not any(method == "PATCH" for method, _ in requests)
         service.store.settle(items[0]["id"], items[0]["version"], "handled", "Work complete")
-        assert events[1]["state"] == "ignored" and events[1]["message"] is None
+        assert events[1]["state"] == "ignored"
+        assert adapter.store.messages(events[1]["event_key"]) == []
         # Reopening the adapter preserves the cursor and deduplication, not its process memory.
         reopened = GitHubAdapter(
             "github", adapter.settings, service.store, service.settings.channels, client=client
@@ -134,7 +151,7 @@ async def test_delay_pagination_capture_before_mark_read_and_restart(tmp_path, m
 
 @pytest.mark.anyio
 async def test_lost_capture_response_reuses_immutable_context(tmp_path, monkeypatch):
-    body = {"text": "First snapshot"}
+    body = {"text": "@claw-bot First snapshot"}
 
     async def handler(request):
         if request.url.path == "/user":
@@ -143,7 +160,9 @@ async def test_lost_capture_response_reuses_immutable_context(tmp_path, monkeypa
             return httpx.Response(200, json=[notification()])
         if request.url.path == "/notifications/threads/1":
             return httpx.Response(200, json=notification())
-        return httpx.Response(200, json={"user": {"login": "alice"}, "body": body["text"]})
+        return httpx.Response(
+            200, json=[comment(body["text"])] if request.url.path.endswith("/comments") else issue()
+        )
 
     adapter, service, client = setup(
         tmp_path, monkeypatch, handler, delay_seconds=0, mark_read=False
@@ -169,9 +188,11 @@ async def test_lost_capture_response_reuses_immutable_context(tmp_path, monkeypa
 @pytest.mark.parametrize(
     "sender,body",
     [
-        ("mallory", "Private ignored content"),
-        ("claw-bot", "Own content"),
-        ("alice", "Reply <!-- a13n-claw:marker -->"),
+        ("mallory", "@claw-bot Private ignored content"),
+        ("claw-bot", "@claw-bot Own content"),
+        ("alice", "@claw-bot Reply <!-- a13n-claw:marker -->"),
+        ("alice", "No direct request"),
+        ("alice", "@claw-bot-other is not the account"),
     ],
 )
 async def test_ignored_sender_and_echo_never_reach_inbox(tmp_path, monkeypatch, sender, body):
@@ -182,7 +203,9 @@ async def test_ignored_sender_and_echo_never_reach_inbox(tmp_path, monkeypatch, 
             return httpx.Response(200, json=[notification()])
         if request.url.path == "/notifications/threads/1":
             return httpx.Response(200, json=notification())
-        return httpx.Response(200, json={"user": {"login": sender}, "body": body})
+        return httpx.Response(
+            200, json=[comment(body, sender)] if request.url.path.endswith("/comments") else issue()
+        )
 
     adapter, service, client = setup(tmp_path, monkeypatch, handler, delay_seconds=0)
     async with client:
@@ -190,7 +213,8 @@ async def test_ignored_sender_and_echo_never_reach_inbox(tmp_path, monkeypatch, 
         await adapter.capture(service.ingress.receive, 1100)
         assert service.store.rows("SELECT * FROM inbox") == []
         saved = service.store.rows("SELECT * FROM github_events")[0]
-        assert saved["state"] == "ignored" and saved["message"] is None
+        assert saved["state"] == "ignored"
+        assert adapter.store.messages(saved["event_key"]) == []
         assert body not in saved["notification"]
 
 
@@ -284,7 +308,12 @@ async def test_newer_notification_resets_delay_and_out_of_order_discovery(tmp_pa
             return httpx.Response(200, json=[notification()])
         if request.url.path == "/notifications/threads/1":
             return httpx.Response(200, json=newest)
-        return httpx.Response(200, json={"user": {"login": "alice"}, "body": "Updated"})
+        return httpx.Response(
+            200,
+            json=[comment("@claw-bot Updated", updated=1500, identity=8)]
+            if request.url.path.endswith("/comments")
+            else issue(),
+        )
 
     adapter, service, client = setup(tmp_path, monkeypatch, handler, mark_read=False)
     async with client:
@@ -297,8 +326,8 @@ async def test_newer_notification_resets_delay_and_out_of_order_discovery(tmp_pa
         assert service.store.rows("SELECT * FROM inbox") == []
         await adapter.capture(service.ingress.receive, 2100)
         assert len(service.store.rows("SELECT * FROM inbox")) == 1
-        assert "/repos/owner/repo/issues/comments/8" in calls
-        assert "/repos/owner/repo/issues/comments/7" not in calls
+        assert "/repos/owner/repo/issues/42/comments" in calls
+        assert "Updated" in service.store.rows("SELECT * FROM inbox")[0]["body"]
 
 
 @pytest.mark.anyio
@@ -315,7 +344,9 @@ async def test_read_marker_rechecks_revoked_sender_after_capture(tmp_path, monke
             raise httpx.ReadTimeout("Lost read response", request=request)
         if request.url.path == "/notifications/threads/1":
             return httpx.Response(200, json=notification())
-        return httpx.Response(200, json={"user": {"login": "alice"}, "body": "Task"})
+        return httpx.Response(
+            200, json=[comment()] if request.url.path.endswith("/comments") else issue()
+        )
 
     adapter, service, client = setup(tmp_path, monkeypatch, handler, delay_seconds=0)
     async with client:
@@ -477,7 +508,9 @@ async def test_read_marker_waits_for_all_business_obligations(tmp_path, monkeypa
             return httpx.Response(205)
         if request.url.path == "/notifications/threads/1":
             return httpx.Response(200, json=notification())
-        return httpx.Response(200, json={"user": {"login": "alice"}, "body": "Task"})
+        return httpx.Response(
+            200, json=[comment()] if request.url.path.endswith("/comments") else issue()
+        )
 
     adapter, service, client = setup(tmp_path, monkeypatch, handler, delay_seconds=0)
     async with client:
@@ -537,3 +570,369 @@ async def test_read_marker_waits_for_all_business_obligations(tmp_path, monkeypa
         await adapter.capture(service.ingress.receive, 1300)
         await adapter.capture(service.ingress.receive, 1400)
         assert len(patches) == 1
+
+
+@pytest.mark.anyio
+async def test_coalesced_pr_captures_each_request_and_retains_ignored_versions(
+    tmp_path, monkeypatch
+):
+    current = notification(updated=1500)
+    current["subject"].update(
+        type="PullRequest", url="https://api.github.com/repos/owner/repo/pulls/42"
+    )
+    comments = [
+        comment("@claw-bot first", updated=1000),
+        comment("@claw-bot second", updated=1400, identity=8),
+    ]
+    ignored = comment("@claw-bot unauthorized", author="bob", updated=1450, identity=9)
+    review = comment("@claw-bot review this line", updated=1490, identity=10, kind="pulls")
+    calls = []
+
+    async def handler(request):
+        calls.append(request)
+        path = request.url.path
+        if path == "/user":
+            return httpx.Response(200, json={"login": "claw-bot"})
+        if path == "/notifications":
+            return httpx.Response(200, json=[current])
+        if path == "/notifications/threads/1":
+            return httpx.Response(200, json=current)
+        if path == "/repos/owner/repo/pulls/42":
+            return httpx.Response(200, json=issue())
+        if path == "/repos/owner/repo/pulls/42/comments":
+            return httpx.Response(200, json=[review])
+        if path == "/repos/owner/repo/issues/42/comments":
+            page = int(request.url.params["page"])
+            assert request.url.params["since"] == iso(899)
+            return httpx.Response(
+                200,
+                json=comments if page == 1 else [ignored],
+                headers={"link": '<https://api.github.com/comments?page=2>; rel="next"'}
+                if page == 1
+                else {},
+            )
+        raise AssertionError(request.url)
+
+    adapter, service, client = setup(
+        tmp_path, monkeypatch, handler, delay_seconds=0, mark_read=False
+    )
+    adapter.store.stage({**adapter.metadata(notification()), "since": 899}, 1000, 0)
+    async with client:
+        # Refresh coalesces the notification, retaining its earliest discovery window.
+        await adapter.capture(service.ingress.receive, 1600)
+        await adapter.capture(service.ingress.receive, 1600)
+        items = service.store.rows("SELECT * FROM inbox ORDER BY created")
+        assert len(items) == 3
+        assert len({i["event_id"] for i in items}) == 3
+        assert all(json.loads(i["body"])["message"]["message_id"] == "42" for i in items)
+        assert "unauthorized" not in str(service.store.rows("SELECT * FROM github_requests"))
+        assert "Issue context" not in str(items)
+        # Rescanning overlapping windows with relaxed grants cannot resurrect an ignored version.
+        service.settings.channels["repo"] = service.settings.channels["repo"].model_copy(
+            update={"allowed_senders": ("alice", "bob")}
+        )
+        current["updated_at"] = iso(1600)
+        adapter.store.stage({**adapter.metadata(current), "since": 899}, 1600, 0)
+        await adapter.capture(service.ingress.receive, 1700)
+        assert len(service.store.rows("SELECT * FROM inbox")) == 3
+        # Editing an admitted comment produces a distinct request; unchanged comments stay deduped.
+        comments[0] = comment("@claw-bot edited", updated=1650)
+        current["updated_at"] = iso(1700)
+        adapter.store.stage({**adapter.metadata(current), "since": 899}, 1700, 0)
+        await adapter.capture(service.ingress.receive, 1800)
+        assert len(service.store.rows("SELECT * FROM inbox")) == 4
+
+
+@pytest.mark.anyio
+async def test_partial_request_capture_restarts_without_changed_context(tmp_path, monkeypatch):
+    comments = [comment("@claw-bot first"), comment("@claw-bot second", identity=8)]
+
+    async def handler(request):
+        if request.url.path == "/notifications/threads/1":
+            return httpx.Response(200, json=notification())
+        return httpx.Response(
+            200, json=comments if request.url.path.endswith("/comments") else issue()
+        )
+
+    adapter, service, client = setup(
+        tmp_path, monkeypatch, handler, delay_seconds=0, mark_read=False
+    )
+    adapter.store.stage(adapter.metadata(notification()), 1000, 0)
+    async with client:
+
+        async def interrupted(message):
+            await service.ingress.receive(message)
+            raise OSError("Lost first intake response")
+
+        await adapter.capture(interrupted, 1100)
+        assert len(service.store.rows("SELECT * FROM inbox")) == 1
+        comments[:] = [comment("@claw-bot replacement", updated=1100)]
+        reopened = GitHubAdapter(
+            "github", adapter.settings, service.store, service.settings.channels, client=client
+        )
+        await reopened.capture(service.ingress.receive, 1200)
+        items = service.store.rows("SELECT * FROM inbox")
+        assert len(items) == 2
+        assert "second" in str(items) and "replacement" not in str(items)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("lost", [False, True])
+async def test_github_eyes_uses_retained_delivery_and_never_replays_unknown(
+    tmp_path, monkeypatch, lost
+):
+    sent = []
+
+    async def handler(request):
+        if request.url.path == "/user":
+            return httpx.Response(200, json={"login": "claw-bot"})
+        if request.method == "POST":
+            sent.append(request)
+            assert request.url.path == "/repos/owner/repo/issues/comments/7/reactions"
+            assert json.loads(request.content) == {"content": "eyes"}
+            if lost:
+                raise httpx.ReadTimeout("Lost reaction response", request=request)
+            return httpx.Response(201, json={"id": 91})
+        if request.url.path == "/notifications/threads/1":
+            return httpx.Response(200, json=notification())
+        return httpx.Response(
+            200, json=[comment()] if request.url.path.endswith("/comments") else issue()
+        )
+
+    adapter, service, client = setup(
+        tmp_path, monkeypatch, handler, delay_seconds=0, mark_read=False
+    )
+    service.settings.channels["repo"] = service.settings.channels["repo"].model_copy(
+        update={"reactions": True}
+    )
+    adapter.store.stage(adapter.metadata(notification()), 1000, 0)
+    async with client:
+        await adapter.capture(service.ingress.receive, 1100)
+        assert sent == []
+        row = service.store.rows("SELECT * FROM deliveries")[0]
+        assert row["status"] == "pending"
+        await service.delivery.send(row["id"])
+        service.store.restart()
+        await service.feedback.status(service.store.rows("SELECT * FROM inbox")[0], "retained")
+        await service.delivery.reconcile()
+        assert len(sent) == 1
+        assert service.store.delivery(row["id"])["status"] == ("unknown" if lost else "sent")
+
+
+@pytest.mark.anyio
+async def test_comments_pagination_failure_keeps_capture_atomic(tmp_path, monkeypatch):
+    async def handler(request):
+        if request.url.path == "/notifications/threads/1":
+            return httpx.Response(200, json=notification())
+        if request.url.path.endswith("/comments"):
+            if request.url.params["page"] == "2":
+                return httpx.Response(503)
+            return httpx.Response(
+                200,
+                json=[comment()],
+                headers={"link": '<https://api.github.com/comments?page=2>; rel="next"'},
+            )
+        return httpx.Response(200, json=issue())
+
+    adapter, service, client = setup(tmp_path, monkeypatch, handler, delay_seconds=0)
+    adapter.store.stage(adapter.metadata(notification()), 1000, 0)
+    async with client:
+        await adapter.capture(service.ingress.receive, 1100)
+        assert service.store.rows("SELECT * FROM inbox") == []
+        assert service.store.rows("SELECT * FROM github_requests") == []
+        event = service.store.rows("SELECT * FROM github_events")[0]
+        assert event["message"] is None and event["state"] == "pending"
+
+
+@pytest.mark.anyio
+async def test_new_notification_read_waits_for_earlier_request(tmp_path, monkeypatch):
+    current = notification()
+    comments = [comment()]
+    patches = []
+
+    async def handler(request):
+        if request.method == "PATCH":
+            patches.append(request)
+            return httpx.Response(205)
+        if request.url.path == "/notifications/threads/1":
+            return httpx.Response(200, json=current)
+        return httpx.Response(
+            200, json=comments if request.url.path.endswith("/comments") else issue()
+        )
+
+    adapter, service, client = setup(tmp_path, monkeypatch, handler, delay_seconds=0)
+    adapter.store.stage(adapter.metadata(current), 1000, 0)
+    async with client:
+        await adapter.capture(service.ingress.receive, 1100)
+        first = service.store.rows("SELECT * FROM inbox")[0]
+        current["updated_at"] = iso(1200)
+        comments[:] = [comment("@claw-bot next", updated=1200, identity=8)]
+        adapter.store.stage({**adapter.metadata(current), "since": 1100}, 1200, 0)
+        await adapter.capture(service.ingress.receive, 1300)
+        second = service.store.rows("SELECT * FROM inbox ORDER BY created DESC")[0]
+        service.store.settle(second["id"], second["version"], "handled", "Second settled")
+        await adapter.capture(service.ingress.receive, 1400)
+        assert patches == []
+        service.store.settle(first["id"], first["version"], "handled", "First settled")
+        await adapter.capture(service.ingress.receive, 1500)
+        assert len(patches) == 1
+        assert [
+            r["read_status"]
+            for r in service.store.rows("SELECT * FROM github_events ORDER BY updated")
+        ] == ["superseded", "read"]
+
+
+@pytest.mark.anyio
+async def test_github_per_channel_reuses_issue_thread_not_repository_thread(tmp_path, monkeypatch):
+    from a13n_claw.messaging.capability import messaging_integrations
+    from a13n_claw.messaging.transport import InboundMessage
+    from a13n_claw.runtime.host import open_host
+    from tests.helpers import setup as native_setup
+
+    root, service, _ = await native_setup(tmp_path, monkeypatch, mode="per_channel")
+    project_id = service.settings.channels["room"].project_id
+    github = settings().connections["github"]
+    binding = settings().channels["repo"].model_copy(update={"project_id": project_id})
+    service.settings = service.settings.model_copy(
+        update={"connections": {"github": github}, "channels": {"repo": binding}}
+    )
+    service.adapters = {}
+    async with open_host(
+        root, service.settings, integrations=messaging_integrations(service)
+    ) as host:
+        from a13n_harness_ui.configuration.mutation import ResourceMutationRequest
+
+        service.bind(host)
+        await host.mutate_configuration(
+            relative_path="projects/channel.yaml",
+            request=ResourceMutationRequest(
+                content=json.dumps(
+                    {
+                        "schema_version": "1",
+                        "kind": "project",
+                        "id": project_id,
+                        "name": "Channel",
+                        "roots": [{"path": str(tmp_path / "work")}],
+                    }
+                )
+            ),
+        )
+        for event, number in (("one", "42"), ("two", "43"), ("three", "42")):
+            await service.ingress.receive(
+                InboundMessage(
+                    platform="github",
+                    connection="github",
+                    event_id=event,
+                    message_id=number,
+                    chat_id="owner/repo",
+                    sender_id="alice",
+                    account_id="claw-bot",
+                    text="Request",
+                )
+            )
+            await service.reconcile()
+            for attempt in service.store.rows("SELECT * FROM attempts WHERE status='accepted'"):
+                await host.wait_root_operation(attempt["receipt_id"], timeout_seconds=20)
+            await service.reconcile()
+        items = service.store.rows("SELECT * FROM inbox ORDER BY created")
+        assert items[0]["thread_id"] == items[2]["thread_id"]
+        assert items[0]["thread_id"] != items[1]["thread_id"]
+        assert {i["project_id"] for i in items} == {project_id}
+
+
+@pytest.mark.anyio
+async def test_github_retained_repository_route_preserves_pending_decision(tmp_path, monkeypatch):
+    from a13n_harness_ui.configuration.mutation import ResourceMutationRequest
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+    from a13n_claw.messaging.capability import messaging_integrations
+    from a13n_claw.messaging.transport import InboundMessage
+    from a13n_claw.runtime.host import open_host
+    from tests.helpers import setup as native_setup
+    from tests.helpers import streaming_model
+
+    async def question(messages, info):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "ask_user_question",
+                    {
+                        "questions": [
+                            {
+                                "header": "Choice",
+                                "question": "Which option?",
+                                "options": [
+                                    {"label": "One", "description": "First option"},
+                                    {"label": "Two", "description": "Second option"},
+                                ],
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+
+    root, service, _ = await native_setup(
+        tmp_path, monkeypatch, mode="per_channel", model=streaming_model(question)
+    )
+    project_id = service.settings.channels["room"].project_id
+    service.settings = service.settings.model_copy(
+        update={
+            "connections": settings().connections,
+            "channels": {
+                "repo": settings().channels["repo"].model_copy(update={"project_id": project_id})
+            },
+        }
+    )
+    service.adapters = {}
+    async with open_host(
+        root, service.settings, integrations=messaging_integrations(service)
+    ) as host:
+        service.bind(host)
+        await host.mutate_configuration(
+            relative_path="projects/channel.yaml",
+            request=ResourceMutationRequest(
+                content=json.dumps(
+                    {
+                        "schema_version": "1",
+                        "kind": "project",
+                        "id": project_id,
+                        "name": "Channel",
+                        "roots": [{"path": str(tmp_path / "work")}],
+                    }
+                )
+            ),
+        )
+        await service.ingress.receive(
+            InboundMessage(
+                platform="github",
+                connection="github",
+                event_id="legacy-request",
+                message_id="42",
+                chat_id="owner/repo",
+                sender_id="alice",
+                account_id="claw-bot",
+                text="Request",
+            )
+        )
+        item = service.store.rows("SELECT * FROM inbox")[0]
+        thread_id = await service.ensure_target("channel:repo", project_id)
+        service.store.assign_thread(item["id"], thread_id)
+        item = service.store.item(item["id"])
+        await service._dispatch(thread_id, [item])
+        attempt = service.store.rows("SELECT * FROM attempts")[0]
+        result = await host.wait_root_operation(attempt["receipt_id"], timeout_seconds=20)
+        assert result.status == "suspended"
+        pending = await host.thread_decisions(thread_id=thread_id)
+        assert pending is not None
+        await service.reconcile()
+        with service.store.transaction() as db:
+            db.execute("UPDATE inbox SET next_check=0 WHERE id=?", (item["id"],))
+        await service.reconcile()
+        assert service.store.item(item["id"])["thread_id"] == thread_id
+        assert len(service.store.rows("SELECT * FROM targets")) == 1
+        assert len(service.store.rows("SELECT * FROM attempts")) == 1
+        current = await host.thread_decisions(thread_id=thread_id)
+        assert current is not None
+        assert current.continuation_id == pending.continuation_id
+        assert current.requests == pending.requests

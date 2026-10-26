@@ -97,8 +97,12 @@ class ProductConfiguration:
             )
         # A retained per-Channel Thread must not silently acquire another Project.
         for key, binding in candidate.channels.items():
-            target = await database(self.service.store.target, f"channel:{key}")
-            if target is not None and target["project_id"] != binding.project_id:
+            targets = await database(
+                self.service.store.rows,
+                "SELECT project_id FROM targets WHERE key=? OR substr(key,1,?)=?",
+                (f"channel:{key}", len(f"channel:{key}:github:"), f"channel:{key}:github:"),
+            )
+            if any(target["project_id"] != binding.project_id for target in targets):
                 raise ValueError(f"Channel {key} has a retained target in another Project")
 
     async def save(self, content: str, expected_digest: str) -> dict[str, Any]:
