@@ -18,7 +18,7 @@ def test_generated_business_baseline_matches_metadata(tmp_path):
     path = tmp_path / "business.sqlite3"
     migrator = DatabaseMigrator(path)
     revisions = list(migrator.history().walk_revisions())
-    assert len(revisions) == 2
+    assert len(revisions) == 1
     assert revisions[-1].down_revision is None
     migrator.upgrade()
     engine = create_engine(URL.create("sqlite", database=str(path)))
@@ -57,7 +57,15 @@ def test_populated_repeat_startup_and_transaction_rollback(tmp_path):
 
 @pytest.mark.parametrize(
     "revision",
-    ["future-revision", "ae0ac20d04ba", "749e0a64674a", "df8cecbafec6", "3fa99678a97b"],
+    [
+        "future-revision",
+        "ae0ac20d04ba",
+        "749e0a64674a",
+        "df8cecbafec6",
+        "3fa99678a97b",
+        "19c83d6d1f67",
+        "24dd7559f926",
+    ],
 )
 def test_unknown_or_retired_revision_preserves_database(tmp_path, revision):
     path = tmp_path / "business.sqlite3"
@@ -71,39 +79,3 @@ def test_unknown_or_retired_revision_preserves_database(tmp_path, revision):
     assert error.value.code == "schema_incompatible"
     with sqlite3.connect(path) as connection:
         assert list(connection.iterdump()) == before
-
-
-def test_github_request_upgrade_preserves_prepared_snapshots(tmp_path):
-    from alembic import command
-
-    from a13n_claw.adapters.github_store import GitHubStore
-    from a13n_claw.messaging.transport import InboundMessage
-
-    path = tmp_path / "business.sqlite3"
-    migrator = DatabaseMigrator(path)
-    with migrator.connection() as connection:
-        config = migrator.config()
-        config.attributes["connection"] = connection
-        command.upgrade(config, "19c83d6d1f67")
-        message = InboundMessage(
-            platform="github",
-            connection="github",
-            event_id="legacy",
-            message_id="42",
-            chat_id="owner/repo",
-            sender_id="alice",
-            account_id="bot",
-            text="Saved request",
-        ).model_dump_json()
-        connection.exec_driver_sql(
-            "INSERT INTO github_events VALUES('github','legacy','1',1000,1000,'{}',?,"
-            "'pending','pending','')",
-            (message,),
-        )
-        connection.commit()
-    store = BusinessStore(path, ClawSettings())
-    requests = GitHubStore(store, "github", "bot").messages("legacy")
-    assert [row["message"] for row in requests] == [message]
-    assert store.rows("SELECT * FROM github_events")[0]["state"] == "pending"
-    DatabaseMigrator(path).upgrade()
-    assert GitHubStore(store, "github", "bot").messages("legacy") == requests

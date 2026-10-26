@@ -16,8 +16,8 @@ export default function Home() {
           Built around Harness.
         </h1>
         <p className="lede">
-          The foundation for a personal agent runtime. An independent project
-          inspired by YA Claw, with a13n Harness as its execution foundation.
+          An IM-first assistant embedding Harness UI. An independent project
+          inspired by YA Claw, with native execution, collaboration, and memory.
         </p>
         <div className="actions">
           <Link href="/docs/" className="primary">
@@ -29,17 +29,18 @@ export default function Home() {
         </div>
         <p className="notice">
           <strong>Real work, retained context.</strong> Source builds include
-          authenticated agent execution, durable conversations, reusable
-          environments, and a working Console. Published 0.0.2 artifacts remain
-          the earlier CLI-only placeholder.
+          Lark and GitHub interaction, isolated schedules, persistent Docker
+          execution, and headless CLI/API controls. The runtime page is Hello
+          World. Published 0.0.2 artifacts remain the earlier CLI-only
+          placeholder.
         </p>
       </section>
       <section className="cards" aria-label="Project principles">
         <article>
           <h2>One execution foundation</h2>
           <p>
-            Agent execution uses Harness public APIs, rather than maintaining
-            another agent engine.
+            One embedded Harness UI App owns execution, Threads, collaboration,
+            and memory through its public library APIs.
           </p>
         </article>
         <article>

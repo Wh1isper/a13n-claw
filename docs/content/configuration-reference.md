@@ -20,7 +20,7 @@ Read [Configuration and CLI](./configuration.md) for selection and mutation beha
 | `retry_seconds`      | `30`                        | No-progress/rejection delay, 1–3600 seconds    |
 | `console`            | `true`                      | Serve the packaged Hello World page if present |
 
-Paths resolve relative to the Instance. Product changes use explicit save/reload; mode, Main Project, Host locations, and Console serving remain startup-only. `--no-console` overrides the page setting. Listener flags default to loopback port 8080. Saved mode and Main Project must match configuration: changing either on an existing business database is rejected. Use a fresh Instance for another mode; preserve old histories and resolve outstanding effects separately.
+Paths resolve relative to the Instance. Product changes use explicit save/reload; mode, Main Project, Host locations, and Console serving remain startup-only. `--no-console` overrides the page setting. Listener flags default to loopback port 8080. Changing `mode` takes effect on restart: new messages use the selected mode, while old-mode work remains stored and is excluded from current automatic dispatch and delivery. See [routing mode on restart](./operations.md#routing-mode-on-restart). Main Project remains fixed; selecting another Main Project requires a fresh Instance root.
 
 ## Connections
 

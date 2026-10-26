@@ -1,14 +1,14 @@
 """initial business schema.
 
-Revision ID: 19c83d6d1f67
+Revision ID: 7dc31087d742
 Revises:
-Create Date: 2026-10-21 11:06:49.502116+00:00
+Create Date: 2026-10-26 06:03:17.012921+00:00
 """
 
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "19c83d6d1f67"
+revision: str = "7dc31087d742"
 down_revision: str | None = None
 branch_labels: None = None
 depends_on: None = None
@@ -50,6 +50,13 @@ def upgrade() -> None:
         sa.Column("next_poll", sa.Float(), nullable=False),
         sa.Column("error", sa.Text(), nullable=False),
         sa.PrimaryKeyConstraint("connection"),
+    )
+    op.create_table(
+        "github_requests",
+        sa.Column("connection", sa.Text(), nullable=False),
+        sa.Column("request_key", sa.Text(), nullable=False),
+        sa.Column("message", sa.Text(), nullable=True),
+        sa.PrimaryKeyConstraint("connection", "request_key"),
     )
     op.create_table(
         "inbox",
@@ -157,6 +164,21 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("request_key"),
+    )
+    op.create_table(
+        "github_event_requests",
+        sa.Column("connection", sa.Text(), nullable=False),
+        sa.Column("event_key", sa.Text(), nullable=False),
+        sa.Column("request_key", sa.Text(), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["connection", "event_key"],
+            ["github_events.connection", "github_events.event_key"],
+        ),
+        sa.ForeignKeyConstraint(
+            ["connection", "request_key"],
+            ["github_requests.connection", "github_requests.request_key"],
+        ),
+        sa.PrimaryKeyConstraint("connection", "event_key", "request_key"),
     )
     op.create_table(
         "feedback_deliveries",

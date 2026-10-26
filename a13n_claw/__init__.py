@@ -1,4 +1,4 @@
-"""Package identity for the a13n Claw placeholder."""
+"""Package identity for the a13n Claw embedded assistant service."""
 
 from importlib.metadata import version
 

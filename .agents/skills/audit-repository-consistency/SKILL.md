@@ -13,7 +13,7 @@ Determine whether accepted contracts match actual behavior, shared concepts have
 
 Follow the repository's `AGENTS.md` and contribution rules. Read the engineering standards and owning specification sections for the surfaces under review; use `spec/README.md` to locate owners. Reuse documents already read.
 
-Keep audits read-only unless remediation is requested. Distinguish target runtime contracts from the currently shipped placeholder; an explicitly unimplemented target capability is not by itself implementation drift. Accepted specifications define intended behavior; code and tests establish actual behavior. Do not copy implementation drift into a specification to make the mismatch disappear. Private implementation details need a specification only when they affect observable behavior, ownership, security, or compatibility.
+Keep audits read-only unless remediation is requested. Distinguish accepted target contracts, implemented source capabilities, and tagged release availability using `spec/repository-model.md`; an explicitly deferred capability is not by itself implementation drift. Accepted specifications define intended behavior; code and tests establish actual behavior. Do not copy implementation drift into a specification to make the mismatch disappear. Private implementation details need a specification only when they affect observable behavior, ownership, security, or compatibility.
 
 ## Resolve the Audit Basis
 
