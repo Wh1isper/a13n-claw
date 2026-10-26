@@ -11,14 +11,15 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  python:
-    name: Python (${{ matrix.os }})
+  tests:
+    name: Backend (${{ matrix.os }})
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -28,41 +29,25 @@ jobs:
           enable-cache: true
           python-version: "3.13"
       - run: uv sync --locked
-      - run: uv run --locked pytest
+      - run: make test TEST_ARGS="-n 4 --dist worksteal --durations=20"
       - if: runner.os == 'Linux'
         run: make lint typecheck deps-check
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10.30.3
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-          cache: pnpm
-          cache-dependency-path: |
-            console/pnpm-lock.yaml
-            console/codegen/pnpm-lock.yaml
-      - run: pnpm --dir console install --frozen-lockfile
-      - run: pnpm --dir console check
-      - run: make console-test
-      - if: runner.os == 'Linux'
-        run: make console-schema-check
-      - run: make build
-      - if: runner.os == 'Linux'
-        run: |
-          pnpm --dir console exec playwright install --with-deps chromium
-          pnpm --dir console test:e2e
-      - run: uv run --locked python scripts/check_artifacts.py
-  automation:
-    name: Workflows and container
+  packages:
+    name: Console and packages (${{ matrix.os }})
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v7
         with:
+          enable-cache: true
           python-version: "3.13"
       - uses: pnpm/action-setup@v6
         with:
@@ -74,4 +59,53 @@ jobs:
           cache-dependency-path: |
             console/pnpm-lock.yaml
             console/codegen/pnpm-lock.yaml
-      - run: make workflow-check image-check executor-check
+      - run: make console-install console-check console-test
+      - if: runner.os == 'Linux'
+        run: make console-schema-check
+      - run: make build artifact-check
+      - if: runner.os == 'Linux'
+        run: |
+          pnpm --dir console exec playwright install --with-deps chromium
+          pnpm --dir console test:e2e
+  python:
+    name: Python (${{ matrix.os }})
+    needs: [tests, packages]
+    if: >-
+      always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Require backend and distribution checks
+        env:
+          TESTS_RESULT: ${{ needs.tests.result }}
+          PACKAGES_RESULT: ${{ needs.packages.result }}
+        run: test "$TESTS_RESULT" = success && test "$PACKAGES_RESULT" = success
+  automation:
+    name: Workflows and container
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.13"
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: console/pnpm-lock.yaml
+      - run: uv sync --locked
+      - run: make workflow-check
+      - name: Build independent images and check the runtime
+        run: make -j2 image-check executor-image
+      - run: make executor-test TEST_ARGS="-n 2 --durations=10"

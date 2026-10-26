@@ -7,6 +7,7 @@ import {
   useLocation,
 } from "react-router";
 import { Session, useLogout } from "./api/session";
+import { Icon, IconButton, type IconName } from "./components/icons";
 import { Empty, Loading } from "./components/ui";
 
 const Overview = lazy(() =>
@@ -30,18 +31,18 @@ const navigation = [
   {
     to: "/",
     label: "Overview",
-    path: "M3 13h7V3H3zm11 8h7V11h-7zM3 21h7v-4H3zM14 7h7V3h-7z",
+    icon: "overview",
   },
-  { to: "/runs", label: "Runs", path: "m4 6 5 5-5 5m8 2h8" },
+  { to: "/runs", label: "Runs", icon: "runs" },
   {
     to: "/models",
     label: "Models & Accounts",
-    path: "M12 3 3 8l9 5 9-5-9-5zm-9 9 9 5 9-5M3 16l9 5 9-5",
+    icon: "models",
   },
   {
     to: "/schedules",
     label: "Schedules",
-    path: "M8 2v4m8-4v4M3 10h18M5 4h14a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z",
+    icon: "calendar",
   },
 ];
 function Shell() {
@@ -69,36 +70,41 @@ function Shell() {
         </NavLink>
         <nav aria-label="Primary navigation">
           {navigation.map((item) => (
-            <NavLink to={item.to} end={item.to === "/"} key={item.to}>
-              <svg
-                aria-hidden="true"
-                width="17"
-                height="17"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d={item.path} />
-              </svg>
-              {item.label}
+            <NavLink
+              to={item.to}
+              end={item.to === "/"}
+              key={item.to}
+              title={item.label}
+              aria-label={item.label}
+            >
+              <Icon name={item.icon as IconName} />
+              <span>{item.label}</span>
             </NavLink>
           ))}
         </nav>
         <div className="sidebar-footer">
-          <p className="muted">Your assistant. Your infrastructure.</p>
-          <select
-            aria-label="Color theme"
-            value={theme}
-            onChange={(event) => setTheme(event.target.value)}
-          >
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-          <button onClick={logout}>Disconnect</button>
+          <div className="theme-picker">
+            <Icon
+              name={
+                theme === "dark"
+                  ? "moon"
+                  : theme === "light"
+                    ? "sun"
+                    : "monitor"
+              }
+            />
+            <select
+              aria-label="Color theme"
+              title="Color theme"
+              value={theme}
+              onChange={(event) => setTheme(event.target.value)}
+            >
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </div>
+          <IconButton icon="logout" label="Disconnect" onClick={logout} />
         </div>
       </aside>
       <main id="content" className="content">

@@ -8,6 +8,7 @@ import socket
 import subprocess
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -157,11 +158,13 @@ def check(dist: Path, expected: str) -> None:
     sources = list(dist.glob("*.tar.gz"))
     if len(wheels) != 1 or len(sources) != 1:
         raise ValueError("Expected one wheel and one source distribution")
-    with tempfile.TemporaryDirectory(prefix="a13n-claw-artifacts-") as directory:
+    # Keep clean installs beside setup-uv's cache on Windows so uv can hardlink.
+    with tempfile.TemporaryDirectory(
+        prefix="a13n-claw-artifacts-", dir=os.environ.get("RUNNER_TEMP")
+    ) as directory:
         root = Path(directory)
         original = root / "original"
         original.mkdir()
-        check_wheel(wheels[0], original, expected)
         subprocess.run(
             ["uv", "build", str(sources[0]), "--wheel", "--out-dir", str(root / "rebuilt")],
             cwd=root,
@@ -169,7 +172,13 @@ def check(dist: Path, expected: str) -> None:
         )
         rebuilt = root / "from-sdist"
         rebuilt.mkdir()
-        check_wheel(next((root / "rebuilt").glob("*.whl")), rebuilt, expected)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            checks = [
+                pool.submit(check_wheel, wheels[0], original, expected),
+                pool.submit(check_wheel, next((root / "rebuilt").glob("*.whl")), rebuilt, expected),
+            ]
+            for result in checks:
+                result.result()
     print(
         "Wheel and rebuilt sdist: version, authenticated runtime, "
         "console, assets, and boundary checks passed."

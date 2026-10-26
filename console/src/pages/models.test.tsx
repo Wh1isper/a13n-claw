@@ -122,7 +122,7 @@ it("keeps the draft when source CAS rejects the save", async () => {
     target: { value: "Unsaved draft" },
   });
   await user.click(screen.getByRole("button", { name: "Save model" }));
-  await screen.findByText(/Your draft is still here/);
+  await screen.findByRole("alert");
   expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe(
     "Unsaved draft",
   );
@@ -276,7 +276,7 @@ it("keeps redemption identity across an ambiguous result and remount; refresh fa
   );
   await screen.findByText(/Provider confirmed: reset/);
   expect(api.POST.mock.calls[1][1]).toEqual(original);
-  await screen.findByText(/Redemption remains confirmed/);
+  await screen.findByText(/Voucher redeemed. Allowance refresh failed/);
 });
 it("offers only unexpired, available Codex vouchers", () => {
   expect(

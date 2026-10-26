@@ -77,7 +77,9 @@ test("models, credentials, accounts and groups use native configuration with key
       exact: true,
     }),
   });
-  await expect(account).toContainText("Sign in to read provider allowance");
+  await expect(
+    account.getByRole("button", { name: "Sign in", exact: true }),
+  ).toBeEnabled();
   await expect(
     account.getByRole("button", { name: "Reset vouchers" }),
   ).toBeDisabled();
@@ -137,7 +139,9 @@ test("ambiguous account creation blocks repeats; conclusive read failures can be
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Name", { exact: true }).fill("Uncertain account");
   await dialog.getByRole("button", { name: "Save account" }).click();
-  await expect(dialog.getByText(/The outcome is unknown/)).toBeVisible();
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Response lost after submission",
+  );
   await expect(
     dialog.getByRole("button", { name: "Save account" }),
   ).toBeDisabled();

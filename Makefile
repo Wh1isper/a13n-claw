@@ -1,4 +1,5 @@
 SHELL := /bin/bash
+TEST_ARGS ?=
 .PHONY: help install format lint typecheck deps-check test check check-all build artifact-check docs-serve docs-build docs-check workflow-check image-check console-install console-check console-build console-dev serve
 help: ## List development commands
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | sed 's/:.*## /\t/'
@@ -21,7 +22,7 @@ deps-check: ## Check Python dependency declarations
 	uv run --locked deptry a13n_claw
 
 test: ## Run tests without external service credentials
-	uv run --locked pytest
+	uv run --locked pytest $(TEST_ARGS)
 
 .PHONY: db-migrate
 db-migrate: ## Generate a SQLite migration against a disposable database
@@ -75,7 +76,10 @@ image-check: build ## Build and smoke-test the non-root runtime image
 	docker run --rm a13n-claw:check --version
 	uv run --locked python scripts/check_image.py
 
-.PHONY: executor-check
-executor-check: image-check ## Build and test persistent executor, browser, and native Host integration
+.PHONY: executor-image executor-test executor-check
+executor-image: ## Build the persistent executor image
 	docker build -f deploy/docker/Executor.Dockerfile -t a13n-claw-executor:local .
-	CLAW_EXECUTOR_TEST=1 uv run --locked pytest tests/distribution/test_executor.py -q
+executor-test: ## Test already-built runtime and executor images
+	CLAW_EXECUTOR_TEST=1 uv run --locked pytest tests/distribution/test_executor.py -q $(TEST_ARGS)
+executor-check: image-check executor-image ## Build and test persistent executor, browser, and native Host integration
+	$(MAKE) executor-test

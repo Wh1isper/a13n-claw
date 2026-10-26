@@ -95,11 +95,7 @@ export function Session({ children }: { children: ReactNode }) {
         <span className="brand-mark" aria-hidden="true">
           a
         </span>
-        <p className="eyebrow">A13N CLAW / CONSOLE</p>
-        <h1>Your assistant, in view.</h1>
-        <p className="muted">
-          Inspect activity, manage models, and keep scheduled work on track.
-        </p>
+        <h1>Claw Console</h1>
         <label className="field">
           Operator token
           <input
@@ -112,8 +108,7 @@ export function Session({ children }: { children: ReactNode }) {
           />
         </label>
         <p className="hint">
-          Use the token from your Instance’s <code>operator.token</code>. It
-          stays in this tab’s memory.
+          Find your token in <code>operator.token</code>.
         </p>
         {error && (
           <p className="notice error" role="alert">

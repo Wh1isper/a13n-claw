@@ -64,7 +64,6 @@ export function ScheduleEditor({
   return (
     <Modal
       title={id ? `Edit ${definition?.name}` : "Create schedule"}
-      description="Each occurrence runs in its own Thread. Timing and delivery use the server's accepted schedule definition."
       close={() => {
         if (!save.isPending) close();
       }}
@@ -80,7 +79,7 @@ export function ScheduleEditor({
           <div className="form-grid">
             <Field
               label="Schedule ID"
-              hint="Stable ID; letters, numbers, hyphens and underscores."
+              hint="Letters, numbers, hyphens, underscores."
             >
               <input
                 required
@@ -109,10 +108,7 @@ export function ScheduleEditor({
               onChange={(event) => set("prompt", event.target.value)}
             />
           </Field>
-          <Field
-            label="Project"
-            hint="The Project owns environment, roots and shared memory for this work."
-          >
+          <Field label="Project">
             <input
               required
               list="schedule-projects"
@@ -150,10 +146,7 @@ export function ScheduleEditor({
                 <option value="once">Once</option>
               </select>
             </Field>
-            <Field
-              label="Timezone"
-              hint="IANA timezone, for example Asia/Shanghai."
-            >
+            <Field label="Timezone" hint="e.g. Asia/Shanghai">
               <input
                 required
                 value={timing.timezone ?? "UTC"}
@@ -225,10 +218,7 @@ export function ScheduleEditor({
             {previewCurrent && <ErrorNotice error={preview.error} />}
             {previewCurrent && preview.data && (
               <div className="notice">
-                <p className="hint">
-                  Preview in {preview.data.timezone}; actual next due appears
-                  after the scheduler accepts and discovers the definition.
-                </p>
+                <p className="hint">Preview in {preview.data.timezone}</p>
                 <ol>
                   {preview.data.instants.map((instant) => (
                     <li key={instant}>
@@ -349,7 +339,6 @@ export function ScheduleEditor({
                 {draft.source_channel
                   ? ` · Source Channel: ${draft.source_channel}`
                   : ""}
-                . Existing source identity is preserved.
               </p>
             </div>
           </details>
@@ -364,11 +353,7 @@ export function ScheduleEditor({
         </fieldset>
         <ErrorNotice error={save.error} />
         {save.error && (
-          <p className="hint">
-            Your draft is preserved. If the source changed, close this dialog,
-            reload the catalog and reopen the definition before applying a
-            revised edit.
-          </p>
+          <p className="hint">Copy your draft before reloading the catalog.</p>
         )}
         <div className="form-actions">
           <button type="button" disabled={save.isPending} onClick={close}>

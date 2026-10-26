@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { data, type Schema } from "../api/client";
 import { useApi } from "../api/session";
 import { Badge, Copy, ErrorNotice, Field, Loading, Modal } from "./ui";
+import { Icon } from "./icons";
 
 export const loginPending = (
   status: Schema["LoginStatus"] | null | undefined,
@@ -133,11 +134,7 @@ export function LoginFlow({
       cache.setQueryData(["login", value.session_id], value),
   });
   return (
-    <Modal
-      title={`Connect ${connection.label}`}
-      description="Closing this dialog leaves authorization running. Use Cancel authorization to stop it."
-      close={close}
-    >
+    <Modal title={`Connect ${connection.label}`} close={close}>
       <div className="form">
         {!session ? (
           <>
@@ -157,10 +154,10 @@ export function LoginFlow({
             </Field>
             <p className="hint">
               {method === "browser"
-                ? "Browser callbacks arrive at the server’s loopback address. Use this only when your browser can reach that machine."
+                ? "Requires a browser on the Claw server."
                 : method === "manual_callback"
-                  ? "Authorize in your browser, then paste the complete callback URL here. It stays in memory."
-                  : "Enter the displayed device code on the provider’s verification page."}
+                  ? "Paste the callback URL after signing in."
+                  : "Enter the device code on the verification page."}
             </p>
             {!accountId && (
               <label className="check">
@@ -169,16 +166,12 @@ export function LoginFlow({
                   checked={allowSwitch}
                   onChange={(e) => setAllowSwitch(e.target.checked)}
                 />
-                Allow replacing the currently selected account
+                Replace selected account
               </label>
             )}
             <ErrorNotice error={start.error} />
             {start.error ? (
               <>
-                <p className="hint">
-                  Check the existing authorization before starting again. If it
-                  already completed, inspect the account status.
-                </p>
                 <button
                   onClick={() => recover.mutate()}
                   disabled={recover.isPending}
@@ -210,16 +203,15 @@ export function LoginFlow({
                     rel="noreferrer"
                     href={current.verification_url}
                   >
-                    Open verification page ↗
+                    Open verification page <Icon name="external" />
                   </a>
                 ) : (
                   <Loading />
                 )}
                 {current?.user_code && <Copy value={current.user_code} />}
                 <p className="hint">
-                  Authorization lifetime:{" "}
-                  {Math.ceil((current?.expires_in ?? 900) / 60)} minutes. The
-                  provider determines expiration.
+                  Expires after {Math.ceil((current?.expires_in ?? 900) / 60)}{" "}
+                  minutes.
                 </p>
                 {current?.method === "manual_callback" && (
                   <form
@@ -242,6 +234,9 @@ export function LoginFlow({
                     <ErrorNotice error={submit.error} />
                   </form>
                 )}
+                <p className="hint">
+                  Authorization continues when you close this dialog.
+                </p>
                 <button
                   className="danger"
                   onClick={() => cancel.mutate()}
