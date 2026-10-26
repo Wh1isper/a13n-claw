@@ -12,12 +12,24 @@ concurrency:
   cancel-in-progress: true
 jobs:
   tests:
-    name: Backend (${{ matrix.os }})
+    name: Backend (${{ matrix.os }}, ${{ matrix.suite }})
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            suite: all
+            test-args: -n 4
+          - os: windows-latest
+            suite: messaging
+            test-args: -n 2 tests/messaging
+          - os: windows-latest
+            suite: runtime-and-schedules
+            test-args: -n 2 tests/runtime tests/schedules
+          - os: windows-latest
+            suite: remaining
+            test-args: -n 2 tests --ignore=tests/messaging --ignore=tests/runtime --ignore=tests/schedules
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
@@ -29,7 +41,7 @@ jobs:
           enable-cache: true
           python-version: "3.13"
       - run: uv sync --locked
-      - run: make test TEST_ARGS="-n 4 --dist worksteal --durations=20"
+      - run: make test TEST_ARGS="${{ matrix.test-args }} --dist worksteal --durations=20"
       - if: runner.os == 'Linux'
         run: make lint typecheck deps-check
   packages:
@@ -73,6 +85,7 @@ jobs:
     if: >-
       always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ubuntu-latest
