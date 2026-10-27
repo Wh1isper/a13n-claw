@@ -9,8 +9,8 @@
     "check": "next typegen && tsc --noEmit"
   },
   "dependencies": {
-    "fumadocs-core": "16.17.5",
-    "fumadocs-mdx": "15.4.7",
+    "fumadocs-core": "16.17.7",
+    "fumadocs-mdx": "15.4.9",
     "fumadocs-ui": "npm:@fumadocs/base-ui@16.17.5",
     "next": "16.4.2",
     "react": "^19.3.1",
@@ -19,14 +19,14 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
     "@types/mdx": "^2.0.14",
-    "@types/node": "^24.13.3",
+    "@types/node": "^26.6.5",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.3",
     "postcss": "^8.5.31",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "prettier": "^3.9.10",
-    "wrangler": "^4.149.0"
+    "wrangler": "^4.152.0"
   },
   "packageManager": "pnpm@10.30.3",
   "pnpm": {
