@@ -12,7 +12,7 @@ Each new Claw Project creates a persistent native Service Memory Space backed by
 
 Claw automatically supplies useful native capabilities to Main and workers according to the Environment, optional Browser, and other resources actually available to each execution. These include file and command operations, context summary, background execution, and collaboration where supported and authorized. Service's resource grants and execution policy remain authoritative. Operators do not select individual default tools for each Claw.
 
-Claw contributes the system instructions needed for its Inbox, communication, delegation, and [scheduled work](02-main-thread.md#scheduled-work). The selected Agent can additionally configure MCP and other toolsets. An Agent with no operator-authored tools or instructions can work when a usable model and the required resources are available; unavailable resources do not become available merely through composition.
+Claw uses a selected Service Agent and contributes the system instructions needed for its Inbox, communication, delegation, and [scheduled work](02-main-thread.md#scheduled-work). Configure additional MCP and other toolsets on that Agent in Service. An Agent with no operator-authored tools or instructions can work when a usable model and the required resources are available; unavailable resources do not become available merely through composition.
 
 An operator can provide worker model choices with descriptions of the work each suits. Claw includes this guidance in Main's instructions. Main chooses a suitable model when delegating; descriptions do not impose a fixed router.
 

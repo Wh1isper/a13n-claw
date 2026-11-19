@@ -51,7 +51,7 @@ flowchart TB
     Clients --> Connector
 ```
 
-Claw owns the Project, connector, Inbox, Main and worker associations, and the heartbeat condition. Service owns the native Threads, Entries and Runs, workspace and resource authorization, and resource lifecycles. Claw stores its business state and references to native identities in its AppDatabase.
+Service owns Agents, Threads, Entries, Runs, models and model-provider configuration, along with resource authorization and lifecycles. Main and worker are roles of native Service Threads, not separate Thread or Agent types. Claw owns its Project, connectors, Inbox, Thread associations, and heartbeat condition. Its AppDatabase stores those business facts and references to the native resources; it does not mirror their definitions or execution state.
 
 ## Project
 
