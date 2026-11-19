@@ -4,7 +4,7 @@ A13n Console is the operator UI. Claw presents its business state in that Consol
 
 ## Setup and Diagnosis
 
-An operator enables the installed App through Service, configures a Claw and its connectors in the intended Workspace, and creates or attaches its [Project](04-project.md). Setup exposes which pieces are ready and which need attention: the Project resources, connector intake, and [reply CLI and account access](03-connectors-and-replies.md#project-setup). Valid configuration alone does not establish platform connectivity or a ready reply path. An operator can identify the affected Claw, resource, or connection without inspecting an agent transcript or exposing credentials.
+An operator enables the installed App through Service, configures a Claw and its connectors in the intended Workspace, and creates or attaches its [Project](04-project.md). Setup exposes which pieces are ready and which need attention: the Project resources, connector intake, and [reply CLI and account access](03-connectors-and-replies.md#project-setup). The operator can optionally describe available worker models for Main's delegation choices; default [agent composition](04-project.md#agent-composition) requires no per-tool configuration. Valid configuration alone does not establish platform connectivity or a ready reply path. An operator can identify the affected Claw, resource, or connection without inspecting an agent transcript or exposing credentials.
 
 ## Console Jobs
 

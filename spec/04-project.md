@@ -8,6 +8,14 @@ A Project uses one persistent Service Environment, created from a selected templ
 
 Where memory is configured, Main and its workers use the same authorized Project memory. Service owns memory and its access grants. Shared files, memory, and browser state do not merge the Threads' conversation histories. Any broader memory sharing comes from explicitly authorized Service resource access, not from installing Claw or placing Claws in the same Workspace.
 
+## Agent Composition
+
+Claw automatically supplies useful native capabilities to Main and workers according to the Environment, optional Browser, and other resources actually available to each execution. These include file and command operations, context summary, background execution, and collaboration where supported and authorized. Service's resource grants and execution policy remain authoritative. Operators do not select individual default tools for each Claw.
+
+Claw contributes the system instructions needed for its Inbox, communication, delegation, and [scheduled work](02-main-thread.md#scheduled-work). The selected Agent can additionally configure MCP and other toolsets. An Agent with no operator-authored tools or instructions can work when a usable model and the required resources are available; unavailable resources do not become available merely through composition.
+
+An operator can provide worker model choices with descriptions of the work each suits. Claw includes this guidance in Main's instructions. Main chooses a suitable model when delegating; descriptions do not impose a fixed router.
+
 ## Continuity and Ownership
 
 Claw records the Project's resource references and its Thread associations. Service owns preparation, access, and lifecycle of the native resources. When a required resource is missing or unavailable, surface the affected Project and operation; an empty replacement cannot stand in for the original working state. Recovery or replacement is an explicit operator action. The ownership boundary also applies to [backup and restore](05-operator-workflows.md#backup-and-restore): restoring a Project reference does not restore the data behind it.

@@ -2,7 +2,7 @@
 
 ## Product Position
 
-Claw brings interactive agent work to messaging platforms. Users start work, add context, inspect progress, answer questions and approvals, stop a selected operation, work with persistent workers, and receive results and files. IM is the conversation surface. A13n Console and headless clients are operator surfaces.
+Claw brings interactive agent work to messaging platforms. Users start work, add context, work with persistent workers, and receive results and files through IM. A13n Console and headless clients are operator surfaces for inspecting progress, responding to native questions and approvals, and stopping a selected operation.
 
 One Claw App installation manages multiple Claws in the same Service deployment. Each Claw has its own connector configuration, one Project, and one Main Thread that coordinates its worker Threads. A connector is configured for a Claw; Claw does not select an assistant from message content. Each Claw keeps its own Inbox and heartbeat. Selecting the same Service agent does not join two Claws' conversations.
 
@@ -55,7 +55,7 @@ Each Claw's [Project](04-project.md) gives Main and its workers a shared persist
 
 ## End-to-End Flow
 
-The connector addresses a specific Claw. The [Inbox](01-inbox.md) owns acceptance, unread previews, and read history. The [Main Thread](02-main-thread.md) owns the choice of what to read, handle, or delegate. Service executes Main and its worker Threads in their Project context. Opening a message, completing work, and sending a reply are separate events.
+The connector addresses a specific Claw. The [Inbox](01-inbox.md) owns acceptance, unread previews, and read history. The [Main Thread](02-main-thread.md) owns the choice of what to read, handle, or delegate, including scheduled work. Service executes Main and its worker Threads in their Project context. Opening a message, completing work, and sending a reply are separate events.
 
 ```mermaid
 sequenceDiagram

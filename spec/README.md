@@ -5,7 +5,7 @@ Claw is an IM-first App plugin for A13n Service. The [architecture overview](00-
 This specification describes the target, not the currently shipped runtime. The [Claw 0.1.0 specification](https://github.com/Wh1isper/a13n-claw/tree/release/a13n-claw-v0.1.0/spec) is the reference for released behavior. Feature contracts are added here as their design is agreed.
 
 - [Inbox](01-inbox.md): message admission, unread notices, opening messages, and read history.
-- [Main Thread](02-main-thread.md): unread notices, worker coordination, native waits, and the idle heartbeat.
+- [Main Thread](02-main-thread.md): unread notices, worker coordination, scheduled work, native waits, and the idle heartbeat.
 - [Connectors and replies](03-connectors-and-replies.md): connector input, Project CLI setup, native replies, and custom channels.
-- [Project](04-project.md): persistent working context, memory sharing, and resource continuity.
+- [Project](04-project.md): persistent working context, agent composition, memory sharing, and resource continuity.
 - [Operator workflows](05-operator-workflows.md): Console jobs, headless setup and maintenance, and recovery boundaries.
