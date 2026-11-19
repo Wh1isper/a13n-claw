@@ -1,6 +1,6 @@
 # Repository Guide
 
-A13n Claw is an independent, single-node assistant product bringing Harness UI interaction to IM platforms. The implementation embeds one published Harness UI App as a Python library and keeps Lark messaging, business persistence, and headless CLI/API above that Host. The operator Console provides Overview, read-only Runs, Models & Accounts, and Schedules. GitHub polling, isolated schedules, persistent Docker execution, and headless operations are available in source. Read [the implementation boundary](spec/repository-model.md#source-implementation-and-release-availability) for source and release availability.
+A13n Claw is an independent, single-node assistant product bringing Harness UI interaction to IM platforms. The implementation embeds one published Harness UI App as a Python library and keeps Lark messaging, business persistence, and headless CLI/API above that Host. The operator Console provides Overview, read-only Runs, Models & Accounts, and Schedules. GitHub polling, isolated schedules, persistent Docker execution, and headless operations are available in source. Read [the Service App specification](spec/README.md) for the target architecture and its relationship to released behavior.
 
 ## Sources of truth
 

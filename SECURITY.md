@@ -1,6 +1,6 @@
 # Security Policy
 
-Only the latest published release is supported. Source builds provide an IM-first service embedding Harness UI; published artifacts provide the capabilities of their tagged source. See [source and release availability](spec/repository-model.md#source-implementation-and-release-availability).
+Only the latest published release is supported. Source builds provide an IM-first service embedding Harness UI; published artifacts provide the capabilities of their tagged source. See [the specification index](spec/README.md) for the distinction between released behavior and the Service App target.
 
 ## Runtime trust boundary
 

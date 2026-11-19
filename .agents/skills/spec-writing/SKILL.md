@@ -7,7 +7,7 @@ description: Author, review, or reorganize accepted technical contracts under sp
 
 Adapted for a13n Claw from Agent Foundation; modified paths and validation guidance. See [attribution and license](../README.md#provenance).
 
-Maintain `spec/` as the current, internally consistent accepted design. Follow `AGENTS.md` and `CONTRIBUTING.md`; [Repository Model](../../../spec/repository-model.md) defines what belongs in specifications.
+Maintain `spec/` as the current, internally consistent accepted design. Follow `AGENTS.md` and `CONTRIBUTING.md`; [The specification index](../../../spec/README.md) distinguishes the target from released behavior.
 
 ## Establish Authority
 
@@ -33,7 +33,7 @@ Read [domain-modeling-and-naming.md](references/domain-modeling-and-naming.md) w
 
 Use upstream public primitives when they already own the semantics. Introduce project abstractions only for a stable cross-host or cross-provider contract. Label conceptual Python-like schemas explicitly; distinguish them from serialized wire formats.
 
-Omit private classes, layouts, hooks, and algorithms that can change without affecting observable behavior, authority, security, or compatibility. Keep accepted trade-offs when they explain the cost of the selected design. Proposals, rejected alternatives, discussion history, progress, tutorials, runbooks, and contributor procedures belong in the surfaces assigned by Repository Model.
+Omit private classes, layouts, hooks, and algorithms that can change without affecting observable behavior, authority, security, or compatibility. Keep accepted trade-offs when they explain the cost of the selected design. Proposals, rejected alternatives, discussion history, progress, tutorials, runbooks, and contributor procedures belong outside the accepted specifications.
 
 Use a diagram or table when it clarifies the contract. Prefer Mermaid for architecture, state, or interaction diagrams, and keep diagrams, schemas, tables, and prose semantically aligned.
 
