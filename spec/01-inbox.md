@@ -22,7 +22,7 @@ Each Claw can configure its unread and read limits independently. The unread lim
 
 There is no global priority queue. Main prefers user input when choosing work, without strict ordering or blocking worker messages or scheduled items.
 
-The read limit defaults to 3,000 items. Claw keeps read items for up to seven days after they were first opened. When the configured read limit is exceeded, Claw removes the earliest-read items first. Reopening does not extend retention. Cleanup removes that Inbox history without retaining a separate copy for deduplication or replies. It does not remove content already entered into a Thread's saved context; native context management remains under Service.
+The read limit defaults to 3,000 items. Claw keeps read items for up to seven days after they were first opened. When the configured read limit is exceeded, Claw removes the earliest-read items first. Reopening does not extend retention. Cleanup removes that Inbox history without retaining a separate copy of the item for deduplication or replies. It does not remove content already entered into a Thread's saved context; native context management remains under Service. Claw retains [schedule occurrence identity and acceptance](02-main-thread.md#scheduled-work) as schedule facts, not as a copy of the removed item.
 
 ## Message Flow
 
@@ -33,7 +33,7 @@ flowchart TD
     Check -->|Full: terminal notice| Drop[Drop notice without retry]
     Check -->|Full: scheduled occurrence| ScheduleReject[Expose failed occurrence delivery]
     Check -->|Capacity available| Unread[Store as unread]
-    Unread --> Preview[Wake or steer Main with short preview]
+    Unread --> Preview[After acceptance commits, wake or steer with short preview]
     Preview --> Open[Main opens a selected item]
     Open --> Read[Return full content and move it to Read]
     Read -->|Connector supports feedback| Feedback[Show read indicator on source]
