@@ -4,7 +4,7 @@
 
 Claw brings interactive agent work to messaging platforms. Users start work, add context, work with persistent workers, and receive results and files through IM. A13n Console and headless clients are operator surfaces for inspecting progress, responding to native questions and approvals, and stopping a selected operation.
 
-One Claw App installation manages multiple Claws in the same Service deployment. Each Claw has its own connector configuration, one Project, and one Main Thread that coordinates its worker Threads. A connector is configured for a Claw; Claw does not select an assistant from message content. Each Claw keeps its own Inbox and heartbeat. Selecting the same Service agent does not join two Claws' conversations.
+One Claw App installation manages multiple Claws in the same Service deployment. Each Claw has its own connector configuration, one Project, and one Main Thread that coordinates its worker Threads. A connector is configured for a Claw; Claw does not select an assistant from message content. All of a Claw's connectors share its Main Thread, Agent, and trust and authority domain. Use separate Claws and resources when isolation is required. Each Claw keeps its own Inbox and heartbeat. Selecting the same Service agent does not join two Claws' conversations.
 
 ## Architecture
 
@@ -20,11 +20,15 @@ flowchart TB
             Inbox[Inbox]
             Main[Main Thread]
             Workers[Worker Threads]
+            Notices[Worker terminal notifier]
             Heartbeat[Idle heartbeat]
             Connector --> Inbox
             Inbox -->|Wake or steer with unread preview| Main
             Main -->|Open a selected message| Inbox
-            Main -->|Delegate| Workers
+            Main -->|Delegate or continue| Workers
+            Workers -->|Messages| Inbox
+            Workers -->|Terminal status| Notices
+            Notices -->|Attempt notice| Inbox
             Heartbeat -->|Wake Main| Main
         end
         B[Other Claws]
@@ -64,6 +68,8 @@ sequenceDiagram
     participant I as Claw Inbox
     participant M as Main Thread
     participant W as Managed worker Thread
+    participant S as Service
+    participant N as Claw notifier
     participant X as Reply CLI in the Project
     participant P as Platform API
     U->>C: Send a message
@@ -82,7 +88,27 @@ sequenceDiagram
         end
         opt Main delegates part of the work
             M->>W: Assign work in the Project
-            W-->>M: Report the outcome
+            opt Worker sends progress or a question
+                W->>I: Submit message
+                alt Inbox full
+                    I-->>W: Not accepted
+                else Accepted
+                    I-->>W: Stored as unread
+                    I-->>M: Wake or steer with a preview
+                    M->>I: Open the selected message
+                    I-->>M: Worker message
+                end
+            end
+            opt Worker Run reaches a terminal status
+                W-->>S: Run reaches terminal status
+                S-->>N: Terminal status
+                N->>I: Attempt lightweight terminal notice
+                opt Notice accepted and opened
+                    M->>I: Open notice
+                    I-->>M: Thread, Run and status
+                    M->>S: Inspect saved worker outcome
+                end
+            end
         end
         opt Main chooses to reply
             M->>X: Reply to the selected destination

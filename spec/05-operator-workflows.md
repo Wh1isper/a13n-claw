@@ -23,4 +23,8 @@ Reported usage comes from Service facts. Keep partial or unknown pricing visible
 
 Protect Claw's business data in its AppDatabase alongside the corresponding Service state. A recovery plan also accounts for the persistent Environment, any Browser or memory backing data, and the credential configuration needed to restore access. External provider state remains subject to that provider's backup and recovery support. Restoring database rows alone does not restore files, browser profiles, credentials, or platform side effects.
 
-Before resuming external intake or publication after a restore, verify the target Claws, resource references, and connector identities. Do not replay an operation whose external outcome is unknown just because its local record was restored. The released standalone data root is a separate format; operators retain it independently of the Service deployment.
+Before resuming external intake or publication after a restore, verify the target Claws, resource references, and connector identities. Do not replay an operation whose external outcome is unknown just because its local record was restored.
+
+## Fresh Installation
+
+The Service App starts from new Service App state. Claw 0.1.0 has no import or upgrade-in-place path, and its Thread, Inbox, and schedule state is not automatically replayed. Preserve any existing standalone data root; installation does not delete it.

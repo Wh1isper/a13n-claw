@@ -6,7 +6,7 @@ A Project is a Claw-owned entity that gives one Claw a persistent working contex
 
 A Project uses one persistent Service Environment, created from a selected template or attached as an existing Environment. Working files and configured tooling, including [reply CLIs](03-connectors-and-replies.md#project-setup), are available in the same Environment across Runs. An optional persistent Service Browser provides browser state across Runs. Main going idle does not stop the resources or the workers using them.
 
-Where memory is configured, Main and its workers use the same authorized Project memory. Service owns memory and its access grants. Shared files, memory, and browser state do not merge the Threads' conversation histories. Any broader memory sharing comes from explicitly authorized Service resource access, not from installing Claw or placing Claws in the same Workspace.
+Each new Claw Project creates a persistent native Service Memory Space backed by Service-managed PostgreSQL File Memory. Claw records the Space reference, and Main and its workers use the same authorized Space across Runs and Environment replacement. Service owns memory and its access grants. Shared files, memory, and browser state do not merge the Threads' conversation histories. Any broader memory sharing comes from explicitly authorized Service resource access, not from installing Claw or placing Claws in the same Workspace.
 
 ## Agent Composition
 
