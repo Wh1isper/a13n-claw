@@ -1,141 +1,21 @@
-# Bridges, Ingress, and External Delivery
+# Bridges and External Delivery
 
-## Design Position
+## Ingress and Routing
 
-Messaging adapters bring Harness UI's interactive work model to IM: send a task, add context while it runs, inspect progress, answer questions and approvals, stop an operation, and receive results and files. Adapters run inside the Claw process and own platform connection and representation. Claw owns sender policy, routing, retained business input, and delivery; the embedded Host owns execution.
+Claw qualifies each sender and source by platform and connection, resolves a single Instance for each accepted event, and applies sender policy and mentions-only filtering before dispatch. Direct messages still require authorization. A repeated event returns its recorded disposition. Ignored messages do not enter the agent's context through quoted or surrounding history. Acknowledgement follows durable acceptance, not completion of execution.
 
-Lark, Discord, WhatsApp, and Telegram remain adapter targets, not a claim that all are implemented or feature-equivalent. Each adapter reports its actual authentication, mention, attachment, reply, and decision capabilities.
+One Thread mode routes work to the Instance's Main Inbox. Per-Channel mode keeps a conversation Thread per qualified Channel. Per-trigger mode starts an independent Thread per eligible event, including a new eligible reply; decision responses target their existing wait rather than creating a task. Channel and reply identity survive dispatch and reconfiguration. GitHub treats each issue or pull request as a conversation.
 
-## Qualified Identity and Routing
+## Lark
 
-A connection identifies one platform account or installation. A Channel identifies a conversation within that platform and connection, including reply-thread distinctions where relevant. Sender and message identities remain qualified; display names never identify authority.
+Lark intake uses the bot's long connection. Conversation includes direct and group messages, topic or quoted context where authorized, and supported inbound image and file attachments retained for use by the selected work. Genuine mentions come from platform mention evidence. Users receive progress and decision prompts where permitted and can reply with controls for the exact operation. Feedback distinguishes receipt, processing, and completion; it does not replace saved execution or delivery facts. Feedback reactions describe an observed state of the exact message.
 
-A binding specifies permitted participants, group filtering, routing, and destinations. Routing has three modes:
+Claw can publish text and files to authorized conversations, preserving topic or reply context when the platform supports it. In One Thread mode, final answers and worker results are not automatically broadcast. In modes with automatic results enabled, an explicit reply suppresses a redundant automatic result for the same input.
 
-| Mode        | Target for an eligible new event                                   |
-| ----------- | ------------------------------------------------------------------ |
-| One Thread  | The canonical Main Inbox; Main and workers share one Host Project  |
-| Per-Channel | The Channel's persistent Host Thread in its stable Channel Project |
-| Per-trigger | A new task Host Thread in the Channel's stable Channel Project     |
+## GitHub
 
-[Memory](09-memory.md#scopes-and-sharing) owns Project mapping and sharing. Channel Projects are provisioned through supported Host configuration operations and referenced by bindings. A Channel name change does not change its Project identity. Creating a previously unbound Channel's Project or Thread follows explicit setup policy; partial creation/admission failure retains known identities rather than repeating creation blindly.
+Claw polls notifications from a named connection and handles eligible issue, pull request, and review-comment requests. Discovery retains a cursor, covers pagination and configured lookback and delay, and does not skip outstanding requests when a notification changes. Polling observes sampled state, not a complete event archive. It checks configured scope, allowed author, and an exact account mention, and ignores its own output. Only the eligible request enters context. Repeated or delayed notifications do not duplicate a task. Supported reactions and replies are recorded separately from intake. Mark-read, when enabled, waits for business settlement and associated submissions and deliveries, and verifies the notification version and current authority before clearing it. A failed mark-read does not repeat the task or comment. GitHub comments do not act as IM approvals.
 
-Rebinding affects new events. Retained work keeps its original source, target context, and intended destination; current authorization can block further use. Disabling a connection stops new ingress or egress under policy without cancelling Host work by implication. No pending reply is silently redirected.
+## Delivery
 
-Sharing a Thread or Main across Channels explicitly shares Agent context. Host memory and working context can also be shared across distinct Threads. Binding disclosure follows [access](06-api-console-and-access.md#access-boundary); routing is not permission to browse Host history or every Inbox item.
-
-## Per-trigger Tasks
-
-Each distinct eligible trigger creates a fresh Host root Thread with no continuation or copied history from an earlier task, including earlier tasks in the same Channel. All of that Channel's task Threads select its stable Project and therefore share Channel memory plus Global memory. With mentions-only filtering, each new eligible mention starts a separate task; an active previous task is not an implicit steering target. With all-messages filtering, each otherwise eligible new message is a trigger.
-
-The qualified event retains its task Thread association. Claw serializes creation attempts for that event and records intent before the Host call under [dispatch evidence](04-persistence-and-recovery.md#dispatch-evidence). Duplicate platform delivery reuses the event's disposition and any known Thread reference; unknown creation or submission blocks automatic recreation. Separate events can have separate task Threads, subject to Host capacity and product admission policy.
-
-A task can span multiple Host operations, pending decisions, and explicitly targeted human continuation. Exact decision callbacks and authorized controls address the existing task rather than creating another one. An ordinary new eligible message starts a new task even if it quotes or replies to an earlier task; it does not implicitly resume that task. Completion retains the Thread for inspection under ordinary retention rules. A task Thread is not a second Claw execution state machine.
-
-## Filtering and Deduplication
-
-Group filtering supports all otherwise authorized messages or mentions-only, with a connection default and binding override. Filtering is independent of routing mode: mentions-only can be combined with One Thread, per-Channel, or per-trigger routing. Mentions come from platform identity metadata, not matching a bot name in text. Direct messages still require sender authorization. A quoted bot message or reply alone is not a mention. If the adapter cannot establish mentions, mentions-only cannot silently act as all-messages.
-
-Claw first reconciles a known event identity, then checks current sender and binding policy for new admission. Duplicate delivery retains the prior disposition without granting newly revoked content access. Conflicting reuse fails. Group filtering occurs before Host Thread creation, Inbox content retention, attachment collection for execution, or model invocation.
-
-Ignored events retain only the identity and minimal disposition needed for deduplication and diagnostics. Ignored bodies cannot re-enter through previous-message context, hidden prompts, memory extraction, or a later filter change. Echoes and service-originated output are excluded. Exact decision responses and authorized controls have their own validation; they need not contain a textual mention.
-
-## Ingress Flow
-
-```mermaid
-sequenceDiagram
-    participant Platform
-    participant Adapter
-    participant Claw
-    participant Store as Business store
-    participant Host
-    Platform->>Adapter: Event
-    Adapter->>Claw: Validated qualified event
-    Claw->>Claw: Reconcile identity, authorize, filter, and route
-    alt Eligible
-        Claw->>Store: Commit content, origin, and routing disposition
-        Claw-->>Adapter: Business receipt
-        Adapter-->>Platform: Acknowledge according to platform contract
-        Claw->>Store: Record eligible dispatch attempt
-        Claw->>Host: Main attention or routed conversation/task input
-        Host-->>Claw: Admission, rejection, or unresolved result
-        Claw->>Store: Retain available evidence
-    else Ignored
-        Claw->>Store: Retain minimal ignored disposition
-        Claw-->>Adapter: Ignored
-    end
-```
-
-Transport acknowledgement is not execution completion. Essential attachments are retained or explicitly reported unavailable; temporary download URLs alone cannot promise future content. Attachment access remains scoped to the original admitted event and current policy.
-
-In One Thread mode, Main receives a content-light notice and reads selected Inbox content through Claw's Capability. In per-Channel and per-trigger modes, the retained message is submitted to its selected conversation or task Thread through supported Host operations. All three modes use [dispatch evidence](04-persistence-and-recovery.md#dispatch-evidence); retained input does not imply that the Host durably consumed it. Rejected work can remain pending, and uncertain work blocks replay.
-
-## Interactive IM Behavior
-
-Normal messages follow routing and mention policy. Explicit interactions use a retained association with a Thread, operation, Inbox item, or pending request; platform buttons and commands are representations of those actions, not another execution model.
-
-| User action                        | Product behavior                                                                                                                             |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Send a task or attachment          | Apply sender/filter policy, retain the eligible event, and route under the selected mode                                                     |
-| Add ordinary context               | One Thread adds an Inbox item and Main attention; per-Channel steers its active conversation when supported; per-trigger starts a fresh task |
-| Continue a specific task or worker | Resolve an explicit authorized Thread selection and use Host submission or exact-operation steering                                          |
-| Stop                               | Address the selected current operation and report native cancellation acceptance and observed outcome                                        |
-| Inspect progress                   | Present authorized Host observations and business status for the selected work                                                               |
-| Answer a question or approval      | Present and respond to the exact Host request under the decision contract                                                                    |
-| Receive a result or file           | Use an explicit authorized destination and the delivery contract                                                                             |
-
-Adapters retain enough platform-message/control correlation to distinguish several active tasks in a Channel. A normal quoted reply remains a normal message under mode rules; a dedicated continue/control action explicitly selects the earlier task. Missing, stale, or ambiguous targets are reported or offered for selection. A stale operation control never falls through to a replacement Run. A Thread ID in user text is a selection request, not authority.
-
-Claw promptly distinguishes retained, admitted, running, awaiting a decision, blocked, failed, cancelled, and delivered using the responsible owner's evidence. These are presentation labels, not a new Run state machine. Status checks do not start model inference. Platforms may use message edits, cards, commands, or separate bounded updates; token streaming and rich cards are optional. Unsupported actions expose a usable authorized CLI/API path or say they are unavailable. They do not send the user to a nonfunctional Console.
-
-## Decisions and Controls
-
-Adapters present only interactions supported by both platform capability and caller authority. A callback identifies the external actor, original conversation, selected Thread, and exact Host request/continuation. Claw verifies that association and current permission before forwarding the native response. Button delivery, ordinary chat, repeated callbacks, and quoted approval text cannot authorize execution.
-
-Approvals and structured questions preserve request kind, choices, and Host response/batch rules. A concise ordered response includes the exact continuation and one value for every pending request; incomplete or mistyped arrays fail before native admission. Approval values are explicit booleans and question values are free-text answers. The native complete response format remains available for structured choices and advanced responses. Repeated or stale callbacks report the known outcome or require refetch; they cannot answer a later request. Claw may retain callback correlation but keeps no second decision engine. Loss of a response is reconciled under [execution controls](03-execution-lifecycle.md#decisions-and-controls).
-
-A shared Main request or worker request has no automatically safe Channel destination. It is presented only where the requesting context and operator policy permit disclosure and response; otherwise it remains available to an authorized operator through CLI/API. One Thread access does not let every participant cancel shared Main, inspect workers, or approve tools. Each control requires its corresponding grant.
-
-## Egress and Reconciliation
-
-A delivery retains explicit content, qualified destination, source evidence, and request identity before a transport attempt. Reusing the same delivery request with identical content returns its disposition; conflicting content or destination fails. Adapter formatting, splitting, and updates retain the original delivery association and report partial or unknown outcomes.
-
-In One Thread mode only canonical Main can request Agent-originated external sends through Claw. Main's final answer and worker output are not automatically broadcast. In per-Channel and per-trigger modes an authorized reply policy may select a particular saved Host result for its original destination; Claw does not select unrelated later output. If the result cannot be correlated, delivery waits for resolution.
-
-Before dispatch, Claw checks current connection and destination authority. Adapters distinguish confirmed success, definite non-send failure, and unknown outcomes. A usable platform idempotency key or status query can support safe retry. A possibly successful send without such evidence remains unknown; an operator resolution records its evidence or acknowledged duplication risk. There is no exactly-once promise for arbitrary platforms.
-
-Retry delivery from saved content, never by rerunning the Agent. Inbox settlement and Host completion do not imply delivery success. Agent-content streaming follows the same destination and retained-intent rules as final delivery. In One Thread mode raw Main or worker streams are not forwarded to Channels; operator-visible Host activity is not automatically Channel-safe output. Bounded product acknowledgements, status updates, and exact decision prompts are service interactions, not alternate worker publication paths. Explicit authorized history/result queries are read operations under the caller's access grants; they do not enable unsolicited worker publication.
-
-Outgoing files are read through supported Host operations or already authorized product attachments, then retained as deliverable content with their origin. Adapter size/type limits and partial uploads are explicit. A Host path or file-browser link is not automatically accessible from IM and is not a substitute for an authorized upload or usable protected download. Platform output excludes secrets, hidden reasoning, unrelated history, and unauthorized files.
-
-## Retained Lark Context
-
-Agents can explicitly request bounded previous/reply text for an admitted Inbox item. Context uses the same current caller, Thread, Project, source, and dispatch-read barriers as an ordinary Inbox read. It stays within the original Channel and topic, with an exact retained reply target permitted in the same Channel and Thread. It excludes controls, filtered/pruned content, and uncertain dispatches. It fetches no platform history and creates no copied conversation history for per-trigger tasks. Missing reply content is reported as unavailable rather than fetched through a broader authorization path.
-
-## Lark Feedback and Result Selection
-
-Lark service feedback uses bounded retained status messages and optional reactions. Each update has a stable intent and original destination; unknown sends remain blocked. Status and exact decision prompts expose only authorized associations. Rich cards and token streaming are optional representations, not requirements for decision handling.
-
-An enabled saved-result policy in per-Channel/per-trigger mode selects only the exact completed Host continuation associated with the original input. Explicit Agent delivery suppresses duplicate automatic results. One Thread retains Main-only Agent publication and does not broadcast Main or worker final answers. Topic replies may fall back only to an authorized ordinary reply in the same conversation when the platform definitely rejects topic-specific delivery.
-
-## GitHub Notification Polling
-
-GitHub connections capture notification versions through durable paginated polling. A version is qualified by connection/account, notification identity, and update time. The cursor advances only after all pages are retained. Configured initial lookback, bounded delayed capture, timestamp-boundary overlap, and durable deduplication constrain discovery; the feed is sampled state rather than a complete event archive.
-
-Delayed capture refreshes the issue/PR and paginates its ordinary comments and PR review comments over the retained discovery window. Each request requires an allowed author and a textual `@account_login` mention with an exact account boundary; notification reasons alone do not authorize input. Own output and Claw delivery markers are excluded. Each source/version retains its immutable admission or ignored disposition independently of notification versions. Coalescing discovery windows preserves their earliest start; it cannot discard separate requests. Deleted content and edits replaced before polling remain outside the sampled feed's guarantee. Only the admitted request body enters context; unrelated root and comment bodies are not imported through refresh. GitHub content does not enter the IM control parser.
-
-Per-Channel routing retains one Thread per repository binding and issue/PR number, sharing the repository's configured Project. Per-trigger creates a new task for each distinct admitted request; One Thread routes to Main. Explicit text replies keep the original issue/PR number even when the request originated in a review comment.
-
-An enabled reactions policy retains an `eyes` acknowledgement for the exact request source through ordinary delivery intent. It acknowledges business retention, not execution completion. Unknown acknowledgements are not automatically resent and do not block business execution or mark-read settlement.
-
-Explicit text comments retain the issue/PR number and ordinary delivery uncertainty. Mark-read is a separate idempotent operation after business settlement and all associated dispatch/business-delivery obligations, including requests captured through earlier versions of the same notification. Each attempt rechecks the notification version and current grants. Newer updates are left for capture; polling includes read notifications to cover the remaining platform race. Failed read-state updates retain retry/backoff evidence without repeating Agent execution or comment publication.
-
-## Invariants
-
-1. Platform acknowledgement, business retention, Host admission, and external delivery are independent.
-2. Deduplicated ingress does not become an unproven exactly-once Host execution guarantee.
-3. Ignored content never enters execution through another context path.
-4. Delivery failure does not rewrite Host outcomes or trigger Agent re-execution.
-5. Shared context never implies unrestricted recipient fan-out.
-6. Per-trigger routing creates one fresh task per distinct eligible event, not per redelivery or decision callback.
-7. Mentions-only filters admission independently of Thread lifetime and memory sharing.
+Each external publication has explicit contents, source and destination. A topic fallback remains within the same authorized conversation and follows a definite rejection, not a timeout. Partial results identify what was sent. Confirmed, definitely unsent, and unknown results remain distinguishable; a timeout does not establish non-delivery. A binding change does not redirect a retained reply. Service completion neither publishes nor settles an external delivery by itself.

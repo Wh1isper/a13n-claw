@@ -12,7 +12,7 @@ Use Python 3.13, typed public interfaces, Ruff, Pyright, and deptry. Use `isinst
 
 ## Host integration
 
-The [replacement specification](spec/README.md) adopts one package-embedded Harness UI App. New embedding work uses its supported lifecycle, configuration, Thread, execution, environment, collaboration, and memory boundaries. Claw owns product state and Capabilities, not a second runtime. Follow the [required library contract](spec/11-host-integration.md), starting with existing public operations and native Capabilities. Do not import private coordinators, edit Host persistence, or add a parallel HTTP backend. A concrete unsupported required interaction can justify a focused upstream change; optional unavailable features do not block the basic IM path. Keep native collaboration and execution controls under Host ownership.
+The [Service App specification](spec/README.md) defines the replacement architecture. The current runtime still uses one package-embedded Harness UI App. Its published behavior is the baseline, not a reason to carry the embedded lifecycle or runtime layout into the Service App.
 
 ## Product persistence and execution
 
