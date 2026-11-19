@@ -34,13 +34,18 @@ sequenceDiagram
     participant E as Project CLI
     participant P as Destination platform
     A->>I: Submit message with source and reply context
-    I-->>M: Wake or steer with unread preview
-    M->>I: Open selected message
-    I-->>M: Return content and reply context
-    opt Main decides to reply
-        M->>E: Request a platform-native operation
-        E->>P: Execute with the configured account
-        P-->>E: Return the available outcome
-        E-->>M: Report outcome
+    alt Inbox full
+        I-->>A: Reject admission
+    else Accepted
+        I-->>A: Stored unread
+        I-->>M: Wake or steer with unread preview
+        M->>I: Open selected message
+        I-->>M: Return content and reply context
+        opt Main decides to reply
+            M->>E: Request a platform-native operation
+            E->>P: Execute with the configured account
+            P-->>E: Return the available outcome
+            E-->>M: Report outcome
+        end
     end
 ```

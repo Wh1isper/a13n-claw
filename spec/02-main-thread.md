@@ -22,7 +22,11 @@ Native Background completion returns directly and promptly to its owning Thread,
 
 ## Scheduled Work
 
-Main chooses an execution mode when it creates a scheduled task. The default is a scheduled prompt queued as native input for the next Run of the same Main Thread, not a steer. This is not a user message and does not enter the Claw Inbox. Input follows native admission and does not answer or bypass a pending decision. Use this mode for ordinary tasks and work that needs continuity with Main's context.
+Main chooses an execution mode when it creates a scheduled task. The default delivers each scheduled occurrence to the Claw Inbox as an unread item, not as the scheduled prompt in Main's native input. An unread notice can wake or steer Main with a short preview of the occurrence; the trigger-time prompt enters Main's context only when Main opens the item. A scheduled item is not a user message. Use this mode for ordinary tasks and work that needs continuity with Main's context.
+
+Service owns the schedule clock, cron and one-time rules, lateness, overlap decisions, and occurrence history. Missed cron matches are coalesced subject to native lateness, and a firing overlapping an unfinished occurrence is skipped. The occurrence retains its identity across dispatch attempts: one occurrence does not produce multiple Inbox items or both an Inbox item and a native scheduled input. An Inbox-full rejection is visible as an occurrence delivery outcome; admission is not execution or completion.
+
+An accepted occurrence remains outstanding while its Inbox item is unread or Main is processing it. Opening the item marks it Read but does not itself finish the occurrence. Main's processing outcome ends that occurrence; it does not wait for the entire downstream chain of worker work that Main may delegate. A processing failure or cancellation is not successful completion, and an uncertain outcome is not assumed successful. Pending native decisions are not answered or bypassed by schedule delivery.
 
 For self-contained transactional work, Main can instead select a fresh native Thread in the same Project for each firing. Transactional describes the task's self-contained work, not a database atomicity guarantee. The task prompt directs the scheduled Thread to report its outcome to Main for any user-facing communication; it does not contact users directly. Schedules use the native schedule path and its lifecycle facts. Claw does not generate a managed-worker terminal notice for a fresh scheduled Thread unless it is also a managed worker.
 
@@ -37,7 +41,7 @@ Claw's instructions guide Main to create each task and write its trigger-time pr
 
 Claw prompts Main again if a Run finishes and unread mail remains. Once Main can accept work, an unread notice can continue the same Thread. An outstanding native decision is a wait, not idleness: new mail can remain unread, but its notice and a heartbeat do not answer the decision or start a replacement Run. The response goes to the exact native wait. After continuation, Main returns to the same Inbox loop.
 
-When Main has no active work or outstanding decision, no unread mail, and no competing eligible work such as scheduled input or a native Background return, it becomes idle and the heartbeat interval starts. New eligible work can bring Main back before that interval ends. If Main finishes that work and goes idle again, the interval starts again. Heartbeats occur only during true idleness and do not catch up missed intervals. An independently running worker does not by itself keep Main active; idleness does not stop that worker or the Project resources.
+When Main has no active work or outstanding decision, no unread mail, and no competing eligible work such as a native Background return, it becomes idle and the heartbeat interval starts. New eligible work can bring Main back before that interval ends. If Main finishes that work and goes idle again, the interval starts again. Heartbeats occur only during true idleness and do not catch up missed intervals. An independently running worker does not by itself keep Main active; idleness does not stop that worker or the Project resources.
 
 ```mermaid
 stateDiagram-v2
@@ -50,7 +54,7 @@ stateDiagram-v2
     Waiting --> Waiting: Fan-in retained as unread
     Waiting --> Active: Exact decision resumed
     Active --> CheckInbox: Run finishes normally
-    Idle --> Active: Unread notice or scheduled input
+    Idle --> Active: Unread notice
     Idle --> Active: Native Background return or heartbeat due
     note right of Idle
         Start heartbeat timer on entry.

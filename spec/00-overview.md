@@ -33,12 +33,15 @@ flowchart TB
         end
         B[Other Claws]
         Service[Service execution and resources]
+        Scheduler[Service schedules]
         Project[Claw Project]
         Work[Service Environment and optional Browser]
         Console --> App
         App --> A
         App --> B
         App -->|In-process operations| Service
+        Scheduler -->|Default occurrence| Inbox
+        Scheduler -->|Fresh Thread occurrence| Service
         Main -->|Use reply CLIs| Work
         Main --> Project
         Workers --> Project
@@ -51,7 +54,7 @@ flowchart TB
     Clients --> Connector
 ```
 
-Service owns Agents, Threads, Entries, Runs, models and model-provider configuration, along with resource authorization and lifecycles. Main and worker are roles of native Service Threads, not separate Thread or Agent types. Claw owns its Project, connectors, Inbox, Thread associations, and heartbeat condition. Its AppDatabase stores those business facts and references to the native resources; it does not mirror their definitions or execution state.
+Service owns Agents, Threads, Entries, Runs, schedules and their occurrences, models and model-provider configuration, along with resource authorization and lifecycles. Main and worker are roles of native Service Threads, not separate Thread or Agent types. Claw owns its Project, connectors, Inbox, Thread associations, and heartbeat condition. Its AppDatabase stores those business facts and references to the native resources; it does not mirror their definitions or execution state.
 
 ## Project
 
@@ -59,7 +62,7 @@ Each Claw's [Project](04-project.md) gives Main and its workers a shared persist
 
 ## End-to-End Flow
 
-The connector addresses a specific Claw. The [Inbox](01-inbox.md) owns acceptance, unread previews, and read history. The [Main Thread](02-main-thread.md) owns the choice of what to read, handle, or delegate, including scheduled work. Service executes Main and its worker Threads in their Project context. Opening a message, completing work, and sending a reply are separate events.
+The connector addresses a specific Claw. The [Inbox](01-inbox.md) owns acceptance, unread previews, and read history. Default-mode scheduled occurrences also enter that Inbox; Service retains the schedule and occurrence lifecycle. The [Main Thread](02-main-thread.md) owns the choice of what to read, handle, or delegate. Service executes Main and its worker Threads in their Project context. Acceptance, opening an item, completing its work, and sending a reply are separate events.
 
 ```mermaid
 sequenceDiagram
