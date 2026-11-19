@@ -59,3 +59,9 @@ stateDiagram-v2
 ```
 
 The diagram shows the normal work loop; after a Run finishes, all eligible work is considered before idleness. Native failures, cancellation, and uncertain admission stay visible as such; they are not a normal completion or a reason to repeat an input whose outcome is unknown.
+
+## Heartbeat Follow-Up
+
+On a heartbeat, Main checks unfinished work, reads relevant worker status or saved outcomes as needed, and takes the next useful step within existing authority. A heartbeat does not authorize new work. Main communicates meaningful results or blockers through the normal reply path, not routine check-ins.
+
+When the heartbeat needs no further action or user-facing reply, Main calls `finish_silently` with no arguments or accompanying text. This is a native terminal output tool: it completes the current Run successfully without requesting another model turn or publishing a message. An ordinary function tool that returns nothing, or an empty model response, does not signal quiet completion. The Run and its execution history remain inspectable. Quiet completion does not override pending decisions, discard Inbox items, or suppress a reply still owed to a user whose input arrived during the Run.
