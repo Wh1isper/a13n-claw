@@ -1,5 +1,13 @@
 # A13n Claw Specification
 
+## Service App Line
+
+The [Service App overview](service-app/00-overview.md) defines the architecture of the next Claw line. It preserves the released product workflows while replacing their runtime foundation. It describes the target, not features available in the current release.
+
+## Embedded Host Line
+
+The contracts below describe the embedded Harness UI Host line. They remain the behavioral reference for the Service App and describe the current implementation, not the Service App's runtime boundary.
+
 A13n Claw brings Harness UI's interactive Agent experience to IM platforms. One Claw process composes one `HarnessUiApp` from the `a13n-harness-ui` Python package with messaging adapters, Inbox, delivery, and headless product operations. The Host owns execution and collaboration; Claw makes those capabilities usable through platform-native messages and controls.
 
 ## Design Boundary
