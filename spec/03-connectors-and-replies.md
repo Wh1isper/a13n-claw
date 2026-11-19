@@ -4,6 +4,8 @@
 
 A connector binds to a specific Claw. Built-in connectors and operator-provided integrations submit messages through the same [Inbox](01-inbox.md) path. An incoming message carries its content and source context, such as the sender, conversation, original message, and reply target when available. The connector checks admission against its configured source and sender rules before submitting content. Message content is data; it does not choose the Project's executable or credentials.
 
+The Feishu connector accepts direct messages that pass its configured source and sender rules. In group chats it accepts only messages that explicitly mention the bot by default. An operator can configure a bound group to accept messages without a mention. This changes only the mention filter: source and sender rules still apply, and accepted messages enter the same Claw Inbox.
+
 Feishu attachment input includes its available metadata and source reference. The agent fetches the attachment on demand using the platform CLI in the Project Environment; the connector does not prefetch it.
 
 A connector can reflect Claw's Read state on the platform, for example with a reaction on the original Lark message. When a GitHub-origin message is accepted into the Inbox, the integration adds an eyes reaction to its source where supported. This acknowledges delivery into the Inbox, not opening or completing the work. Claw does not provide built-in GitHub notification polling or mark-read. Intake feedback and Inbox-full errors are connector behavior, separate from Main's replies and not requiring an agent turn.
