@@ -51,6 +51,7 @@ async def sweep(runtime: Runtime, organization_id: str) -> None:
             try:
                 await workers.terminal_notices(runtime, workspace_id, claw_id)
                 await schedules.sweep(runtime, workspace_id, claw_id)
+                await schedules.retry_fresh(runtime, workspace_id, claw_id)
                 await main_thread.notify(runtime, workspace_id, claw_id)
                 await inbox.cleanup(runtime.storage, workspace_id, claw_id)
             except (ServiceError, inbox.ClawNotFound) as error:

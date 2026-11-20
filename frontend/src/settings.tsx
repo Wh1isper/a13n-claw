@@ -978,10 +978,19 @@ function ScheduleEditor({ claw, close }: { claw: Claw; close: () => void }) {
           <FormField label="Prompt">
             <Textarea name="prompt" rows={5} required maxLength={32000} />
           </FormField>
-          <FormField label="Target">
+          <FormField
+            label="Target"
+            description={
+              claw.browser_id
+                ? "Choose Main for work that uses the Project Browser."
+                : undefined
+            }
+          >
             <select className={styles.select} name="target">
               <option value="main">Main Inbox</option>
-              <option value="fresh">Fresh Thread</option>
+              <option value="fresh" disabled={!!claw.browser_id}>
+                Fresh Thread
+              </option>
             </select>
           </FormField>
         </FormSection>

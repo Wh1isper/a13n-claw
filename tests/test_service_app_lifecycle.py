@@ -3,6 +3,7 @@
 import json
 import os
 import time
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from uuid import uuid4
@@ -41,6 +42,21 @@ def model_server():
             }
             if "claw_assign" in tools - used:
                 tool, args = "claw_assign", {"task": "Collect a result", "name": "Test Worker"}
+            elif "claw_schedule" in tools - used:
+                tool, args = (
+                    "claw_schedule",
+                    {
+                        "target": "fresh",
+                        "body": {
+                            "name": "Fresh follow-up",
+                            "prompt": "Collect a result and report it to Main.",
+                            "rule": {
+                                "type": "once",
+                                "run_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+                            },
+                        },
+                    },
+                )
             elif "claw_report" in tools - used:
                 tool, args = "claw_report", {"message": "Worker result"}
             else:
@@ -262,6 +278,28 @@ def exercise_lifecycle(client, model_url, requests):
     main = eventually(lambda: read(f"/runs/{delivery['run_id']}"), lambda run: run["sealed_at"])
     assert main["status"] == "completed", main.get("failure")
     assert main["agent_revision_id"] == claw["agent_revision_id"]
+    (schedule,) = read(f"{path}/fresh-schedules")["items"]
+    assert schedule["name"] == "Fresh follow-up" and schedule["next_at"]
+    schedule_path = f"/schedules/{schedule['id']}"
+    native = client.get(f"/api/v1{schedule_path}")
+    assert native.status_code == 200, native.text
+    assert native.json()["invocation"]["agent_revision_id"] == claw["agent_revision_id"]
+    occ = post(
+        f"{schedule_path}/dispatch",
+        {},
+        202,
+        headers={
+            "Idempotency-Key": uuid4().hex,
+            "Authorization": f"Bearer {key['secret']}",
+            "If-Match": native.headers["ETag"],
+        },
+    )
+    scheduled = eventually(
+        lambda: read(f"{schedule_path}/occurrences/{occ['id']}"),
+        lambda row: row["execution_outcome"],
+    )
+    assert scheduled["execution_outcome"] == "succeeded", scheduled
+    assert scheduled["completion_run_id"] != delivery["run_id"]
     observed = read(path)["project"]
     assert observed["environment"] == "ready"
     assert observed["automation_account"] == "active"

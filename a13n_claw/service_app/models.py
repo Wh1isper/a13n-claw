@@ -55,6 +55,7 @@ class Claw(Base):
     service_account_id: Mapped[str] = mapped_column(String(64))
     main_thread_id: Mapped[str | None] = mapped_column(String(64), unique=True)
     main_session_id: Mapped[str | None] = mapped_column(String(64))
+    schedule_session_id: Mapped[str | None] = mapped_column(String(64))
     worker_models: Mapped[list[dict[str, str]]] = mapped_column(
         JSON, server_default=text("'[]'::json")
     )
@@ -166,6 +167,32 @@ class Schedule(Base):
     next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     enabled: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ScheduleRequest(Base):
+    """A fenced request to create a Service Schedule, not a copy of its definition."""
+
+    __tablename__ = database.name("schedule_requests")
+    __table_args__ = (
+        Index(
+            database.name("schedule_request_pending_idx"),
+            "claw_id",
+            "created_at",
+            "id",
+            postgresql_where=text("completed_at IS NULL"),
+        ),
+        Index(database.name("schedule_request_receipt_idx"), "claw_id", "completed_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(72), primary_key=True)
+    claw_id: Mapped[str] = mapped_column(
+        ForeignKey(f"{database.name('claws')}.id", ondelete="CASCADE")
+    )
+    request: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    schedule_id: Mapped[str | None] = mapped_column(String(72))
+    failure: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Occurrence(Base):
