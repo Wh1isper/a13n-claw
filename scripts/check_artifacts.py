@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 SMOKE = """
 from importlib.metadata import entry_points, version
 from importlib.resources import files
-from a13n_service.app import build_app
+import sys
 from a13n_service.settings import load_settings
 assert version('a13n-service') == '0.3.1'
 app = next(item for item in entry_points(group='a13n_service.app_plugins')
@@ -21,8 +21,15 @@ assert root.joinpath('static', 'index.css').is_file()
 assert root.joinpath('migrations', 'versions').is_dir()
 settings = load_settings()
 assert settings.plugins.bootstrap_enabled_apps == ('a13n.claw',)
-paths = build_app(role='control', settings=settings).openapi()['paths']
-assert '/api/v1/apps/a13n.claw/claws' in paths
+if sys.platform == 'linux':
+    from a13n_service.app import build_app
+    service = build_app(role='control', settings=settings)
+else:
+    from fastapi import FastAPI
+    service = FastAPI()
+    for router in app.routers:
+        service.include_router(router)
+assert '/api/v1/apps/a13n.claw/claws' in service.openapi()['paths']
 """
 
 

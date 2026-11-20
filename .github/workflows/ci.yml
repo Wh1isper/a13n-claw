@@ -40,8 +40,16 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.13"
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
       - run: uv sync --locked
-      - run: make db-check lint typecheck deps-check test
+      - run: make console-build db-check lint typecheck deps-check test
   packages:
     name: Console and packages (${{ matrix.os }})
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
