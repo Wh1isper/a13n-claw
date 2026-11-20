@@ -14,11 +14,11 @@ A connector can reflect Claw's Read state on the platform, for example with a re
 
 Main chooses the reply target and platform operation. It runs the corresponding CLI in the Project Environment. A reply can address the original message, its conversation, or another explicitly selected destination available to the configured account. The operation and payload follow the platform: for example, Lark text, rich messages, or files; GitHub issue comments, pull request comments, or reviews. Claw does not flatten these operations into a common text-only send format. Worker Threads communicate with Main through the [Inbox](01-inbox.md), and Main can inspect their saved outcomes for publication.
 
-Prefer the official CLI when it supports the intended operation and account identity. Where no suitable CLI exists, Claw can supply a small platform-specific command in a Rust binary built and released with the Claw repository. The binary fills missing operations; it does not replace working platform CLIs. The agent interprets the CLI's result and decides what to do; Claw does not add a separate lost-result or reply-reconciliation mechanism.
+The initial release supports GitHub and Lark/Feishu. Main uses their official CLIs, `gh` and `lark-cli`, and interprets the selected CLI's result.
 
 ## Project Setup
 
-When a new Claw creates its Project Environment, setup makes the selected CLIs, runtime configuration, and authorized account access available before the corresponding reply path is ready. Setup can download published binaries for the Environment's platform. When a Claw attaches an existing Environment, it can use tools and account setup already supplied by the operator. Failed setup affects readiness for the corresponding reply path; it does not report a reply as sent.
+When a new Claw creates its Project Environment, setup makes the selected CLIs, runtime configuration, and authorized account access available before the corresponding reply path is ready. Claw automatically installs missing official binaries in the Project Environment on supported platforms. Existing official binaries and account setup supplied by the operator are reused. Failed setup affects readiness for the corresponding reply path; it does not report a reply as sent.
 
 The account presented to a CLI must be the account configured for the operation. Keep credential values in the configured credential mechanism, not in message content or readable Project settings. Main owns replies as a collaboration role. Workers with access to the same command environment and credentials have the same platform authority; sharing a Project does not by itself provide Main-only credential isolation.
 

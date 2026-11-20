@@ -1,85 +1,72 @@
-SHELL := /bin/bash
+UV ?= uv
+PNPM ?= pnpm
 TEST_ARGS ?=
-.PHONY: help install format lint typecheck deps-check test check check-all build artifact-check docs-serve docs-build docs-check workflow-check image-check console-install console-check console-build console-dev serve
-help: ## List development commands
-	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | sed 's/:.*## /\t/'
-install: ## Install locked dependencies and Git hooks
-	uv sync --locked
-	pnpm --dir docs install --frozen-lockfile
-	$(MAKE) console-install
-	uv run --locked pre-commit install
-format: ## Format tracked source files
-	uv run --locked pre-commit run --all-files
-lint: ## Check Python and Markdown formatting
-	uv run --locked ruff check .
-	uv run --locked ruff format --check .
-	uv run --locked mdformat --check --number README.md AGENTS.md CONTRIBUTING.md DEVELOPMENT.md MAINTAINERS.md SECURITY.md docs/content spec .github .agents
 
-typecheck: ## Type-check Python sources
-	uv run --locked pyright
+.PHONY: install lint format typecheck deps-check test frontend-install console-sdk console-check console-build console-dev db-check build artifact-check image-check workflow-check docs-check docs-serve docs-build check check-all
 
-deps-check: ## Check Python dependency declarations
-	uv run --locked deptry a13n_claw
+install: frontend-install ## Install the development toolchain and Git hooks
+	$(UV) sync --locked
+	$(PNPM) --dir docs install --frozen-lockfile
+	$(UV) run --locked pre-commit install
 
-test: ## Run tests without external service credentials
-	uv run --locked pytest $(TEST_ARGS)
+format:
+	$(UV) run --locked pre-commit run --all-files
 
-.PHONY: db-migrate
-db-migrate: ## Generate a SQLite migration against a disposable database
-	@test -n "$(msg)" || { echo 'msg is required: make db-migrate msg="description"'; exit 2; }
-	uv run --locked python -m a13n_claw.database.generate "$(msg)"
+lint:
+	$(UV) run --locked ruff check .
+	$(UV) run --locked ruff format --check .
 
-check: lint typecheck deps-check docs-check console-check ## Run static checks
-check-all: check test console-schema-check console-test console-e2e build artifact-check docs-build workflow-check image-check executor-check ## Run the complete CI-equivalent gates (Docker for workflows)
-console-install: ## Install locked console dependencies
-	pnpm --dir console install --frozen-lockfile
-console-check: ## Type-check and format-check the console
-	pnpm --dir console check
-.PHONY: console-schema console-schema-check console-test console-e2e
-console-schema: ## Regenerate the typed client from the operator API
-	uv run --locked python scripts/export_console_schema.py
-	pnpm --dir console/codegen install --frozen-lockfile
-	pnpm --dir console/codegen generate
-	pnpm --dir console exec prettier --write src/api/schema.d.ts
-console-schema-check: console-schema ## Reject drift between the API and checked-in client types
-	git diff --exit-code -- console/src/api/schema.d.ts
-console-test: ## Test Console behavior without external providers
-	pnpm --dir console test
-console-e2e: console-build ## Test the built Console against a disposable real Host
-	pnpm --dir console exec playwright install chromium
-	pnpm --dir console test:e2e
-console-build: console-install ## Build the console into Python package assets
-	pnpm --dir console build
-console-dev: ## Serve the console with hot reload on loopback port 5173
-	pnpm --dir console dev
-serve: ## Run the backend and built Console on loopback port 8080
-	uv run --locked a13n-claw serve
-build: console-build ## Build the console, wheel, and source distribution
-	uv build --clear
-artifact-check: ## Install the wheel and rebuild the sdist in temporary environments
-	uv run --locked python scripts/check_artifacts.py
-docs-check: ## Check documentation formatting and types
-	pnpm --dir docs exec prettier --check .
-	pnpm --dir docs check
+typecheck:
+	$(UV) run --locked pyright
 
-docs-serve: ## Serve documentation locally
-	pnpm --dir docs dev
+deps-check:
+	$(UV) run --locked deptry .
 
-docs-build: ## Build the static documentation site and validate links
-	pnpm --dir docs build
+test:
+	$(UV) run --locked pytest $(TEST_ARGS)
 
-workflow-check: ## Validate GitHub Actions with actionlint
+frontend-install:
+	$(PNPM) --dir frontend install --frozen-lockfile
+
+console-sdk:
+	$(UV) run --locked python -m a13n_service.console_sdk frontend/.console-sdk/index.d.ts
+
+console-check: console-sdk
+	$(PNPM) --dir frontend typecheck
+
+console-build: frontend-install console-check
+	$(PNPM) --dir frontend build
+
+console-dev: frontend-install console-sdk
+	$(PNPM) --dir frontend dev
+
+db-check:
+	$(UV) run --locked a13n-service migrate
+	@$(UV) run --locked a13n-service apps db check --app a13n.claw --scratch-url "$$CLAW_TEST_DATABASE_URL"
+
+build: console-build
+	$(UV) build --clear
+
+artifact-check:
+	$(UV) run --locked python scripts/check_artifacts.py
+
+image-check: build
+	docker build -f deploy/docker/Dockerfile -t a13n-claw:check .
+	docker run --rm --entrypoint /app/.venv/bin/python a13n-claw:check -c 'import os; from a13n_claw.service_app.app import definition; assert os.geteuid() != 0; assert definition().app_id == "a13n.claw"'
+
+workflow-check:
 	docker run --rm -v "$(CURDIR):/repo" -w /repo rhysd/actionlint:1.7.12
 
-image-check: build ## Build and smoke-test the non-root runtime image
-	docker build -f deploy/docker/Dockerfile -t a13n-claw:check .
-	docker run --rm a13n-claw:check --version
-	uv run --locked python scripts/check_image.py
+docs-check:
+	$(PNPM) --dir docs exec prettier --check .
+	$(PNPM) --dir docs check
 
-.PHONY: executor-image executor-test executor-check
-executor-image: ## Build the persistent executor image
-	docker build -f deploy/docker/Executor.Dockerfile -t a13n-claw-executor:local .
-executor-test: ## Test already-built runtime and executor images
-	CLAW_EXECUTOR_TEST=1 uv run --locked pytest tests/distribution/test_executor.py -q $(TEST_ARGS)
-executor-check: image-check executor-image ## Build and test persistent executor, browser, and native Host integration
-	$(MAKE) executor-test
+docs-serve:
+	$(PNPM) --dir docs dev
+
+docs-build:
+	$(PNPM) --dir docs build
+
+check: lint typecheck deps-check console-check
+
+check-all: check test build artifact-check workflow-check docs-check docs-build

@@ -1,0 +1,149 @@
+.summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--a13n-border-soft);
+  border-radius: 12px;
+}
+.summary section {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 16px;
+  align-content: start;
+}
+.summary section + section {
+  border-left: 1px solid var(--a13n-border-soft);
+}
+.summary strong {
+  font-size: 24px;
+  line-height: 29px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.mainStatus {
+  min-height: 29px;
+  display: flex;
+  align-items: center;
+}
+.muted,
+.meta {
+  color: var(--a13n-secondary);
+  font-size: 12px;
+}
+.meta {
+  font-weight: 500;
+}
+.actions,
+.references,
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.references {
+  gap: 10px 16px;
+  margin-block: 10px;
+}
+.pager {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.link,
+.rowAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  color: var(--a13n-text);
+  font-weight: 500;
+  text-align: left;
+}
+.rowAction {
+  border: none;
+  background: none;
+  padding: 0;
+}
+.link:hover,
+.rowAction:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.link svg,
+.rowAction svg {
+  color: var(--a13n-secondary);
+  flex: none;
+}
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.dot + * {
+  margin-left: 4px;
+}
+.select {
+  color: var(--a13n-text);
+  min-height: 32px;
+  max-width: min(100%, 300px);
+  border: 1px solid var(--a13n-input-border);
+  border-radius: 8px;
+  padding: 0 10px;
+  background-color: var(--a13n-canvas);
+}
+.select:focus-visible,
+.link:focus-visible,
+.rowAction:focus-visible {
+  outline: 2px solid var(--a13n-signal);
+  outline-offset: 2px;
+}
+.form {
+  display: grid;
+  gap: 24px;
+  max-width: 760px;
+}
+.error {
+  color: var(--a13n-danger, var(--destructive));
+}
+.facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 16px;
+  row-gap: 8px;
+  margin: 0;
+}
+.facts dt {
+  color: var(--a13n-secondary);
+}
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.payload {
+  display: block;
+  color: var(--a13n-text);
+  background: var(--a13n-surface);
+  border-radius: 8px;
+  padding: 14px;
+  overflow: auto;
+  max-height: 460px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+@media (max-width: 500px) {
+  .summary section {
+    padding: 12px;
+  }
+  .select {
+    min-height: 36px;
+  }
+}

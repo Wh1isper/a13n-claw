@@ -1,6 +1,6 @@
 # Repository Guide
 
-A13n Claw is an independent, single-node assistant product bringing Harness UI interaction to IM platforms. The implementation embeds one published Harness UI App as a Python library and keeps Lark messaging, business persistence, and headless CLI/API above that Host. The operator Console provides Overview, read-only Runs, Models & Accounts, and Schedules. GitHub polling, isolated schedules, persistent Docker execution, and headless operations are available in source. Read [the Service App specification](spec/README.md) for the target architecture and its relationship to released behavior.
+A13n Claw is a Service App that owns durable Inbox, delivery history, managed worker associations, and Main-mode scheduled work. Service owns execution, resources and Console. Read [the accepted specification](spec/README.md) before changing those boundaries.
 
 ## Sources of truth
 
@@ -19,9 +19,7 @@ Preserve unrelated work and secrets. An implementation request does not automati
 
 ## Package and release boundaries
 
-Use Python 3.13, uv, `a13n-claw` distribution names, and `a13n_claw` Python imports. This single-package repository keeps `a13n_claw/` directly at its root, without a `src/` wrapper. Keep the source version at `0.0.0`; release preparation injects the canonical tag version into an ephemeral checkout. Harness dependencies use bounded published requirements, not paths into a neighboring agent-foundation checkout.
-
-`console/` owns the private React/Vite runtime frontend, with four operator pages; `docs/` owns the separate documentation site. Neither frontend is an npm release. Build console assets into `a13n_claw/static/console/` and include them in both wheel and sdist. Installed serving and sdist rebuilds require no Node.js. The server owns authenticated application APIs and durable SQLite state as well as static assets. Native Host configuration and CLI operations, three routing modes, native persistent workers, durable Inbox/drain, Lark long-connection intake, and explicit text/file delivery are available in source. The API can run without Console assets. Native Global/Project memory is reused. GitHub notification polling, isolated schedules/heartbeat, persistent Docker execution, and operational backup/retention are also available. Rich cards and other adapters remain later deliveries; Workflow orchestration is outside this scope. Old standalone data requires a fresh root; never reinterpret or delete it. Generated Python artifacts, static exports, caches, and credentials are not committed. Cloudflare hosts documentation only; it does not host an agent runtime. RC releases must never advance a container `latest` tag.
+Use Python 3.13 and uv. Build against the published Service pin; do not depend on an adjacent checkout. `frontend/` owns the Console contribution and `docs/` owns the separate documentation site. Package the generated App assets in the wheel and sdist. Preserve standalone data. The non-root release image inherits the exact Service image and version-tag publication flow.
 
 ## Validation
 

@@ -2,40 +2,24 @@
 
 ## Code quality and design
 
-Prefer direct flows, cohesive modules, and explicit ownership. Fix causes at their owner instead of adding overlapping wrappers. Add abstractions, persistence, infrastructure, and dependencies only when an implemented feature requires them. Read affected tests and specifications before editing.
+Follow the [accepted specifications](spec/README.md). Keep product state and native Service state distinct. Use direct, typed interfaces and add infrastructure only where the contract requires it. Record readiness from observed facts, separately from configuration.
 
-The backend embeds one published Harness UI App, an authenticated operator API, Lark/GitHub connections, isolated schedules, and durable SQLite business state. The operator Console composes typed API views for consumption, read-only run investigation, models/accounts, and schedules. Keep readiness specific: constructing a client or starting the dispatcher does not prove provider or MCP connectivity. Test fixtures must stay outside production entry points.
+Use Python 3.13, Ruff, Pyright, and deptry. Prefer explicit `isinstance` checks and function-style pytest tests. Tests use synthetic provider inputs and a disposable PostgreSQL database; they must not depend on provider credentials.
 
-## Python
+## Service integration
 
-Use Python 3.13, typed public interfaces, Ruff, Pyright, and deptry. Use `isinstance` for type-based branching. Tests are function-style pytest tests, offline by default. The installed distribution metadata owns the version; do not duplicate release versions in source modules.
+Claw is a Service App and a Harness plugin. Service owns identity, authorization, native Agent, Thread and Run execution, Project resources, and fresh-Thread scheduling. Claw owns Inbox data, delivery history, Main-mode schedules, and associations with native resources. Keep references scoped to their workspace. Revalidate execution identity and the attempt lease in the transaction that changes business state.
 
-## Host integration
-
-The [Service App specification](spec/README.md) defines the replacement architecture. The current runtime still uses one package-embedded Harness UI App. Its published behavior is the baseline, not a reason to carry the embedded lifecycle or runtime layout into the Service App.
-
-## Product persistence and execution
-
-An Instance has one process owner. Product services retain intent before Host dispatch or external sends and keep uncertain outcomes blocked. Host receipts are process-local; saved exact evidence, business settlement, and external delivery are independent. Native notifications remain best effort. Do not replay unknown effects or infer failure from missing receipt evidence.
-
-SQLite transactions run in short worker-thread operations; never retain one across execution, external I/O, or waits. Product tools bind actual execution identity and current source/destination grants. Workspace and protected Instance data are separate. Native Global/Project memory and shared working files retain their Host boundaries. Treat Local shell as host-account authority, not a sandbox.
+Use short, async SQLAlchemy transactions on Service storage. Use deterministic identities for operations retried after uncertain admission. Do not hold database locks across model execution, provider I/O, or waits. Notify or perform best-effort platform feedback after business acceptance commits. Persist native IDs for investigation; submission and completion are separate facts.
 
 ## Database schema
 
-Host state and migrations belong exclusively to Harness UI. Claw owns only business state. Existing standalone data is not a Host database and cannot be silently reinterpreted or deleted.
-
-SQLAlchemy Core metadata in `a13n_claw/database/schema.py` owns the current schema; package-owned Alembic revisions own its evolution. Generate revisions through `make db-migrate`, review them, and keep one linear history. Published revisions retain their historical definitions. Runtime startup uses migrations, not inline DDL, `create_all`, or version-specific branches in BusinessStore. Application reads and writes continue to use short `sqlite3` transactions.
-
-Migrate under the Instance lease before application state is loaded. Schema changes, data transformations, and the revision marker commit atomically; SQLite table rebuilds must preserve references and pass foreign-key validation before commit. Test metadata parity, populated upgrades, rollback, and repeated startup. Unknown revisions fail explicitly; downgrading requires a pre-upgrade backup.
+`a13n_claw/service_app/models.py` owns current AppDatabase metadata. Generate revisions with `a13n-service apps db revision --app a13n.claw` against a disposable database and review the operations before landing them. Service installs the AppDatabase migrations; the App does not issue runtime DDL. Use `make db-check` on PostgreSQL to check the migrated schema against metadata. Preserve published revisions and keep standalone data in its original data root.
 
 ## Documentation and frontend
 
-Keep user content in portable Markdown under `docs/content/`, with front matter and `meta.json` navigation. The private Fumadocs application uses Next.js static export. Its build checks internal links and anchors. Avoid duplicated documentation sources and external font requests at build time. Use Mermaid for diagrams when needed; ensure the site renderer supports any introduced syntax.
-
-The runtime frontend is a separate private React/TypeScript/Vite application under `console/`. IM owns conversation; the Console owns four operator pages and uses authoritative saved API views, explicit pending states, and version-preconditioned forms. Generate client types from the FastAPI schema with `make console-schema`; native Host response models remain authoritative. React Query owns server cache and mutation status, local component state owns forms, and URL parameters own navigable filters. Share semantic controls and recurring presentation, not a second application state framework. Keep tokens and unsaved drafts in tab memory; render retained output as untrusted text. Reconcile ambiguous submissions by their original identity, never silently submit a new command. Use accessible semantic controls, responsive layouts, and local system fonts. Verify the rendered result and affected interactions in a browser.
+Canonical user documentation is under `docs/content/`, with front matter and `meta.json` navigation. The docs site is separate from the runtime Console contribution in `frontend/`. Use the Service-generated `@a13n/console` bridge for native components, scoped API requests, query caching, authorization, and navigation. Share Console tokens and semantics, keep drafts local, and render retained messages as text. Validate important states in the real Console at desktop and narrow widths.
 
 ## Automation and distribution
 
-The Makefile is the stable local interface used by CI. GitHub-owned actions use readable major-version tags. Workflows use least-required permissions, explicit timeouts, and immutable release tags. Credentials belong in GitHub Environment secrets, not YAML or committed environment files.
-
-Ship one non-root container from the same wheel published in the release. The container prints help by default and starts the runtime only when explicitly invoked with `serve --host 0.0.0.0`. Its writable data and workspace directories are separate and owned by its non-root user. Build the console before Python artifacts; both wheel and sdist include its generated assets so installed serving and sdist-to-wheel builds need no Node.js. RCs publish exact version tags only; stable releases also update `latest`. Keep release checks in CI rather than duplicating full test suites during publication.
+The Makefile is the stable interface for local and CI checks. The published Service version is pinned in Python and as the exact base image. Build the Console before packaging; both the wheel and source distribution include generated assets, and rebuilding a wheel from the source distribution requires no Node.js. The image installs the same Claw wheel and inherits Service's non-root runtime and role selection. Stable version tags also advance `latest`; release candidates receive only exact version tags.
