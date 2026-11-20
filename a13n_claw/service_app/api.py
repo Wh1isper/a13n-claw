@@ -68,8 +68,8 @@ class CreateClaw(Settings):
 
     @pydantic.model_validator(mode="after")
     def select_environment(self):
-        if (self.environment_id is None) == (self.environment_template_id is None):
-            raise ValueError("Select one existing Environment or one Environment template")
+        if self.environment_id is not None and self.environment_template_id is not None:
+            raise ValueError("Select an existing Environment or an Environment template, not both")
         return self
 
 
@@ -77,7 +77,7 @@ class ClawView(Settings):
     model_config = ConfigDict(from_attributes=True)
     agent_id: str
     agent_revision_id: str | None
-    environment_id: str
+    environment_id: str | None
     browser_id: str | None
     service_account_id: str
     id: str
@@ -96,6 +96,8 @@ class ThreadActivity(BaseModel):
 
 class ProjectStatus(BaseModel):
     environment: str
+    environment_name: str | None
+    browser_name: str | None
     browser: str | None
     automation_account: str
     cli: dict[str, project_cli.CLIStatus] | None
@@ -294,8 +296,7 @@ async def create_claw(
         assert agent.default_revision_id is not None
         revision = await session.get_one(AgentRevisionRow, agent.default_revision_id)
         environment_id = body.environment_id
-        if environment_id is None:
-            assert body.environment_template_id is not None
+        if body.environment_template_id is not None:
             environment_id = await project.reserve_environment(
                 session, runtime, account, scope, body.environment_template_id, body.name
             )
@@ -336,6 +337,54 @@ async def update_settings(
         return ClawView.model_validate(claw)
 
 
+class ProjectBindings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    environment_id: ResourceId | None = None
+    environment_template_id: ResourceId | None = None
+    browser_id: ResourceId | None = None
+
+    @pydantic.model_validator(mode="after")
+    def valid(self):
+        if "environment_id" in self.model_fields_set and self.environment_id is None:
+            raise ValueError("Select an Environment to replace the current one")
+        if self.environment_id is not None and self.environment_template_id is not None:
+            raise ValueError("Select an existing Environment or an Environment template, not both")
+        return self
+
+
+@router.patch("/claws/{claw_id}/project", name="claw_update_project")
+async def update_project(
+    claw_id: ResourceId,
+    body: ProjectBindings,
+    workspace_id: WorkspaceId,
+    actor: Actor,
+    runtime: CurrentRuntime,
+) -> ClawView:
+    async with transaction(runtime.storage) as session:
+        scope = await workspace_scope(session, actor, workspace_id, "admin")
+        try:
+            claw = await inbox.lock_claw(session, workspace_id, claw_id)
+        except inbox.ClawNotFound:
+            raise not_found("claw", claw_id) from None
+        account = await main_thread.account(session, runtime, scope, claw.service_account_id)
+        environment_id = body.environment_id or claw.environment_id
+        browser_id = body.browser_id if "browser_id" in body.model_fields_set else claw.browser_id
+        await project.rebind(
+            session,
+            runtime,
+            scope,
+            account,
+            claw,
+            environment_id,
+            browser_id,
+            environment_template_id=body.environment_template_id,
+        )
+        result = ClawView.model_validate(claw)
+    if body.environment_id is not None or body.environment_template_id is not None:
+        await main_thread.notify(runtime, workspace_id, claw_id)
+    return result
+
+
 @router.get("/claws/{claw_id}", name="claw_overview")
 async def overview(
     claw_id: ResourceId, workspace_id: WorkspaceId, runtime: CurrentRuntime
@@ -373,22 +422,30 @@ async def overview(
             )
             if result is not None:
                 activity = ThreadActivity.model_validate(result)
-        environment = await session.scalar(
-            select(EnvironmentRow.status).where(
-                EnvironmentRow.workspace_id == workspace_id,
-                EnvironmentRow.id == claw.environment_id,
-            )
-        )
-        browser = None
-        if claw.browser_id is not None:
-            browser = (
-                await session.scalar(
-                    select(BrowserRow.status).where(
-                        BrowserRow.workspace_id == workspace_id, BrowserRow.id == claw.browser_id
+        environment = (
+            (
+                await session.execute(
+                    select(EnvironmentRow.status, EnvironmentRow.name).where(
+                        EnvironmentRow.workspace_id == workspace_id,
+                        EnvironmentRow.id == claw.environment_id,
                     )
                 )
-                or "missing"
-            )
+            ).one_or_none()
+            if claw.environment_id is not None
+            else None
+        )
+        browser = (
+            (
+                await session.execute(
+                    select(BrowserRow.status, BrowserRow.name).where(
+                        BrowserRow.workspace_id == workspace_id,
+                        BrowserRow.id == claw.browser_id,
+                    )
+                )
+            ).one_or_none()
+            if claw.browser_id is not None
+            else None
+        )
         organization_id = await session.scalar(
             select(WorkspaceRow.organization_id).where(WorkspaceRow.id == workspace_id)
         )
@@ -411,8 +468,12 @@ async def overview(
             read=read,
             main=activity,
             project=ProjectStatus(
-                environment=environment or "missing",
-                browser=browser,
+                environment=environment.status
+                if environment
+                else ("not configured" if claw.environment_id is None else "missing"),
+                environment_name=environment.name if environment else None,
+                browser_name=browser.name if browser else None,
+                browser=browser.status if browser else ("missing" if claw.browser_id else None),
                 automation_account=account_status,
                 cli=claw.cli_observation,
                 cli_checked_at=claw.cli_checked_at,

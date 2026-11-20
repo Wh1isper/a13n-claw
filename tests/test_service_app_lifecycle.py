@@ -252,7 +252,8 @@ def exercise_lifecycle(client, model_url, requests):
         "heartbeat_seconds": 0,
     }
     post(f"{base}/claws", {**config, "environment_id": private["id"]}, 403)
-    claw = post(f"{base}/claws", {**config, "environment_id": shared["id"]})
+    claw = post(f"{base}/claws", config)
+    assert claw["environment_id"] is None
     path = f"{base}/claws/{claw['id']}"
     agent_path = f"/agents/{agent['id']}"
     head = client.get(f"/api/v1{agent_path}")
@@ -272,10 +273,21 @@ def exercise_lifecycle(client, model_url, requests):
     replayed = post(f"{path}/input", message, 200, headers=headers)
     assert replayed == {**received, "status": "duplicate"}
     post(f"{path}/input", {"content": "Changed"}, 409, headers=headers)
-    detail_path = f"{path}/deliveries/{received['delivery_id']}"
-    delivery = eventually(lambda: read(detail_path), lambda item: item["run_id"] is not None)
-    assert read(f"/threads/{delivery['thread_id']}")["session_id"] == delivery["session_id"]
-    main = eventually(lambda: read(f"/runs/{delivery['run_id']}"), lambda run: run["sealed_at"])
+    setup = read(path)
+    assert setup["main"] is None and setup["unread"] == 1
+    assert setup["project"]["environment"] == "not configured"
+    refused = client.patch(f"/api/v1{path}/project", json={"environment_id": private["id"]})
+    assert refused.status_code == 403, refused.text
+    bound = client.patch(f"/api/v1{path}/project", json={"environment_id": shared["id"]})
+    assert bound.status_code == 200, bound.text
+    assert bound.json()["memory_space_id"] == claw["memory_space_id"]
+    overview = eventually(
+        lambda: read(path), lambda row: row["main"] and row["main"]["last_run_id"]
+    )
+    main_id = overview["main"]["last_run_id"]
+    main = eventually(lambda: read(f"/runs/{main_id}"), lambda run: run["sealed_at"])
+    assert main["thread_id"] == overview["claw"]["main_thread_id"]
+    assert main["session_id"] == overview["claw"]["main_session_id"]
     assert main["status"] == "completed", main.get("failure")
     assert main["agent_revision_id"] == claw["agent_revision_id"]
     (schedule,) = read(f"{path}/fresh-schedules")["items"]
@@ -299,7 +311,7 @@ def exercise_lifecycle(client, model_url, requests):
         lambda row: row["execution_outcome"],
     )
     assert scheduled["execution_outcome"] == "succeeded", scheduled
-    assert scheduled["completion_run_id"] != delivery["run_id"]
+    assert scheduled["completion_run_id"] != main["id"]
     observed = read(path)["project"]
     assert observed["environment"] == "ready"
     assert observed["automation_account"] == "active"
@@ -310,7 +322,7 @@ def exercise_lifecycle(client, model_url, requests):
         lambda items: items and items[0]["activity"]["last_status"] in {"completed", "failed"},
     )
     (worker,) = workers
-    assert worker["thread_id"] != delivery["thread_id"]
+    assert worker["thread_id"] != main["thread_id"]
     assert worker["activity"]["last_status"] == "completed"
     worker_run = read(f"/runs/{worker['activity']['last_run_id']}")
     assert worker_run["agent_revision_id"] == claw["agent_revision_id"]
@@ -321,3 +333,110 @@ def exercise_lifecycle(client, model_url, requests):
     assert read(f"{path}/usage")[0]["usage"]["requests"] > 0
     assert any("ask_user_question" in tools for tools in requests if "claw_assign" in tools)
     assert all("ask_user_question" not in tools for tools in requests if "claw_report" in tools)
+
+    replacement = post(
+        "/environments",
+        {**target, "name": "Replacement device"},
+        headers={"Authorization": f"Bearer {key['secret']}"},
+    )
+    update_url = f"/api/v1{path}/project"
+    fresh_body = {
+        "name": "Operator schedule",
+        "prompt": "Later work",
+        "rule": {"type": "once", "run_at": (datetime.now(UTC) + timedelta(minutes=15)).isoformat()},
+    }
+    fresh_headers = {"Idempotency-Key": uuid4().hex}
+    fresh_path = f"{path}/fresh-schedules"
+    operator_schedule = post(fresh_path, fresh_body, headers=fresh_headers)
+    assert post(fresh_path, fresh_body, headers=fresh_headers)["id"] == operator_schedule["id"]
+    post(fresh_path, {**fresh_body, "prompt": "Different work"}, 409, headers=fresh_headers)
+    service_headers = {"Authorization": f"Bearer {key['secret']}"}
+    operator_path = f"/api/v1/schedules/{operator_schedule['id']}"
+    latest = client.get(operator_path)
+    renamed = client.patch(
+        operator_path,
+        json={"labels": {}},
+        headers={**service_headers, "If-Match": latest.headers["ETag"]},
+    )
+    assert renamed.status_code == 200, renamed.text
+    refused = client.patch(update_url, json={"environment_id": replacement["id"]})
+    assert refused.status_code == 409, refused.text
+    latest = client.get(f"/api/v1{schedule_path}")
+    archived = client.delete(
+        f"/api/v1{schedule_path}",
+        headers={"Authorization": f"Bearer {key['secret']}", "If-Match": latest.headers["ETag"]},
+    )
+    assert archived.status_code == 204, archived.text
+    blocked_by_operator_schedule = client.patch(
+        update_url, json={"environment_id": replacement["id"]}
+    )
+    assert blocked_by_operator_schedule.status_code == 409, blocked_by_operator_schedule.text
+    archived = client.delete(
+        operator_path, headers={**service_headers, "If-Match": renamed.headers["ETag"]}
+    )
+    assert archived.status_code == 204, archived.text
+    updated = client.patch(update_url, json={"environment_id": replacement["id"]})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["main_thread_id"] == main["thread_id"]
+    assert read(path)["project"]["environment_name"] == replacement["name"]
+    for thread_id, run_id in (
+        (main["thread_id"], main["id"]),
+        (worker["thread_id"], worker_run["id"]),
+    ):
+        mounts = read(f"/threads/{thread_id}/environments")["items"]
+        assert (
+            next(m["environment_id"] for m in mounts if m["name"] == "workspace")
+            == replacement["id"]
+        )
+        old = read(f"/runs/{run_id}")
+        assert (
+            next(m["environment_id"] for m in old["environment_mounts"] if m["name"] == "workspace")
+            == shared["id"]
+        )
+
+    provider = post(
+        "/browser-providers",
+        {
+            "name": "Reserved test Browser provider",
+            "type": "browserbase",
+            "config": {"project_id": "test-project"},
+            "credential": {"api_key": "fixture-not-a-secret"},
+        },
+    )
+    browser = post("/browsers", {"name": "Project Browser", "provider_id": provider["id"]})
+    assert browser["status"] == "reserved"
+    attached = client.patch(update_url, json={"browser_id": browser["id"]})
+    assert attached.status_code == 200, attached.text
+    assert read(path)["project"]["browser_name"] == browser["name"]
+    assert post(fresh_path, fresh_body, headers=fresh_headers)["id"] == operator_schedule["id"]
+    post(fresh_path, fresh_body, 409, headers={"Idempotency-Key": uuid4().hex})
+    for thread_id in (main["thread_id"], worker["thread_id"]):
+        assert read(f"/threads/{thread_id}/browser")["browser_id"] == browser["id"]
+
+    followup = post(
+        f"{path}/input",
+        {"content": "Run with the replacement"},
+        headers={"Idempotency-Key": uuid4().hex},
+    )
+    next_delivery = eventually(
+        lambda: read(f"{path}/deliveries/{followup['delivery_id']}"),
+        lambda item: item["run_id"] is not None,
+    )
+    next_run = eventually(
+        lambda: read(f"/runs/{next_delivery['run_id']}"), lambda run: run["sealed_at"]
+    )
+    assert next_run["status"] == "completed", next_run.get("failure")
+    assert next_run["id"] != main["id"] and next_run["thread_id"] == main["thread_id"]
+    assert any(
+        mount["name"] == "workspace" and mount["environment_id"] == replacement["id"]
+        for mount in next_run["environment_mounts"]
+    )
+
+    assert next_run["browser_binding"]["browser_id"] == browser["id"]
+    detached = client.patch(update_url, json={"browser_id": None})
+    assert detached.status_code == 200, detached.text
+    assert read(path)["project"]["browser"] is None
+    for thread_id in (main["thread_id"], worker["thread_id"]):
+        assert read(f"/threads/{thread_id}/browser") is None
+    assert read(f"/runs/{main['id']}")["browser_binding"] is None
+    assert read(f"/runs/{next_run['id']}")["browser_binding"]["browser_id"] == browser["id"]

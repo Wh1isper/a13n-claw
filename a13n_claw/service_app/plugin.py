@@ -359,8 +359,16 @@ class ClawCapability(AbstractCapability[AgentContext]):
                             session, bound.claw.workspace_id, bound.claw.id
                         )
                         await workers.fence(session, runtime, claw, bound)
-                        claw.cli_observation = states
-                        claw.cli_checked_at = checked_at
+                        if claw.environment_id == next(
+                            (
+                                mount.get("environment_id")
+                                for mount in bound.run.environment_mounts
+                                if mount.get("name") == "workspace"
+                            ),
+                            None,
+                        ):
+                            claw.cli_observation = states
+                            claw.cli_checked_at = checked_at
                 except (ServiceError, inbox.ClawNotFound):
                     return request_context
             if ctx.run_step == 1 and bound.claw.worker_models:

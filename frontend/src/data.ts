@@ -12,7 +12,7 @@ export interface Claw {
   name: string;
   workspace_id: string;
   agent_id: string;
-  environment_id: string;
+  environment_id: string | null;
   browser_id: string | null;
   service_account_id: string;
   memory_space_id: string;
@@ -46,6 +46,8 @@ export interface Overview {
   main: Activity | null;
   project: {
     environment: string;
+    environment_name: string | null;
+    browser_name: string | null;
     browser: string | null;
     automation_account: string;
     cli: { github: string; lark: string } | null;

@@ -29,6 +29,7 @@ import {
   type Connector,
   type FreshSchedule,
   type Occurrence,
+  type Overview,
   type Schedule,
   type ResourceKind,
 } from "./data";
@@ -158,6 +159,181 @@ function ResourcePicker({
   );
 }
 
+function ProjectResources({ claw }: { claw: Claw }) {
+  const overview = useRead<Overview>(clawPath(claw.id), 10000);
+  const { can } = useAccess();
+  const save = useWrite<Claw>();
+  const [editing, setEditing] = React.useState<
+    "environment" | "browser" | null
+  >(null);
+  const [template, setTemplate] = React.useState(false);
+  const [selection, setSelection] = React.useState("");
+  const project = overview.data?.project;
+  const saved = overview.data?.claw ?? claw;
+  const current =
+    editing === "environment" ? saved.environment_id : saved.browser_id;
+  const begin = (kind: "environment" | "browser") => {
+    setEditing(kind);
+    setTemplate(false);
+    setSelection("");
+    save.reset();
+  };
+  return (
+    <div className={styles.form}>
+      <FormSection
+        title="Project"
+        description="Connect the workspace resources this Claw uses across Runs."
+      >
+        {!saved.environment_id && (
+          <p className={styles.muted}>
+            Add an Environment to start Main. Incoming work stays in the Inbox.
+          </p>
+        )}
+        <div className={styles.references}>
+          <ResourceLink path={`agents/${saved.agent_id}`}>Agent</ResourceLink>
+          <ResourceLink path={`memory-spaces/${saved.memory_space_id}`}>
+            Memory Space
+          </ResourceLink>
+        </div>
+        {(["environment", "browser"] as const).map((kind) => {
+          const environment = kind === "environment";
+          const title = environment ? "Environment" : "Browser";
+          const linked = environment ? saved.environment_id : saved.browser_id;
+          const name = environment
+            ? project?.environment_name
+            : project?.browser_name;
+          const state = environment ? project?.environment : project?.browser;
+          return (
+            <div className={styles.actions} key={kind}>
+              <strong>{title}</strong>
+              <Status
+                state={state ?? (linked ? "configured" : "not configured")}
+              />
+              {linked && <span>{name ?? linked}</span>}
+              <ResourceLink
+                path={environment ? "environments/instances" : "browsers"}
+              >
+                {environment ? "Environments" : "Browsers"}
+              </ResourceLink>
+              {can("admin") && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => begin(kind)}
+                >
+                  {linked ? "Change" : "Add"} {title.toLowerCase()}
+                </Button>
+              )}
+            </div>
+          );
+        })}
+        {overview.isError && (
+          <p className={styles.error} role="alert">
+            {overview.error.message}
+          </p>
+        )}
+        {editing && (
+          <form
+            className={styles.form}
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (editing === "environment" && !selection) return;
+              const key =
+                editing === "browser"
+                  ? "browser_id"
+                  : template
+                    ? "environment_template_id"
+                    : "environment_id";
+              save.mutate(
+                {
+                  path: `${clawPath(claw.id)}/project`,
+                  method: "PATCH",
+                  body: { [key]: selection || null },
+                },
+                { onSuccess: () => setEditing(null) },
+              );
+            }}
+          >
+            {editing === "environment" && (
+              <FormField label="Environment source">
+                <select
+                  className={styles.select}
+                  value={template ? "template" : "existing"}
+                  onChange={(event) => {
+                    setTemplate(event.currentTarget.value === "template");
+                    setSelection("");
+                  }}
+                >
+                  <option value="existing">Existing Environment</option>
+                  <option value="template">Create from template</option>
+                </select>
+              </FormField>
+            )}
+            <ResourcePicker
+              name="resource"
+              label={
+                editing === "browser"
+                  ? "Browser"
+                  : template
+                    ? "Environment template"
+                    : "Environment"
+              }
+              kind={
+                editing === "browser"
+                  ? "browser"
+                  : template
+                    ? "template"
+                    : "environment"
+              }
+              account={saved.service_account_id}
+              value={selection}
+              onChange={setSelection}
+              optional={editing === "browser" && !!current}
+            />
+            {editing === "browser" && (
+              <ResourceLink path="browsers">
+                Create a Browser in Console
+              </ResourceLink>
+            )}
+            {current && (
+              <p className={styles.muted}>
+                This changes future Runs. Existing files and browser profiles
+                stay with their original resources.
+              </p>
+            )}
+            {save.isError && (
+              <p role="alert" className={styles.error}>
+                {save.error.message}
+              </p>
+            )}
+            <div className={styles.actions}>
+              <Button
+                type="submit"
+                disabled={
+                  save.isPending ||
+                  (!selection && (editing === "environment" || !current)) ||
+                  selection === current
+                }
+              >
+                {!selection && editing === "browser"
+                  ? "Disconnect Browser"
+                  : "Save binding"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setEditing(null)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        )}
+      </FormSection>
+    </div>
+  );
+}
+
 function ClawEditor({
   claw,
   action,
@@ -193,6 +369,7 @@ function ClawEditor({
       description="Configure the Project and Inbox behavior."
       titleAction={action}
     >
+      {claw && <ProjectResources claw={claw} />}
       <form
         className={styles.form}
         onSubmit={(event) => {
@@ -215,8 +392,12 @@ function ClawEditor({
                 agent_id: field(form, "agent"),
                 service_account_id: field(form, "account"),
                 browser_id: field(form, "browser") || null,
-                [template ? "environment_template_id" : "environment_id"]:
-                  field(form, "environment"),
+                ...(environment
+                  ? {
+                      [template ? "environment_template_id" : "environment_id"]:
+                        environment,
+                    }
+                  : {}),
               };
           save.mutate(
             {
@@ -233,77 +414,61 @@ function ClawEditor({
             <InputValue name="name" value={claw?.name} maxLength={200} />
           </FormField>
         </FormSection>
-        <FormSection
-          title="Project"
-          description="Use resources from this workspace."
-        >
-          {claw ? (
-            <div className={styles.references}>
-              <ResourceLink path={`agents/${claw.agent_id}`}>
-                Agent
-              </ResourceLink>
-              <ResourceLink path={"environments/instances"}>
-                Environment
-              </ResourceLink>
-              <ResourceLink path={`memory-spaces/${claw.memory_space_id}`}>
-                Memory Space
-              </ResourceLink>
-              {claw.browser_id && (
-                <ResourceLink path={"browsers"}>Browser</ResourceLink>
-              )}
-            </div>
-          ) : (
-            <>
-              <ResourcePicker
-                label="Agent"
-                kind="agent"
-                name="agent"
-                value={agent}
-                onChange={setAgent}
-              />
-              <ResourcePicker
-                label="Workspace service account"
-                kind="account"
-                name="account"
-                value={account}
-                onChange={(value) => {
-                  setAccount(value);
-                  if (!template) setEnvironment("");
+        {!claw && (
+          <FormSection
+            title="Project"
+            description="Use resources from this workspace."
+          >
+            <ResourcePicker
+              label="Agent"
+              kind="agent"
+              name="agent"
+              value={agent}
+              onChange={setAgent}
+            />
+            <ResourcePicker
+              label="Workspace service account"
+              kind="account"
+              name="account"
+              value={account}
+              onChange={(value) => {
+                setAccount(value);
+                if (!template) setEnvironment("");
+              }}
+            />
+            <FormField label="Environment source">
+              <select
+                className={styles.select}
+                value={template ? "template" : "existing"}
+                onChange={(event) => {
+                  setTemplate(event.currentTarget.value === "template");
+                  setEnvironment("");
                 }}
-              />
-              <FormField label="Environment source">
-                <select
-                  className={styles.select}
-                  value={template ? "template" : "existing"}
-                  onChange={(event) => {
-                    setTemplate(event.currentTarget.value === "template");
-                    setEnvironment("");
-                  }}
-                >
-                  <option value="existing">Existing Environment</option>
-                  <option value="template">Create from template</option>
-                </select>
-              </FormField>
-              <ResourcePicker
-                label={template ? "Environment template" : "Environment"}
-                kind={template ? "template" : "environment"}
-                account={template ? undefined : account}
-                disabled={!template && !account}
-                name="environment"
-                value={environment}
-                onChange={setEnvironment}
-              />
-              <ResourcePicker
-                label="Browser (optional)"
-                kind="browser"
-                name="browser"
-                value={browser}
-                onChange={setBrowser}
-                optional
-              />
-            </>
-          )}
-        </FormSection>
+              >
+                <option value="existing">Existing Environment</option>
+                <option value="template">Create from template</option>
+              </select>
+            </FormField>
+            <ResourcePicker
+              label={template ? "Environment template" : "Environment"}
+              kind={template ? "template" : "environment"}
+              account={template ? undefined : account}
+              disabled={!template && !account}
+              name="environment"
+              value={environment}
+              onChange={setEnvironment}
+              optional
+            />
+            <ResourcePicker
+              label="Browser (optional)"
+              kind="browser"
+              name="browser"
+              value={browser}
+              onChange={setBrowser}
+              optional
+            />
+          </FormSection>
+        )}
         <FormSection title="Inbox and heartbeat">
           <FormField label="Heartbeat interval (seconds)">
             <Input
@@ -988,7 +1153,10 @@ function ScheduleEditor({ claw, close }: { claw: Claw; close: () => void }) {
           >
             <select className={styles.select} name="target">
               <option value="main">Main Inbox</option>
-              <option value="fresh" disabled={!!claw.browser_id}>
+              <option
+                value="fresh"
+                disabled={!!claw.browser_id || !claw.environment_id}
+              >
                 Fresh Thread
               </option>
             </select>

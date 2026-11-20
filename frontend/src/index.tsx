@@ -243,6 +243,21 @@ function DashboardBody({
       }
     >
       <Sections>
+        {!saved.environment_id && (
+          <Section
+            title="Connect a Project Environment"
+            description="The Inbox can receive work now. Main starts once the Project has an Environment it can use."
+            actions={
+              can("admin") ? (
+                <ClawLink id={saved.id} page="settings">
+                  Set up Project
+                </ClawLink>
+              ) : undefined
+            }
+          >
+            {null}
+          </Section>
+        )}
         <div className={styles.summary}>
           <section>
             <span className={styles.meta}>Unread Inbox</span>

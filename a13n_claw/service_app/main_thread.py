@@ -23,7 +23,7 @@ from a13n_service.runs import submit
 from a13n_service.runs.accept import accept, eligible, paused
 from a13n_service.runs.browsers import lifecycle as browser_lifecycle
 from a13n_service.runs.browsers.schemas import BrowserBinding
-from a13n_service.runs.browsers.tables import ThreadBrowserRow
+from a13n_service.runs.browsers.tables import BrowserBlockedRow, ThreadBrowserRow
 from a13n_service.runs.environments.schemas import MountCreate
 from a13n_service.runs.inbox import pending_entries
 from a13n_service.runs.schemas import (
@@ -86,6 +86,17 @@ async def check_project(
         raise not_found("agent", agent_id)
     if agent.archived_at is not None or agent.default_revision_id is None:
         raise conflict("agent", agent_id, "agent_unavailable")
+    await check_resources(session, scope, actor, environment_id, browser_id)
+    return agent
+
+
+async def check_resources(
+    session: AsyncSession,
+    scope: WorkspaceScope,
+    actor: Principal,
+    environment_id: str | None,
+    browser_id: str | None,
+) -> None:
     if environment_id is not None:
         environment = await session.scalar(
             select(EnvironmentRow).where(
@@ -100,7 +111,6 @@ async def check_project(
         browser = await browser_lifecycle.find(session, scope.workspace_id, browser_id)
         browser_lifecycle.usable(browser)
         await browser_lifecycle.authorize_use(session, actor, browser, scope)
-    return agent
 
 
 async def prepare_revision(
@@ -151,6 +161,8 @@ def project_session(claw: Claw, title: str) -> SessionCreate:
 
 
 def project_mounts(claw: Claw) -> tuple[MountCreate, ...]:
+    if claw.environment_id is None:
+        raise conflict("claw", claw.id, "project_environment_required")
     return (MountCreate(name="workspace", environment_id=claw.environment_id),)
 
 
@@ -162,17 +174,39 @@ async def bind_project_browser(
     scope: WorkspaceScope,
     authority: ExecutionAuthority,
 ) -> None:
-    if claw.browser_id is None:
-        return
-    browser = await browser_lifecycle.find(session, scope.workspace_id, claw.browser_id, lock=True)
-    browser_lifecycle.usable(browser)
-    await browser_lifecycle.authorize_use(session, actor, browser, scope, authority=authority)
-    binding = BrowserBinding(browser_id=browser.id, tab_access="global")
-    session.add(
-        ThreadBrowserRow(
-            thread_id=thread.id, workspace_id=scope.workspace_id, **binding.model_dump()
+    previous = await session.get(ThreadBrowserRow, thread.id)
+    if claw.browser_id is not None:
+        browser = await browser_lifecycle.find(
+            session, scope.workspace_id, claw.browser_id, lock=True
         )
-    )
+        browser_lifecycle.usable(browser)
+        await browser_lifecycle.authorize_use(session, actor, browser, scope, authority=authority)
+        binding = BrowserBinding(browser_id=browser.id, tab_access="global")
+        if (
+            previous is not None
+            and previous.browser_id == binding.browser_id
+            and previous.tab_access == binding.tab_access
+        ):
+            return
+    else:
+        binding = None
+        if previous is None:
+            return
+    if previous is not None:
+        await session.delete(previous)
+        await session.flush()
+    if binding is not None:
+        session.add(
+            ThreadBrowserRow(
+                thread_id=thread.id, workspace_id=scope.workspace_id, **binding.model_dump()
+            )
+        )
+    if previous is not None:
+        await session.execute(
+            update(BrowserBlockedRow)
+            .where(BrowserBlockedRow.thread_id == thread.id)
+            .values(suppressed=True)
+        )
     await session.flush()
 
 
@@ -232,6 +266,16 @@ async def notify(
 async def _wake(
     session: AsyncSession, runtime: Runtime, claw: Claw, delivery_id: str | None
 ) -> None:
+    if claw.environment_id is None:
+        return
+    state = await session.scalar(
+        select(EnvironmentRow.status).where(
+            EnvironmentRow.workspace_id == claw.workspace_id,
+            EnvironmentRow.id == claw.environment_id,
+        )
+    )
+    if state not in {"reserved", "creating", "ready", "stopped", "starting"}:
+        return
     unread = await session.scalar(
         select(InboxItem.id)
         .where(InboxItem.claw_id == claw.id, InboxItem.read_at.is_(None))

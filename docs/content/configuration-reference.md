@@ -3,14 +3,14 @@ title: Configuration field reference
 description: Native resource references and Claw's Inbox settings.
 ---
 
-| Setting                   | Purpose                                                               |
-| ------------------------- | --------------------------------------------------------------------- |
-| Agent                     | Service Agent and default revision used to run Main and delegate work |
-| Environment               | An existing persistent instance or a template for a managed instance  |
-| Browser                   | Optional native Browser for Main and managed workers                  |
-| Workspace service account | Principal for Claw-owned execution                                    |
-| Heartbeat interval        | Wait before waking idle Main; zero disables it                        |
-| Unread limit              | Maximum outstanding Inbox capacity                                    |
-| Read history limit        | Maximum number of read items retained, also bounded by age            |
+| Setting                   | Purpose                                                                |
+| ------------------------- | ---------------------------------------------------------------------- |
+| Agent                     | Service Agent and default revision used to run Main and delegate work  |
+| Environment               | A persistent Service instance; select one or create it from a template |
+| Browser                   | Optional native Browser for Main and managed workers                   |
+| Workspace service account | Principal for Claw-owned execution                                     |
+| Heartbeat interval        | Wait before waking idle Main; zero disables it                         |
+| Unread limit              | Maximum outstanding Inbox capacity                                     |
+| Read history limit        | Maximum number of read items retained, also bounded by age             |
 
 Claw records the Service Memory Space created for each Project. Platform fields are scoped by connector: GitHub has an integration principal, repositories and senders; Lark has an App ID, bot ID, region, allowed senders and optional group restrictions. See [Console](./console.md#connectors) and [GitHub](./github.md).

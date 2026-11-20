@@ -49,7 +49,7 @@ class Claw(Base):
     name: Mapped[str] = mapped_column(String(200))
     agent_id: Mapped[str] = mapped_column(String(64))
     agent_revision_id: Mapped[str | None] = mapped_column(String(64))
-    environment_id: Mapped[str] = mapped_column(String(64))
+    environment_id: Mapped[str | None] = mapped_column(String(64))
     memory_space_id: Mapped[str] = mapped_column(String(64))
     browser_id: Mapped[str | None] = mapped_column(String(64))
     service_account_id: Mapped[str] = mapped_column(String(64))
