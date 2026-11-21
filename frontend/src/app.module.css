@@ -131,3 +131,212 @@
     overflow-wrap: anywhere;
   }
 }
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--a13n-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.status[data-live] .dot {
+  background: var(--a13n-success);
+}
+.status[data-variant="warning"] {
+  color: var(--a13n-warning);
+  background: color-mix(in srgb, var(--a13n-warning) 11%, transparent);
+}
+.status[data-variant="error"] {
+  color: var(--a13n-danger);
+  background: color-mix(in srgb, var(--a13n-danger) 11%, transparent);
+}
+.link {
+  gap: 3px;
+  align-items: center;
+  text-decoration: underline;
+  text-decoration-color: var(--a13n-border);
+  text-underline-offset: 3px;
+}
+.link svg {
+  flex: none;
+}
+.link:hover {
+  color: var(--a13n-signal);
+  text-decoration-color: currentColor;
+}
+.settingsPage {
+  display: grid;
+  gap: 24px;
+}
+.settingsPage [hidden] {
+  display: none;
+}
+.settingsBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.key {
+  color: var(--a13n-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.detailSections {
+  display: grid;
+  gap: 32px;
+  min-width: 0;
+}
+.preview {
+  max-inline-size: none;
+  min-width: 0;
+}
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.metrics section {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 18px 20px;
+  border-radius: var(--a13n-radius-group);
+  background: var(--a13n-surface);
+}
+.metrics strong {
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.share {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 100px;
+  font-variant-numeric: tabular-nums;
+}
+.shareTrack {
+  width: 80px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--a13n-surface);
+  overflow: hidden;
+}
+.shareTrack > span {
+  display: block;
+  height: 100%;
+  background: var(--a13n-signal);
+}
+.attention {
+  justify-content: start;
+  border-left: 3px solid var(--a13n-warning);
+  background: color-mix(in srgb, var(--a13n-warning) 8%, var(--a13n-canvas));
+}
+.attention[data-severity="error"] {
+  border-left-color: var(--a13n-danger);
+  background: color-mix(in srgb, var(--a13n-danger) 8%, var(--a13n-canvas));
+}
+.attention > div {
+  flex: 1;
+  min-width: 0;
+}
+@media (max-width: 600px) {
+  .metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .metrics section {
+    padding: 14px 16px;
+  }
+  .metrics strong {
+    font-size: 22px;
+  }
+}
+.endpoint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.endpoint input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--a13n-font-mono, monospace);
+}
+.endpoint button {
+  flex: none;
+}
+.headerActions {
+  width: max-content;
+  max-width: 100%;
+}
+@media (min-width: 380px) {
+  .headerActions {
+    flex-wrap: nowrap;
+  }
+}
+@media (max-width: 600px) {
+  .resourceRow {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+  }
+  .resourceRow > :last-child {
+    grid-column: 2 / -1;
+  }
+}
+.subtitle {
+  display: block;
+  color: var(--a13n-secondary);
+  font-size: 12px;
+  margin-top: 3px;
+}
+.attentionList {
+  display: grid;
+  gap: 10px;
+}
+.attentionList:empty {
+  display: none;
+}
+.attention[data-severity="info"] {
+  border-left-color: var(--a13n-signal);
+  background: color-mix(in srgb, var(--a13n-signal) 8%, var(--a13n-canvas));
+}
+.status[data-variant="warning"] {
+  color: color-mix(in srgb, var(--a13n-warning) 55%, var(--a13n-text));
+}
+.status[data-variant="warning"] .dot {
+  background: var(--a13n-warning);
+}
+.dangerActions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.jsonPayload {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+@media (max-width: 600px) {
+  .attention {
+    display: grid;
+    grid-template-columns: 15px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+  }
+  .attention > svg {
+    margin-top: 3px;
+  }
+  .attention > :last-child:not(div) {
+    grid-column: 2;
+    justify-self: start;
+  }
+}

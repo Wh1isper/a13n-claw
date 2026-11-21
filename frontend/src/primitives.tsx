@@ -2,6 +2,8 @@ import {
   Badge,
   Button,
   ChoiceField,
+  SearchPicker,
+  useInfiniteQuery,
   Pagination,
   Empty,
   ErrorPage,
@@ -15,6 +17,7 @@ import {
 } from "@a13n/console";
 import {
   appPath,
+  json,
   clawPath,
   threadPath,
   url,
@@ -26,6 +29,7 @@ import {
 } from "./data";
 import { useCopy } from "./copy";
 import styles from "./app.module.css";
+import { Icon } from "./ui/icons";
 
 export function Status({ state }: { state: string }) {
   const { copy } = useCopy();
@@ -74,6 +78,10 @@ export function Status({ state }: { state: string }) {
     off: "关闭",
     "reauthorize needed": "需要重新授权",
     archived: "已归档",
+    outdated: "有可用更新",
+    updating: "更新中",
+    rejected: "已拒绝",
+    revoked: "已撤销",
   };
   const label = copy(
     state === "full" ? "Inbox full" : state.replaceAll("_", " "),
@@ -106,11 +114,17 @@ export function Status({ state }: { state: string }) {
       "late",
       "overlap",
       "unknown",
-      "missing",
       "reauthorize needed",
+      "outdated",
+      "updating",
+      "paused",
+      "stopped",
     ],
     error: [
       "failed",
+      "missing",
+      "rejected",
+      "revoked",
       "full",
       "dropped",
       "cancelled",
@@ -119,24 +133,21 @@ export function Status({ state }: { state: string }) {
       "lost",
       "conflict",
     ],
-    secondary: [
-      "idle",
-      "paused",
-      "disabled",
-      "stopped",
-      "not started",
-      "not configured",
-    ],
+    secondary: ["idle", "disabled", "not started", "not configured"],
   } as const;
   const variant =
     (Object.keys(variants) as (keyof typeof variants)[]).find((key) =>
       (variants[key] as readonly string[]).includes(state),
     ) ?? "secondary";
   return (
-    <Badge variant={variant}>
+    <span
+      className={styles.status}
+      data-variant={variant}
+      data-live={["active", "enabled", "running"].includes(state) || undefined}
+    >
       <span className={styles.dot} />
       {label}
-    </Badge>
+    </span>
   );
 }
 export function DateTime({ value }: { value: string | null }) {
@@ -165,6 +176,7 @@ export function ThreadLink({
       to={threadPath(workspaceId, session, thread, run)}
     >
       {children}
+      <Icon name="external" />
     </Link>
   );
 }
@@ -186,6 +198,7 @@ export function ClawLink({
       to={url(appPath(workspaceId!, page), { claw: id, ...query })}
     >
       {children}
+      <Icon name="next" />
     </Link>
   );
 }
@@ -200,6 +213,7 @@ export function ResourceLink({
   return (
     <Link className={styles.link} to={`/workspace/${workspaceId}/${path}`}>
       {children}
+      <Icon name="external" />
     </Link>
   );
 }
@@ -213,17 +227,26 @@ export function ClawScope({
   const { params, select } = useSelection();
   const { copy } = useCopy();
   const { can } = useAccess();
-  const [pages, setPages] = React.useState<string[]>([]);
-  const claws = useRead<Collection<Claw>>(
-    url("/claws", { limit: "50", cursor: pages.at(-1) }),
-  );
-  const { workspaceId } = useApp();
+  const app = useApp();
+  const claws = useInfiniteQuery({
+    queryKey: app.queryKey("/claws", "switcher"),
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam, signal }) =>
+      json<Collection<Claw>>(
+        await app.request(url("/claws", { limit: "50", cursor: pageParam }), {
+          signal,
+        }),
+      ),
+    getNextPageParam: (page) => page.next_cursor,
+  });
+  const { workspaceId } = app;
+  const rows = claws.data?.pages.flatMap((page) => page.items) ?? [];
   const storageKey = `a13n.claw.selection.${workspaceId ?? ""}`;
   const explicit = params.get("claw");
   const remembered = window.sessionStorage.getItem(storageKey);
   const wanted = explicit ?? remembered;
 
-  const listed = claws.data?.items.find(({ id }) => id === wanted);
+  const listed = rows.find(({ id }) => id === wanted);
   const chosen = useRead<Overview>(wanted && !listed ? clawPath(wanted) : null);
   const pick = (claw: string | null) => {
     if (claw) window.sessionStorage.setItem(storageKey, claw);
@@ -239,7 +262,7 @@ export function ClawScope({
   if (claws.isPending || (wanted && !listed && chosen.isPending))
     return <Loading page />;
   if (claws.isError) return <ErrorPage error={claws.error} />;
-  const claw = selected ?? (explicit ? undefined : claws.data.items[0]);
+  const claw = selected ?? (explicit ? undefined : rows[0]);
   if (!claw)
     return wanted ? (
       <Empty
@@ -272,27 +295,39 @@ export function ClawScope({
         />
       ))
     );
-  const options =
-    listed || !wanted ? claws.data.items : [claw, ...claws.data.items];
+  const options = listed || !wanted ? rows : [claw, ...rows];
   return children(
     claw,
-    <div className={styles.actions}>
-      <ChoiceField
+    options.length === 1 && !claws.hasNextPage ? null : (
+      <SearchPicker
         label="Claw"
-        hideLabel
+        placeholder={copy("Choose a Claw", "选择 Claw")}
+        emptyMessage={copy("No matching Claws", "没有匹配的 Claw")}
         value={claw.id}
         onValueChange={pick}
-        options={options.map((item) => ({ value: item.id, label: item.name }))}
+        groups={[
+          {
+            label: "Claw",
+            options: options.map((item) => ({
+              value: item.id,
+              label: item.name,
+            })),
+          },
+        ]}
+        footer={
+          claws.hasNextPage && (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={claws.isFetchingNextPage}
+              onClick={() => void claws.fetchNextPage()}
+            >
+              {copy("Load more", "加载更多")}
+            </Button>
+          )
+        }
       />
-      <Pager
-        nextCursor={claws.data.next_cursor}
-        pages={pages}
-        setPages={(next) => {
-          if (!wanted) pick(claw.id);
-          setPages(next);
-        }}
-      />
-    </div>,
+    ),
   );
 }
 export function Pager({
