@@ -39,14 +39,18 @@ Publication uses the workflow's automatic `GITHUB_TOKEN` with `packages: write`;
 4. Obtain maintainer confirmation to publish, then create and push the tag:
 
 ```bash
-git tag release/a13n-claw-v0.0.1
-git push origin release/a13n-claw-v0.0.1
+git tag release/a13n-claw-vX.Y.Z
+git push origin release/a13n-claw-vX.Y.Z
 ```
 
-Do not commit a version bump. The workflow injects `0.0.1`, builds the console and packages its assets in both wheel and sdist through `make build`, publishes PyPI, builds GHCR from that wheel for Linux AMD64 and ARM64, and creates a GitHub Release with generated notes and Python artifacts. A stable image publishes exact version and `latest`; an RC publishes only its exact `X.Y.Z-rc.N` tag.
+Do not commit a version bump. Replace `X.Y.Z` with the new release version. The workflow builds the Console, injects that version, builds and verifies the wheel and sdist, publishes them to PyPI, and builds the GHCR image for Linux AMD64 and ARM64 from the wheel and locked runtime dependencies. It then creates a GitHub Release with generated notes and Python artifacts. A stable image publishes exact version and `latest`; an RC publishes only its exact `X.Y.Z-rc.N` tag.
 
 ## Verify and recover
 
-Successful completion of **Release** is the all-channel completion signal. A visible PyPI version alone does not prove image or GitHub Release success. Verify `uvx --from a13n-claw==0.0.1 a13n-claw --version`, anonymous image pull after public visibility is set, and the Worker URL.
+Successful completion of **Release** is the all-channel completion signal. A visible PyPI version alone does not prove image or GitHub Release success. Verify the published package and its App entry point, an anonymous image pull after public visibility is set, and the Worker URL. For example, replace `X.Y.Z` with the released version and run:
+
+```bash
+uv run --no-project --python 3.13 --with a13n-claw==X.Y.Z python -c 'from importlib.metadata import version; from a13n_claw.service_app.app import definition; print(version("a13n-claw"), definition().app_id)'
+```
 
 Use **Re-run failed jobs** after diagnosing a failure; do not move the tag. `uv publish --check-url` tolerates an already-published version. Existing GitHub Releases are left unchanged. Never re-publish changed source under the same version. If a release must change, use a new version.

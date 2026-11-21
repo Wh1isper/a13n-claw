@@ -2,7 +2,9 @@ UV ?= uv
 PNPM ?= pnpm
 TEST_ARGS ?=
 
-.PHONY: install lint format typecheck deps-check test frontend-install console-sdk console-check console-build console-dev db-check build artifact-check image-check workflow-check docs-check docs-serve docs-build check check-all
+.PHONY: install lint format typecheck deps-check test frontend-install console-sdk console-check console-build console-dev db-check build artifact-check image-requirements image-check workflow-check docs-check docs-serve docs-build check check-all
+
+IMAGE_TAG ?= a13n-claw:check
 
 install: frontend-install ## Install the development toolchain and Git hooks
 	$(UV) sync --locked
@@ -51,9 +53,13 @@ build: console-build
 artifact-check:
 	$(UV) run --locked python scripts/check_artifacts.py
 
-image-check: build
-	docker build -f deploy/docker/Dockerfile -t a13n-claw:check .
-	docker run --rm --entrypoint /app/.venv/bin/python a13n-claw:check -c 'import os; from a13n_claw.service_app.app import definition; assert os.geteuid() != 0; assert definition().app_id == "a13n.claw"'
+image-requirements:
+	mkdir -p build
+	$(UV) export --locked --no-dev --no-emit-project --quiet --output-file build/image-requirements.txt
+
+image-check: build image-requirements
+	docker build -f deploy/docker/Dockerfile -t $(IMAGE_TAG) .
+	docker run --rm --entrypoint /app/.venv/bin/python $(IMAGE_TAG) -c 'import os; from a13n_claw.service_app.app import definition; assert os.geteuid() != 0; assert definition().app_id == "a13n.claw"'
 
 workflow-check:
 	docker run --rm -v "$(CURDIR):/repo" -w /repo rhysd/actionlint:1.7.12

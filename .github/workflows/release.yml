@@ -56,6 +56,8 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "python-version=${version/-rc./rc}" >> "$GITHUB_OUTPUT"
       - run: uv build --clear
+      - name: Verify the versioned wheel and source distribution
+        run: uv run --no-project python scripts/check_artifacts.py
       - uses: actions/upload-artifact@v7
         with:
           name: python-dist
@@ -89,6 +91,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - run: make image-requirements
       - uses: actions/download-artifact@v8
         with:
           name: python-dist

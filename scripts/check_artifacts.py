@@ -15,6 +15,7 @@ from importlib.resources import files
 import sys
 from a13n_service.settings import load_settings
 assert version('a13n-service') == '0.4.1'
+assert version('a13n-claw') == sys.argv[1]
 app = next(item for item in entry_points(group='a13n_service.app_plugins')
            if item.name == 'a13n.claw').load()()
 assert app.app_id == 'a13n.claw' and app.database and app.frontend and app.routers
@@ -73,6 +74,7 @@ def main() -> None:
         root = Path(temp)
         wheel = only(Path("dist"), "*.whl")
         source = only(Path("dist"), "*.tar.gz")
+        expected_version = loads(Path("pyproject.toml").read_text())["project"]["version"]
         output = root / "rebuilt"
         check("uv", "build", "--wheel", "--out-dir", str(output), str(source))
         for index, artifact in enumerate((wheel, only(output, "*.whl"))):
@@ -84,7 +86,7 @@ def main() -> None:
                 key: value for key, value in os.environ.items() if not key.startswith("A13N_")
             }
             runtime_env["A13N_PLUGINS__BOOTSTRAP_ENABLED_APPS"] = '["a13n.claw"]'
-            check(str(python), "-I", "-c", SMOKE, cwd=root, env=runtime_env)
+            check(str(python), "-I", "-c", SMOKE, expected_version, cwd=root, env=runtime_env)
 
 
 if __name__ == "__main__":
