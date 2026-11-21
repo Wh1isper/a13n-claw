@@ -42,7 +42,7 @@ dev = [
 requires-dist = [
     { name = "a13n-harness", specifier = "==0.40.2" },
     { name = "a13n-logging", specifier = ">=0.2,<0.3" },
-    { name = "a13n-service", specifier = "==0.3.3" },
+    { name = "a13n-service", specifier = "==0.4.1" },
     { name = "alembic", specifier = ">=1.17.1,<2" },
     { name = "fastapi", specifier = ">=0.116,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
@@ -148,7 +148,7 @@ wheels = [
 
 [[package]]
 name = "a13n-service"
-version = "0.3.3"
+version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "a13n-envd-client" },
@@ -199,9 +199,9 @@ dependencies = [
     { name = "websockets" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6d/47/087929d205061e8d056771459894b9d624270b20dc140cc767202253cfd3/a13n_service-0.3.3.tar.gz", hash = "sha256:2c24127fa8f996c99aff0cbc839b5cae08ab743edcdf85c142b530bb5dcaf8af", size = 4149045, upload-time = "2026-11-21T04:19:24.11Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a9/d9/0ee99531250c34d1be247b1786dd56ae7bfe60d10e8eb55d68da53f8e345/a13n_service-0.4.1.tar.gz", hash = "sha256:12b233d24bf108574742b1b6fae5b8aa2c4a56b3bbfc26bccc04c598d34b8091", size = 4165611, upload-time = "2026-11-21T10:58:31.391Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/68/f1/a74aabcfd4e1004e4a9d3500ef6d5d902696796bef4bdbd3732ef29e44b7/a13n_service-0.3.3-py3-none-any.whl", hash = "sha256:c92a4d5db9fcd341ec829b12524de5457b5f7ad64be98f47f3677efd517df993", size = 3886701, upload-time = "2026-11-21T04:19:22.643Z" },
+    { url = "https://files.pythonhosted.org/packages/10/be/7a9962d4643610b606e5dfbc072122594e74baa24c1c0a11330fde5e9147/a13n_service-0.4.1-py3-none-any.whl", hash = "sha256:8e0c6c054601552b255822413a71e996e7b9a8286ff1e6a9cc96c84530bb4d75", size = 3898122, upload-time = "2026-11-21T10:58:29.58Z" },
 ]
 
 [[package]]

@@ -21,14 +21,14 @@ from a13n_service.runs.schedules.schemas import Schedule as NativeSchedule
 from a13n_service.runs.schedules.schemas import ScheduleQuery
 from a13n_service.runs.schedules.tables import ScheduleRow as NativeScheduleRow
 from a13n_service.runs.schemas import Failure
-from a13n_service.runs.tables import RunRow, ThreadRow, UsageRecordRow
+from a13n_service.runs.tables import RunRow, ThreadRow
 from a13n_service.tenancy.access import workspace_scope
 from a13n_service.tenancy.app_plugins import app_router
 from a13n_service.tenancy.authorize import WorkspaceScope
 from a13n_service.tenancy.requests import Actor, WorkspaceId
 from a13n_service.tenancy.tables import GrantRow, PrincipalRow, WorkspaceRow
 from a13n_service.usage import service as native_usage
-from a13n_service.usage.schemas import ModelMetrics, UsageWindow
+from a13n_service.usage.schemas import AppModelUsageQuery, ModelMetrics
 from fastapi import Header, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints
 from sqlalchemy import and_, func, or_, select
@@ -582,32 +582,52 @@ async def usage(
     claw_id: ResourceId,
     workspace_id: WorkspaceId,
     runtime: CurrentRuntime,
+    actor: Actor,
     days: Literal["7", "30", "90"] = "7",
 ) -> list[ModelUsageView]:
     async with short_session(runtime.storage) as session:
         claw = await get_claw(session, workspace_id, claw_id)
         end = await now(session)
-        window = UsageWindow(start=end - timedelta(days=int(days)), end=end)
-        model_id = UsageRecordRow.model_id
-        query = native_usage._model_query(workspace_id, window).add_columns(model_id, ModelRow.name)
-        rows = (
-            await session.execute(
-                query.join(RunRow, RunRow.id == UsageRecordRow.run_id)
-                .outerjoin(ModelRow, ModelRow.id == model_id)
-                .where(
-                    RunRow.principal_id == claw.service_account_id,
-                    RunRow.options["labels"]["claw"].astext == claw.id,
+        query = AppModelUsageQuery(
+            start=end - timedelta(days=int(days)),
+            end=end,
+            principal_id=claw.service_account_id,
+            run_labels={"claw": claw.id},
+            limit=100,
+        )
+    groups = []
+    while True:
+        page = await native_usage.app_models(runtime.storage, actor, workspace_id, query)
+        groups.extend(page.items)
+        if page.next_cursor is None:
+            break
+        query = query.model_copy(update={"cursor": page.next_cursor})
+    keys = {group.model for group in groups if group.model is not None}
+    async with short_session(runtime.storage) as session:
+        model_ids = (
+            dict(
+                (
+                    await session.execute(
+                        select(ModelRow.key, ModelRow.id).where(
+                            ModelRow.workspace_id == workspace_id, ModelRow.key.in_(keys)
+                        )
+                    )
                 )
-                .group_by(model_id, ModelRow.name)
-                .order_by(func.count().desc(), model_id)
+                .tuples()
+                .all()
             )
-        ).mappings()
-        return [
-            ModelUsageView(
-                model_id=row["model_id"], model=row["name"], usage=native_usage._metrics(row)
-            )
-            for row in rows
-        ]
+            if keys
+            else {}
+        )
+    views = [
+        ModelUsageView(
+            model_id=model_ids.get(group.model) if group.model else None,
+            model=group.name,
+            usage=group.usage,
+        )
+        for group in groups
+    ]
+    return sorted(views, key=lambda view: (-view.usage.requests, view.model_id or ""))
 
 
 @router.post("/claws/{claw_id}/input", status_code=201, name="claw_receive")

@@ -15,6 +15,7 @@ from a13n_service.runs.inbox import Request, check_replay, find_request
 from a13n_service.runs.schedules.origin import origins
 from a13n_service.runs.schedules.tables import ScheduleRow
 from a13n_service.runs.schemas import Message, NewThread
+from a13n_service.runs.seal_events import RunSealEvent
 from a13n_service.runs.tables import AttemptRow, InboxEntryRow, RunRow
 from a13n_service.runs.threads import get_thread, require_open
 from a13n_service.tenancy.access import workspace_scope
@@ -197,6 +198,8 @@ async def assign(
             )
             owner = await worker_in(session, claw, existing.thread_id)
             return assignment(owner.thread_id, owner.session_id, existing)
+        # Keep the caller attempt fence and frozen authority ceiling in this
+        # transaction. The 0.4.1 App-principal API does not support delegation.
         if body is not None:
             thread, source = await submit.prepare_thread(
                 session, runtime, actor, scope, body, request=request, authority=authority
@@ -281,53 +284,91 @@ async def take_steers(runtime: Runtime, binding: Binding) -> list[str]:
         return [row.content for row in rows]
 
 
+TERMINAL = ("completed", "failed", "cancelled")
+
+
 async def terminal_notices(runtime: Runtime, workspace_id: str, claw_id: str) -> None:
     async with short_session(runtime.storage) as session:
         worker_ids = (
             await session.scalars(select(Worker.thread_id).where(Worker.claw_id == claw_id))
         ).all()
     for thread_id in worker_ids:
-        async with transaction(runtime.storage) as session:
-            claw = await inbox.lock_claw(session, workspace_id, claw_id)
-            worker = await worker_in(session, claw, thread_id)
-            previous = (
-                await session.get(RunRow, worker.last_notice_run_id)
-                if worker.last_notice_run_id
-                else None
+        await _record_notices(runtime, workspace_id, claw_id, thread_id)
+
+
+async def terminal_notice(runtime: Runtime, claw_id: str, event: RunSealEvent) -> None:
+    if event.status not in TERMINAL:
+        return
+    if await _record_notices(runtime, event.workspace_id, claw_id, event.thread_id, event=event):
+        # The terminal notice has committed. A hint can wake or steer unread
+        # work, but is never an explicit request to reopen a paused Main.
+        await main_thread.notify(runtime, event.workspace_id, claw_id, unread_only=True)
+
+
+async def _record_notices(
+    runtime: Runtime,
+    workspace_id: str,
+    claw_id: str,
+    thread_id: str,
+    *,
+    event: RunSealEvent | None = None,
+) -> bool:
+    async with transaction(runtime.storage) as session:
+        claw = await inbox.lock_claw(session, workspace_id, claw_id)
+        worker = await session.get(Worker, thread_id)
+        if worker is None or worker.claw_id != claw.id:
+            return False
+        previous = (
+            await session.get(RunRow, worker.last_notice_run_id)
+            if worker.last_notice_run_id
+            else None
+        )
+        order = tuple_(RunRow.created_at, RunRow.id)
+        query = (
+            select(RunRow.id, RunRow.status)
+            .where(RunRow.thread_id == thread_id, RunRow.status.in_(TERMINAL))
+            .order_by(RunRow.created_at, RunRow.id)
+            .limit(32)
+        )
+        if previous is not None:
+            query = query.where(order > (previous.created_at, previous.id))
+        if event is not None:
+            sealed = await session.get(RunRow, event.run_id)
+            if (
+                sealed is None
+                or sealed.workspace_id != claw.workspace_id
+                or sealed.thread_id != worker.thread_id
+                or sealed.status != event.status
+                or sealed.principal_id != claw.service_account_id
+            ):
+                return False
+            # Work forward to this committed seal (including any earlier missed
+            # hints). Advancing through an ordered prefix keeps the same durable
+            # deduplication watermark for both callbacks and sweeps.
+            query = query.where(order <= (sealed.created_at, sealed.id))
+        accepted = False
+        for run_id, status in (await session.execute(query)).all():
+            summary = f"Worker {worker.name} {status}. Inspect its saved Run for details."
+            result = await inbox.admit(
+                session,
+                claw,
+                inbox.Offer(
+                    "worker_terminal",
+                    "worker",
+                    f"terminal:{run_id}",
+                    {
+                        "thread_id": thread_id,
+                        "session_id": worker.session_id,
+                        "run_id": run_id,
+                        "status": status,
+                    },
+                    summary,
+                    summary,
+                ),
             )
-            query = (
-                select(RunRow.id, RunRow.status, RunRow.created_at)
-                .where(
-                    RunRow.thread_id == thread_id,
-                    RunRow.status.in_(("completed", "failed", "cancelled")),
-                )
-                .order_by(RunRow.created_at, RunRow.id)
-                .limit(32)
+            await session.execute(
+                delete(Steer).where(Steer.thread_id == thread_id, Steer.run_id == run_id)
             )
-            if previous is not None:
-                query = query.where(
-                    tuple_(RunRow.created_at, RunRow.id) > (previous.created_at, previous.id)
-                )
-            for run_id, status, _ in (await session.execute(query)).all():
-                summary = f"Worker {worker.name} {status}. Inspect its saved Run for details."
-                await inbox.admit(
-                    session,
-                    claw,
-                    inbox.Offer(
-                        "worker_terminal",
-                        "worker",
-                        f"terminal:{run_id}",
-                        {
-                            "thread_id": thread_id,
-                            "session_id": worker.session_id,
-                            "run_id": run_id,
-                            "status": status,
-                        },
-                        summary,
-                        summary,
-                    ),
-                )
-                await session.execute(
-                    delete(Steer).where(Steer.thread_id == thread_id, Steer.run_id == run_id)
-                )
-                worker.last_notice_run_id = run_id
+            worker.last_notice_run_id = run_id
+            accepted |= result.status == "accepted"
+        return accepted

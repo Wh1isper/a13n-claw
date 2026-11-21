@@ -25,12 +25,21 @@ from a13n_service.migrations.scratch import scratch_database
 from a13n_service.providers import envd
 from a13n_service.runs.environments import external
 from a13n_service.runs.inbox import find_request
-from a13n_service.runs.tables import RunRow, ThreadRow
+from a13n_service.runs.seal_events import RunSealEvent
+from a13n_service.runs.tables import InboxEntryRow, RunRow, ThreadRow
 from a13n_service.settings import Database, Settings
 from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 
-from a13n_claw.service_app import connectors, inbox, main_thread, project_cli, schedules, workers
+from a13n_claw.service_app import (
+    app,
+    connectors,
+    inbox,
+    main_thread,
+    project_cli,
+    schedules,
+    workers,
+)
 from a13n_claw.service_app.models import Claw, InboxItem, Schedule, ScheduleRequest, Worker
 
 
@@ -379,7 +388,7 @@ def exercise_lifecycle(
     assert refused.status_code == 403, refused.text
 
     # Commit the binding, but fail inside the native admission transaction at the
-    # Claw writeback. Service 0.3.3 shares this transaction: no orphan Run can commit.
+    # Claw writeback. Service shares this transaction: no orphan Run can commit.
     class WritebackFailed(Exception):
         pass
 
@@ -448,6 +457,18 @@ def exercise_lifecycle(
         return replay
 
     monkeypatch.setattr(workers, "assign", replay_assign)
+    recorded = workers._record_notices
+    worker_seals = []
+
+    async def record_from_seal(runtime, workspace_id, claw_id, thread_id, *, event=None):
+        if claw_id == claw["id"] and event is None:
+            return False  # The real Redis callback, not reconciliation, must record this fixture.
+        admitted = await recorded(runtime, workspace_id, claw_id, thread_id, event=event)
+        if claw_id == claw["id"] and event is not None and admitted:
+            worker_seals.append(event)
+        return admitted
+
+    monkeypatch.setattr(workers, "_record_notices", record_from_seal)
     client.portal.call(
         lambda: main_thread.notify(runtime, ws, claw["id"], delivery_id=received["delivery_id"])
     )
@@ -455,7 +476,8 @@ def exercise_lifecycle(
     overview = eventually(
         lambda: read(path), lambda row: row["main"] and row["main"]["last_run_id"]
     )
-    main_id = overview["main"]["last_run_id"]
+    main_id = read(f"{path}/deliveries/{received['delivery_id']}")["run_id"]
+    assert main_id
     main = eventually(lambda: read(f"/runs/{main_id}"), lambda run: run["sealed_at"])
     assert main["thread_id"] == overview["claw"]["main_thread_id"]
     assert main["session_id"] == overview["claw"]["main_session_id"]
@@ -498,6 +520,49 @@ def exercise_lifecycle(
     assert worker["activity"]["last_status"] == "completed"
     worker_run = read(f"/runs/{worker['activity']['last_run_id']}")
     assert worker_run["agent_revision_id"] == claw["agent_revision_id"]
+    worker_seal = eventually(lambda: list(worker_seals), bool)[0]
+    assert worker_seal.run_id == worker_run["id"]
+    main_seal = RunSealEvent(
+        organization_id=worker_seal.organization_id,
+        workspace_id=ws,
+        session_id=main["session_id"],
+        thread_id=main["thread_id"],
+        run_id=main_id,
+        principal_id=account["id"],
+        status="completed",
+        labels={"claw": claw["id"], "claw_role": "main"},
+    )
+
+    async def followups():
+        async with short_session(runtime.storage) as session:
+            return list(
+                await session.scalars(
+                    select(InboxEntryRow.request_key).where(
+                        InboxEntryRow.thread_id == main["thread_id"],
+                        InboxEntryRow.request_key.startswith(f"claw:seal:{main_id}:"),
+                    )
+                )
+            )
+
+    # Both subscriptions came through the real Redis consumer. Replaying older
+    # or duplicate events cannot start an additional Run or duplicate a notice.
+    assert len(eventually(lambda: client.portal.call(followups), bool)) == 1
+    client.portal.call(app.on_run_seal, runtime, main_seal)
+    client.portal.call(app.on_run_seal, runtime, worker_seal)
+    assert len(client.portal.call(followups)) == 1
+
+    async def terminal_notices():
+        async with short_session(runtime.storage) as session:
+            return list(
+                await session.scalars(
+                    select(InboxItem.id).where(
+                        InboxItem.source_key == f"terminal:{worker_seal.run_id}"
+                    )
+                )
+            )
+
+    assert len(client.portal.call(terminal_notices)) == 1
+    monkeypatch.setattr(workers, "_record_notices", recorded)
     reports = [item for item in read(f"{path}/deliveries")["items"] if item["origin"] == "worker"]
     assert any(
         read(f"{path}/deliveries/{item['id']}")["content"] == "Worker result" for item in reports
@@ -832,6 +897,18 @@ def exercise_lifecycle(
 
     inspectable = post(f"{base}/claws", {**config, "name": "Schedule controls"})
     inspect_path = f"{base}/claws/{inspectable['id']}"
+
+    async def drain_fixture_mail():
+        async with transaction(runtime.storage) as session:
+            await inbox.lock_claw(session, ws, claw["id"])
+            await session.execute(
+                update(InboxItem)
+                .where(InboxItem.claw_id == claw["id"], InboxItem.read_at.is_(None))
+                .values(read_at=datetime.now(UTC))
+            )
+
+    client.portal.call(drain_fixture_mail)
+    eventually(lambda: read(f"/threads/{main['thread_id']}"), lambda row: not row["current_run_id"])
     expected_usage = read(f"{path}/usage")
     assert sum(row["usage"]["requests"] for row in expected_usage) > 0
     for labels, principal in (

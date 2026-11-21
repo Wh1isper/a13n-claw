@@ -114,7 +114,7 @@ async def command_environment(
 async def reply_credentials(
     kind: str, connector_id: str, config: dict, token: str
 ) -> dict[str, str]:
-    # Service 0.3.3 injects the credential only into this invocation. When the
+    # Service injects the credential only into this invocation. When the
     # runtime supports broker grants, substitute the allowed-host placeholder here.
     return {
         **await command_environment(kind, connector_id, config, token),

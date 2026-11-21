@@ -243,6 +243,14 @@ test.each([
 );
 
 test("Workspace Settings is admin-only and the Dashboard follows Console language", async () => {
+  expect(contribution.navigation).toEqual({
+    label: { en: "Claw", "zh-CN": "Claw" },
+    icon: "robot",
+  });
+  expect(contribution.pages[0].label).toEqual({
+    en: "Overview",
+    "zh-CN": "总览",
+  });
   expect(contribution.pages.map(({ id }) => id)).toEqual([
     "overview",
     "deliveries",

@@ -5,7 +5,7 @@ description: Enable Claw and connect a workspace in A13n Service.
 
 ## Enable Claw
 
-Use the Claw image with your normal PostgreSQL, Redis, and object storage configuration. When Service creates its first organization, the image enables Claw during setup. For an existing organization, sign in as an organization administrator and enable **Claw** in **Organization settings → Apps**. For a Python installation, install the wheel alongside A13n Service 0.3.3 and enable Claw in the same settings. Service applies Claw's AppDatabase migrations.
+Use the Claw image with your normal PostgreSQL, Redis, and object storage configuration. When Service creates its first organization, the image enables Claw during setup. For an existing organization, sign in as an organization administrator and enable **Claw** in **Organization settings → Apps**. For a Python installation, install the wheel alongside A13n Service 0.4.1 and enable Claw in the same settings. Service applies Claw's AppDatabase migrations.
 
 ## Set up a Project
 

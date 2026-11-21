@@ -3,11 +3,12 @@
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from a13n_logging import get_logger
-from a13n_service.app_definitions import AppDefinition, OrganizationSweep
+from a13n_service.app_definitions import AppDefinition, OrganizationSweep, RunSealSubscription
 from a13n_service.app_plugins import Frontend
 from a13n_service.infra.db import Storage, short_session
 from a13n_service.infra.errors import ServiceError
 from a13n_service.runs.runtime import Runtime
+from a13n_service.runs.seal_events import RunSealEvent
 from a13n_service.tenancy.tables import WorkspaceRow
 from fastapi import FastAPI
 from sqlalchemy import select
@@ -77,6 +78,24 @@ async def sweep(runtime: Runtime, organization_id: str) -> None:
         after = rows[-1].id
 
 
+async def on_run_seal(runtime: Runtime, event: RunSealEvent) -> None:
+    if (claw_id := event.labels.get("claw")) is None:
+        return
+    role = event.labels.get("claw_role")
+    try:
+        if role == "worker":
+            await workers.terminal_notice(runtime, claw_id, event)
+        elif role == "main" and event.status == "completed":
+            await main_thread.notify(
+                runtime,
+                event.workspace_id,
+                claw_id,
+                completed_run_id=event.run_id,
+            )
+    except inbox.ClawNotFound:
+        return
+
+
 def definition() -> AppDefinition:
     return AppDefinition(
         app_id=APP_ID,
@@ -88,5 +107,6 @@ def definition() -> AppDefinition:
             "a13n_claw.service_app", "static", entry="index.js", styles=("index.css",)
         ),
         startup=startup,
+        run_seals=(RunSealSubscription(run=on_run_seal),),
         sweeps=(OrganizationSweep("claw", every=15, timeout=60, run=sweep),),
     )

@@ -5,7 +5,7 @@ description: Inspect Claw activity and follow the associated Service execution.
 
 ## Overview
 
-Overview shows actionable Main and Project notices, Inbox counts, compact usage by model, recent deliveries, and managed workers. Hover over a compact total for its exact value. Open native **Usage** for broader inspection, or follow the exact Thread or Run to inspect execution and answer pending decisions. To submit a message, use a connector or the headless input API.
+Expand **Claw** in the workspace sidebar and open **Overview**. It shows actionable Main and Project notices, Inbox counts, compact usage by model, recent deliveries, and managed workers. Hover over a compact total for its exact value. Open native **Usage** for broader inspection, or follow the exact Thread or Run to inspect execution and answer pending decisions. To submit a message, use a connector or the headless input API.
 
 ## Project setup
 

@@ -866,8 +866,13 @@ function DeliveryRecord({ claw, id }: { claw: Claw; id: string }) {
 
 export default {
   bridge: bridgeVersion,
+  navigation: { label: { en: "Claw", "zh-CN": "Claw" }, icon: "robot" },
   pages: [
-    { id: "overview", label: "Claw", component: Dashboard },
+    {
+      id: "overview",
+      label: { en: "Overview", "zh-CN": "总览" },
+      component: Dashboard,
+    },
     {
       id: "deliveries",
       label: { en: "Deliveries", "zh-CN": "投递记录" },

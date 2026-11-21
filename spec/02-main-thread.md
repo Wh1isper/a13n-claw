@@ -6,6 +6,8 @@ Each Claw has one persistent Main Thread. Main reads incoming messages, replies,
 
 All user messages submitted to Claw, including from its input interface, first enter the [Inbox](01-inbox.md). After acceptance, Claw attempts an immediate steer of the active Main Run with a notice and short preview, or wakes idle Main. The steer is a best-effort notification, not a second submission of the message. If the notice cannot be delivered immediately, the message remains unread. Main chooses what to open and in what order.
 
+Committed Run seal notifications are best-effort hints. A normal Main completion can immediately wake the same Thread for unread work once it is still the latest Run and no native Inbox entry takes priority. A wake that made no Inbox progress does not immediately repeat on its own completion; the maintenance sweep still retries unread work. A seal notification cannot reopen a failed or cancelled Main or resolve a native wait. The sweep reconciles missed hints and remains responsible for heartbeat, schedules, and retention.
+
 Main handles user-facing communication; ordinary user messages and coordination do not go directly to workers. A heartbeat wakes the same Main after the configured idle interval. Native decision responses and execution controls use Service's native controls against the exact operation, not messages delivered to the conversation.
 
 Claw supplies Main and its workers with [capabilities and instructions](04-project.md#agent-composition) suited to their available resources. Main uses background tools for operations that need to continue without blocking input handling; workers remain the owners of delegated long-running work.
