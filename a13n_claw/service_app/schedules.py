@@ -26,7 +26,6 @@ from a13n_service.runs.schedules.schemas import (
     ScheduleTarget,
 )
 from a13n_service.runs.schedules.tables import ScheduleRow as NativeScheduleRow
-from a13n_service.runs.schemas import ExistingRunEnvironment
 from a13n_service.runs.sessions import new_session
 from a13n_service.runs.tables import RunRow
 from a13n_service.tenancy.authorize import (
@@ -62,8 +61,6 @@ async def fresh_definition(
 ) -> ScheduleCreate:
     if claw.environment_id is None:
         raise conflict("claw", claw.id, "project_environment_required")
-    if claw.browser_id is not None:
-        raise conflict("claw", claw.id, "fresh_schedule_cannot_bind_project_browser")
     agent = await session.get(AgentRow, claw.agent_id)
     if agent is None:
         raise not_found("agent", claw.agent_id)
@@ -80,14 +77,6 @@ async def fresh_definition(
         assert details.memory is not None
         await configure(session, owner, details.memory)
         claw.schedule_session_id = owner.id
-    options = await main_thread.options(session, claw, agent, role="scheduled")
-    options = options.model_copy(
-        update={
-            "environment": ExistingRunEnvironment(
-                mode="existing", environment_id=claw.environment_id
-            )
-        }
-    )
     return ScheduleCreate(
         name=body.name,
         labels={"claw": claw.id},
@@ -97,7 +86,9 @@ async def fresh_definition(
             agent_id=agent.id,
             agent_revision_id=main_thread.selected_revision(claw, agent),
             payload=main_thread.payload(body.prompt),
-            options=options,
+            options=await main_thread.options(session, claw, agent, role="scheduled"),
+            environments=main_thread.project_mounts(claw),
+            browser_binding=main_thread.project_browser(claw),
         ),
         target=ScheduleTarget(session_id=claw.schedule_session_id),
         state="enabled",

@@ -19,6 +19,7 @@ import {
 import {
   appPath,
   clawPath,
+  json,
   url,
   useRead,
   useProjectResources,
@@ -163,6 +164,7 @@ function ProjectResources({ claw }: { claw: Claw }) {
   const overview = useRead<Overview>(clawPath(claw.id), 10000);
   const { can } = useAccess();
   const save = useWrite<Claw>();
+  const updateCli = useWrite<{ state: string }>();
   const [editing, setEditing] = React.useState<
     "environment" | "browser" | null
   >(null);
@@ -328,6 +330,49 @@ function ProjectResources({ claw }: { claw: Claw }) {
               </Button>
             </div>
           </form>
+        )}
+      </FormSection>
+      <FormSection
+        title="Platform CLIs"
+        description="Claw installs missing tools before Main runs. Updates apply at the next Main execution with this Environment."
+      >
+        <dl className={styles.facts}>
+          <dt>GitHub CLI</dt>
+          <dd>{project?.cli_versions?.gh ?? "Not installed yet"}</dd>
+          <dt>Lark CLI</dt>
+          <dd>{project?.cli_versions?.["lark-cli"] ?? "Not installed yet"}</dd>
+        </dl>
+        <div className={styles.actions}>
+          {can("admin") && (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={
+                !saved.environment_id ||
+                !project ||
+                !!editing ||
+                updateCli.isPending ||
+                project.cli_update_state === "queued"
+              }
+              onClick={() =>
+                updateCli.mutate({
+                  path: `${clawPath(claw.id)}/project/cli-update`,
+                  method: "POST",
+                  body: {},
+                })
+              }
+            >
+              Update CLIs
+            </Button>
+          )}
+          {project?.cli_update_state && (
+            <Status state={project.cli_update_state} />
+          )}
+        </div>
+        {updateCli.isError && (
+          <p role="alert" className={styles.error}>
+            {updateCli.error.message}
+          </p>
         )}
       </FormSection>
     </div>
@@ -610,6 +655,7 @@ function ConnectorList({
     editing && editing !== "new"
       ? `${path}/${encodeURIComponent(editing)}`
       : null,
+    15000,
   );
   const close = () => select({ connector: null });
   if (editing === "new" && admin)
@@ -739,8 +785,17 @@ function ConnectorEditor({
   close: () => void;
   readOnly?: boolean;
 }) {
-  const { workspaceId } = useApp();
-  const save = useWrite<Connector>();
+  const app = useApp();
+  const { workspaceId } = app;
+  const check = useWrite<{ state: string }>();
+  const [saving, setSaving] = React.useState(false);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
+  const path = `${clawPath(claw.id)}/connectors${connector ? `/${connector.id}` : ""}`;
+  const credentialState = connector?.credential_configured
+    ? "Saved"
+    : connector?.credential_mounted
+      ? "Mounted (legacy)"
+      : "Not configured";
   const [kind, setKind] = React.useState(connector?.kind ?? "github");
   const config = connector?.config;
   const back = url(appPath(workspaceId!, "connectors"), { claw: claw.id });
@@ -766,6 +821,16 @@ function ConnectorEditor({
             <dd>{kind === "github" ? "GitHub" : "Lark"}</dd>
             <dt>Connector ID</dt>
             <dd>{connector.id}</dd>
+            <dt>Credential</dt>
+            <dd>{credentialState}</dd>
+            {connector.listener_status && (
+              <>
+                <dt>Listener</dt>
+                <dd>
+                  <Status state={connector.listener_status} />
+                </dd>
+              </>
+            )}
             <dt>Last received</dt>
             <dd>
               <DateTime value={connector.last_event_at} />
@@ -775,8 +840,11 @@ function ConnectorEditor({
       ) : (
         <form
           className={styles.form}
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault();
+            if (saving) return;
+            setSaving(true);
+            setSaveError(null);
             const form = new FormData(event.currentTarget);
             const senders = items(form, "senders");
             const settings =
@@ -795,19 +863,33 @@ function ConnectorEditor({
                     unmentioned_groups: items(form, "unmentioned"),
                     direct_messages: form.has("direct"),
                   };
-            save.mutate(
-              {
-                path: `${clawPath(claw.id)}/connectors${connector ? `/${connector.id}` : ""}`,
-                method: connector ? "PUT" : "POST",
-                body: {
-                  name: field(form, "name"),
-                  kind,
-                  enabled: form.has("enabled"),
-                  config: settings,
-                },
-              },
-              { onSuccess: close },
-            );
+            try {
+              await json<Connector>(
+                await app.request(path, {
+                  method: connector ? "PUT" : "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    name: field(form, "name"),
+                    kind,
+                    enabled: form.has("enabled"),
+                    config: settings,
+                    credential: field(form, "credential") || undefined,
+                    reply_environment_id: form.has("enable-replies")
+                      ? claw.environment_id
+                      : null,
+                  }),
+                }),
+              );
+              close();
+            } catch (error) {
+              setSaveError(
+                error instanceof Error
+                  ? error.message
+                  : "Could not save connector",
+              );
+            } finally {
+              setSaving(false);
+            }
           }}
         >
           <FormSection title="Connector">
@@ -921,32 +1003,112 @@ function ConnectorEditor({
               />
             </FormField>
           </FormSection>
+          <FormSection
+            title="Platform credential"
+            description={
+              kind === "github"
+                ? "Use a GitHub token with access to the configured repositories. The intake service account is separate."
+                : "Use the App secret from the Lark or Feishu developer console for the selected region."
+            }
+          >
+            <FormField
+              label={kind === "github" ? "GitHub token" : "App secret"}
+              description={
+                connector && credentialState !== "Not configured"
+                  ? "Leave blank to keep the saved credential."
+                  : "The credential is write-only."
+              }
+            >
+              <Input
+                type="password"
+                name="credential"
+                autoComplete="new-password"
+                maxLength={8192}
+              />
+            </FormField>
+            {claw.environment_id ? (
+              <label className={styles.check}>
+                <input
+                  type="checkbox"
+                  name="enable-replies"
+                  defaultChecked={
+                    connector?.reply_environment_id === claw.environment_id
+                  }
+                />
+                Allow replies from this Project Environment
+              </label>
+            ) : (
+              <p className={styles.muted}>
+                Attach an Environment before enabling replies.
+              </p>
+            )}
+            <p className={styles.muted}>
+              Only enable replies for an Environment you trust. Code running
+              there can access the credential during a reply. Reauthorize
+              replies after changing the Environment.
+            </p>
+          </FormSection>
           {connector && (
-            <FormSection title="Connection status">
+            <FormSection
+              title="Connection status"
+              description="Check the saved credential. For GitHub this checks read access to the first configured repository, not write permissions."
+            >
               <dl className={styles.facts}>
                 <dt>Connector ID</dt>
                 <dd>{connector.id}</dd>
+                <dt>Credential</dt>
+                <dd>{credentialState}</dd>
+                {connector.listener_status && (
+                  <>
+                    <dt>Listener</dt>
+                    <dd>
+                      <Status state={connector.listener_status} />
+                    </dd>
+                  </>
+                )}
                 <dt>Last received</dt>
                 <dd>
                   <DateTime value={connector.last_event_at} />
                 </dd>
-                {kind === "lark" && (
-                  <>
-                    <dt>App secret</dt>
-                    <dd>
-                      {connector.credential_mounted ? "Mounted" : "Not mounted"}
-                    </dd>
-                  </>
-                )}
               </dl>
+              <div className={styles.actions}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={
+                    saving ||
+                    check.isPending ||
+                    credentialState === "Not configured"
+                  }
+                  onClick={() =>
+                    check.mutate({
+                      path: `${path}/check`,
+                      method: "POST",
+                      body: {},
+                    })
+                  }
+                >
+                  {check.isPending ? "Checking…" : "Check credential"}
+                </Button>
+                {check.data && (
+                  <span role="status">
+                    <Status state={check.data.state} />
+                  </span>
+                )}
+              </div>
+              {check.isError && (
+                <p role="alert" className={styles.error}>
+                  {check.error.message}
+                </p>
+              )}
             </FormSection>
           )}
-          {save.isError && (
+          {saveError && (
             <p role="alert" className={styles.error}>
-              {save.error.message}
+              {saveError}
             </p>
           )}
-          <FormActions pending={save.isPending} onCancel={close} />
+          <FormActions pending={saving} onCancel={close} />
         </form>
       )}
     </DetailPage>
@@ -1143,20 +1305,10 @@ function ScheduleEditor({ claw, close }: { claw: Claw; close: () => void }) {
           <FormField label="Prompt">
             <Textarea name="prompt" rows={5} required maxLength={32000} />
           </FormField>
-          <FormField
-            label="Target"
-            description={
-              claw.browser_id
-                ? "Choose Main for work that uses the Project Browser."
-                : undefined
-            }
-          >
+          <FormField label="Target">
             <select className={styles.select} name="target">
               <option value="main">Main Inbox</option>
-              <option
-                value="fresh"
-                disabled={!!claw.browser_id || !claw.environment_id}
-              >
+              <option value="fresh" disabled={!claw.environment_id}>
                 Fresh Thread
               </option>
             </select>

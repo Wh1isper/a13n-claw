@@ -168,6 +168,7 @@ async def assign(
                 **message.model_dump(),
                 session=main_thread.project_session(claw, f"{claw.name} · {title}"),
                 environments=main_thread.project_mounts(claw),
+                browser_binding=main_thread.project_browser(claw),
             )
             request = Request.of(call_key, "thread", claw.workspace_id, body)
         else:
@@ -182,7 +183,6 @@ async def assign(
             thread, source = await submit.prepare_thread(
                 session, runtime, actor, scope, body, request=request, authority=authority
             )
-            await main_thread.bind_project_browser(session, claw, thread, actor, scope, authority)
             session.add(
                 Worker(
                     thread_id=thread.id,

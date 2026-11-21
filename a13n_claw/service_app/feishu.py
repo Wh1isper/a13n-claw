@@ -171,7 +171,7 @@ class LarkAdapter:
         self._fragments: dict[str, tuple[float, list[bytes | None]]] = {}
         self.status = "disconnected"
 
-    async def _access_token(self) -> str:
+    async def access_token(self) -> str:
         async with self._token_lock:
             if self._token is not None and time.monotonic() < self._token_until:
                 return self._token
@@ -181,9 +181,9 @@ class LarkAdapter:
             )
             response.raise_for_status()
             data = response.json()
-            if data.get("code") != 0:
+            if not isinstance(data, dict) or data.get("code") != 0:
                 raise ValueError("Lark authentication rejected; check app credentials")
-            token = data["tenant_access_token"]
+            token = data.get("tenant_access_token")
             if not isinstance(token, str) or not token:
                 raise ValueError("Lark authentication omitted the access token")
             self._token = token
@@ -191,7 +191,7 @@ class LarkAdapter:
             return token
 
     async def react(self, message_id: str, emoji: str) -> None:
-        token = await self._access_token()
+        token = await self.access_token()
         path = f"/open-apis/im/v1/messages/{quote(message_id, safe='')}/reactions"
         response = await self.client.post(
             self.settings.domain + path,

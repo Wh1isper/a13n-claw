@@ -11,7 +11,7 @@ from importlib.metadata import entry_points, version
 from importlib.resources import files
 import sys
 from a13n_service.settings import load_settings
-assert version('a13n-service') == '0.3.1'
+assert version('a13n-service') == '0.3.3'
 app = next(item for item in entry_points(group='a13n_service.app_plugins')
            if item.name == 'a13n.claw').load()()
 assert app.app_id == 'a13n.claw' and app.database and app.frontend and app.routers

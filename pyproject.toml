@@ -8,8 +8,8 @@ license-files = ["LICENSE"]
 authors = [{name = "Wh1isper"}]
 requires-python = ">=3.13"
 dependencies = [
-  "a13n-service==0.3.1",
-  "a13n-harness==0.40.0",
+  "a13n-service==0.3.3",
+  "a13n-harness==0.40.2",
   "a13n-logging>=0.2,<0.3",
   "alembic>=1.17.1,<2",
   "fastapi>=0.116,<1",

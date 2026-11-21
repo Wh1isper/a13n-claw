@@ -21,7 +21,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from .project_cli import CLIStatus
+from .project_cli import UpdateState
 
 APP_ID = "a13n.claw"
 database = AppDatabase(
@@ -59,8 +59,9 @@ class Claw(Base):
     worker_models: Mapped[list[dict[str, str]]] = mapped_column(
         JSON, server_default=text("'[]'::json")
     )
-    cli_observation: Mapped[dict[str, CLIStatus] | None] = mapped_column(JSON)
-    cli_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cli_versions: Mapped[dict[str, str] | None] = mapped_column(JSON)
+    cli_update_id: Mapped[str | None] = mapped_column(String(64))
+    cli_update_state: Mapped[UpdateState | None] = mapped_column(String(16))
     heartbeat_seconds: Mapped[int] = mapped_column(server_default=text("300"))
     unread_limit: Mapped[int] = mapped_column(server_default=text("500"))
     read_limit: Mapped[int] = mapped_column(server_default=text("3000"))
@@ -228,6 +229,8 @@ class Connector(Base):
     name: Mapped[str] = mapped_column(String(200))
     kind: Mapped[str] = mapped_column(String(32))
     config: Mapped[dict[str, Any]] = mapped_column(JSON)
+    credential: Mapped[dict[str, str] | None] = mapped_column(JSON)
+    reply_environment_id: Mapped[str | None] = mapped_column(String(64))
     enabled: Mapped[bool] = mapped_column(default=True)
     last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -6,6 +6,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -23,12 +24,13 @@ from a13n_service.runs.environments import external
 from a13n_service.settings import Database, Settings
 from fastapi.testclient import TestClient
 
-from a13n_claw.service_app import project_cli
+from a13n_claw.service_app import connectors, project_cli
 
 
 @pytest.fixture
 def model_server():
     requests = []
+    reply = {}
 
     class ModelHandler(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -40,7 +42,9 @@ def model_server():
                 for message in body["messages"]
                 for call in message.get("tool_calls", [])
             }
-            if "claw_assign" in tools - used:
+            if reply and "claw_connector_reply" in tools - used:
+                tool, args = "claw_connector_reply", reply
+            elif "claw_assign" in tools - used:
                 tool, args = "claw_assign", {"task": "Collect a result", "name": "Test Worker"}
             elif "claw_schedule" in tools - used:
                 tool, args = (
@@ -94,7 +98,7 @@ def model_server():
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            yield f"http://127.0.0.1:{server.server_port}", requests
+            yield f"http://127.0.0.1:{server.server_port}", requests, reply
         finally:
             server.shutdown()
             thread.join()
@@ -158,18 +162,30 @@ def test_first_setup_and_native_runs(monkeypatch, tmp_path, model_server):
     async def connect(*_args, environment_id, **_kwargs):
         return FixtureEnvironment(environment_id)
 
-    async def provision(_environment):
-        return True
+    async def provision(_environment, *, update=False):
+        return project_cli.Maintenance({"gh": "2.105.0", "lark-cli": "1.0.100"}, False)
 
-    async def check_accounts(_environment):
-        return {"github": "verified", "lark": "not verified"}
+    async def check(kind, connector_id, config, token):
+        assert token == "synthetic-github-credential"
 
+    monkeypatch.setattr(connectors, "check", check)
     # Provider-side verification and CLI downloads are not part of this lifecycle test.
     monkeypatch.setattr(external, "verify", verify)
     monkeypatch.setattr(envd, "connect", connect)
     monkeypatch.setattr(project_cli, "provision", provision)
-    monkeypatch.setattr(project_cli, "check_accounts", check_accounts)
-    model_url, requests = model_server
+    outbound = []
+
+    async def command(_environment, script, arguments, *, variables, timeout):
+        assert script == project_cli.REPLY_CLI and timeout == 40
+        assert variables["GH_TOKEN"] == "synthetic-github-credential"
+        outbound.append(arguments)
+        return SimpleNamespace(
+            status=SimpleNamespace(exit_code=0),
+            output=SimpleNamespace(stdout=SimpleNamespace(inline=b"https://example.com/reply")),
+        )
+
+    monkeypatch.setattr(project_cli, "command", command)
+    model_url, requests, reply = model_server
     origin = "https://claw.test"
     with scratch_database(Database(url=database_url)) as database:
         settings = Settings.model_validate(
@@ -185,10 +201,10 @@ def test_first_setup_and_native_runs(monkeypatch, tmp_path, model_server):
         )
         app = build_app(role="all", settings=settings)
         with TestClient(app, base_url=origin, headers={"Origin": origin}) as client:
-            exercise_lifecycle(client, model_url, requests)
+            exercise_lifecycle(client, model_url, requests, reply, outbound)
 
 
-def exercise_lifecycle(client, model_url, requests):
+def exercise_lifecycle(client, model_url, requests, reply, outbound):
     def read(path):
         result = client.get(f"/api/v1{path}")
         assert result.status_code == 200, result.text
@@ -276,6 +292,29 @@ def exercise_lifecycle(client, model_url, requests):
     setup = read(path)
     assert setup["main"] is None and setup["unread"] == 1
     assert setup["project"]["environment"] == "not configured"
+    post(f"{path}/project/cli-update", {}, 409)
+    connector_body = {
+        "name": "Fixture GitHub",
+        "kind": "github",
+        "enabled": True,
+        "config": {
+            "principal_id": account["id"],
+            "channels": ["team/repo"],
+            "senders": ["operator"],
+        },
+        "credential": "synthetic-github-credential",
+    }
+    connector = post(f"{path}/connectors", connector_body)
+    connector_path = f"{path}/connectors/{connector['id']}"
+    assert connector["credential_configured"] and "credential" not in connector
+    assert "synthetic-github-credential" not in json.dumps(read(connector_path))
+    bad = client.put(f"/api/v1{connector_path}", json={**connector_body, "body-error": True})
+    assert bad.status_code == 400 and "synthetic-github-credential" not in bad.text
+    assert post(f"{connector_path}/check", {}, 200) == {"state": "verified"}
+    assert post(
+        f"{connector_path}/check", {}, 403, headers={"Authorization": f"Bearer {key['secret']}"}
+    )
+
     refused = client.patch(f"/api/v1{path}/project", json={"environment_id": private["id"]})
     assert refused.status_code == 403, refused.text
     bound = client.patch(f"/api/v1{path}/project", json={"environment_id": shared["id"]})
@@ -315,8 +354,8 @@ def exercise_lifecycle(client, model_url, requests):
     observed = read(path)["project"]
     assert observed["environment"] == "ready"
     assert observed["automation_account"] == "active"
-    assert observed["cli"] == {"github": "verified", "lark": "not verified"}
-    assert observed["cli_checked_at"]
+    assert observed["cli_versions"] == {"gh": "2.105.0", "lark-cli": "1.0.100"}
+    assert observed["cli_update_state"] is None
     workers = eventually(
         lambda: read(f"{path}/workers")["items"],
         lambda items: items and items[0]["activity"]["last_status"] in {"completed", "failed"},
@@ -379,6 +418,22 @@ def exercise_lifecycle(client, model_url, requests):
     assert updated.status_code == 200, updated.text
     assert updated.json()["main_thread_id"] == main["thread_id"]
     assert read(path)["project"]["environment_name"] == replacement["name"]
+    rejected = client.put(
+        f"/api/v1{connector_path}", json={**connector_body, "reply_environment_id": shared["id"]}
+    )
+    assert rejected.status_code == 409, rejected.text
+    enabled = client.put(
+        f"/api/v1{connector_path}",
+        json={
+            **{key: value for key, value in connector_body.items() if key != "credential"},
+            "reply_environment_id": replacement["id"],
+        },
+    )
+    assert enabled.status_code == 200 and enabled.json()["credential_configured"], enabled.text
+    assert enabled.json()["reply_environment_id"] == replacement["id"]
+    assert post(f"{path}/project/cli-update", {}, 202) == {"state": "queued"}
+    assert read(path)["project"]["cli_update_state"] == "queued"
+
     for thread_id, run_id in (
         (main["thread_id"], main["id"]),
         (worker["thread_id"], worker_run["id"]),
@@ -409,9 +464,48 @@ def exercise_lifecycle(client, model_url, requests):
     assert attached.status_code == 200, attached.text
     assert read(path)["project"]["browser_name"] == browser["name"]
     assert post(fresh_path, fresh_body, headers=fresh_headers)["id"] == operator_schedule["id"]
-    post(fresh_path, fresh_body, 409, headers={"Idempotency-Key": uuid4().hex})
+    scheduled_browser = post(fresh_path, fresh_body, headers={"Idempotency-Key": uuid4().hex})
+    browser_schedule_path = f"/schedules/{scheduled_browser['id']}"
+    native_browser_schedule = client.get(f"/api/v1{browser_schedule_path}")
+    assert native_browser_schedule.status_code == 200, native_browser_schedule.text
+    invocation = native_browser_schedule.json()["invocation"]
+    assert invocation["browser_binding"]["browser_id"] == browser["id"]
+    assert invocation["environments"][0]["environment_id"] == replacement["id"]
+    browser_occurrence = post(
+        f"{browser_schedule_path}/dispatch",
+        {},
+        202,
+        headers={
+            **service_headers,
+            "Idempotency-Key": uuid4().hex,
+            "If-Match": native_browser_schedule.headers["ETag"],
+        },
+    )
+    browser_result = eventually(
+        lambda: read(f"{browser_schedule_path}/occurrences/{browser_occurrence['id']}"),
+        lambda row: row["execution_outcome"],
+    )
+    assert browser_result["execution_outcome"] == "succeeded", browser_result
+    browser_run = read(f"/runs/{browser_result['completion_run_id']}")
+    assert browser_run["browser_binding"]["browser_id"] == browser["id"]
+    assert browser_run["environment_mounts"][0]["environment_id"] == replacement["id"]
+    native_browser_schedule = client.get(f"/api/v1{browser_schedule_path}")
+    blocked_detach = client.patch(update_url, json={"browser_id": None})
+    assert blocked_detach.status_code == 409, blocked_detach.text
+    archived = client.delete(
+        f"/api/v1{browser_schedule_path}",
+        headers={**service_headers, "If-Match": native_browser_schedule.headers["ETag"]},
+    )
+    assert archived.status_code == 204, archived.text
     for thread_id in (main["thread_id"], worker["thread_id"]):
         assert read(f"/threads/{thread_id}/browser")["browser_id"] == browser["id"]
+
+    reply.update(
+        connector_id=connector["id"],
+        destination="team/repo#123",
+        content="Fixture reply",
+        operation="issue_comment",
+    )
 
     followup = post(
         f"{path}/input",
@@ -426,6 +520,10 @@ def exercise_lifecycle(client, model_url, requests):
         lambda: read(f"/runs/{next_delivery['run_id']}"), lambda run: run["sealed_at"]
     )
     assert next_run["status"] == "completed", next_run.get("failure")
+    assert outbound == [
+        ("gh", "issue", "comment", "123", "--repo", "github.com/team/repo", "--body=Fixture reply")
+    ]
+
     assert next_run["id"] != main["id"] and next_run["thread_id"] == main["thread_id"]
     assert any(
         mount["name"] == "workspace" and mount["environment_id"] == replacement["id"]
@@ -433,6 +531,7 @@ def exercise_lifecycle(client, model_url, requests):
     )
 
     assert next_run["browser_binding"]["browser_id"] == browser["id"]
+    assert read(path)["project"]["cli_update_state"] == "succeeded"
     detached = client.patch(update_url, json={"browser_id": None})
     assert detached.status_code == 200, detached.text
     assert read(path)["project"]["browser"] is None

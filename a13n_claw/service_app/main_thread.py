@@ -166,6 +166,12 @@ def project_mounts(claw: Claw) -> tuple[MountCreate, ...]:
     return (MountCreate(name="workspace", environment_id=claw.environment_id),)
 
 
+def project_browser(claw: Claw) -> BrowserBinding | None:
+    if claw.browser_id is None:
+        return None
+    return BrowserBinding(browser_id=claw.browser_id, tab_access="global")
+
+
 async def bind_project_browser(
     session: AsyncSession,
     claw: Claw,
@@ -354,11 +360,11 @@ async def _wake(
                 options=run_options,
                 session=project_session(claw, f"{claw.name} · Main"),
                 environments=project_mounts(claw),
+                browser_binding=project_browser(claw),
             ),
             request=None,
             authority=authority,
         )
-        await bind_project_browser(session, claw, thread, actor, scope, authority)
         claw.main_thread_id, claw.main_session_id = thread.id, thread.session_id
     else:
         source = await submit.prepare_message(

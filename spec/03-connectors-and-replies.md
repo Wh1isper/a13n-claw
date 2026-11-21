@@ -18,9 +18,11 @@ The initial release supports GitHub and Lark/Feishu. Main uses their official CL
 
 ## Project Setup
 
-When a new Claw creates its Project Environment, setup makes the selected CLIs, runtime configuration, and authorized account access available before the corresponding reply path is ready. Claw automatically installs missing official binaries in the Project Environment on supported platforms. Existing official binaries and account setup supplied by the operator are reused. Failed setup affects readiness for the corresponding reply path; it does not report a reply as sent.
+Workspace administrators configure a GitHub reply token or Lark App secret on a connector. Service encrypts the write-only credential. The GitHub intake service account is separate from the reply identity. Credential checks, connector intake, CLI installation, and successful replies are distinct facts.
 
-The account presented to a CLI must be the account configured for the operation. Keep credential values in the configured credential mechanism, not in message content or readable Project settings. Main owns replies as a collaboration role. Workers with access to the same command environment and credentials have the same platform authority; sharing a Project does not by itself provide Main-only credential isolation.
+On supported Linux Environments, Claw checks for the CLIs before Main runs. It reuses installed binaries and installs missing ones from the official latest release. The administrator can request an update for the bound Environment; it is applied before the next Main execution without starting a Run. An Environment replacement clears queued maintenance. A failed download or verification leaves the prior binary in place.
+
+Administrators explicitly authorize reply credentials for the selected Environment. Rebinding the Environment revokes that selection. Main's connector tool chooses a specific connector and uses only its platform credential for the operation; the credential is not included in Run options, general shell defaults, or readable settings. For Lark the command receives a short-lived bot token. The Environment and code running in it must be trusted with platform credentials; the Main-only tool is a collaboration boundary, not isolation from other processes in the same Environment.
 
 ## Custom Channels
 

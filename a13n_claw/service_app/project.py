@@ -14,11 +14,11 @@ from a13n_service.runs.environments.tables import ThreadEnvironmentRow
 from a13n_service.runs.runtime import Runtime
 from a13n_service.runs.tables import ThreadRow
 from a13n_service.tenancy.authorize import Principal, WorkspaceScope, execution_authority
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import main_thread, schedules
-from .models import Claw, Worker
+from .models import Claw, Connector, Worker
 
 
 async def reserve_environment(
@@ -101,7 +101,7 @@ async def rebind(
         environment_id if environment_changed and environment_template_id is None else None,
         browser_id if browser_changed else None,
     )
-    if environment_changed or browser_id is not None:
+    if environment_changed or browser_changed:
         await schedules.require_no_fresh_work(session, claw)
     owned_worker = select(Worker.thread_id).where(Worker.claw_id == claw.id)
     threads = await session.scalars(
@@ -116,8 +116,12 @@ async def rebind(
     )
     claw.browser_id = browser_id
     if environment_changed:
-        claw.cli_observation = None
-        claw.cli_checked_at = None
+        claw.cli_versions = None
+        claw.cli_update_id = None
+        claw.cli_update_state = None
+        await session.execute(
+            update(Connector).where(Connector.claw_id == claw.id).values(reply_environment_id=None)
+        )
     authority = execution_authority(account, scope)
     threads = threads.all()
     if browser_changed:

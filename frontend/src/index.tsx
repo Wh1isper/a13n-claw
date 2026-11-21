@@ -423,18 +423,6 @@ function DashboardBody({
                 name: "Automation account",
                 state: project.automation_account,
               },
-              {
-                id: "gh",
-                name: "GitHub CLI account",
-                state: project.cli?.github ?? "not checked",
-                checked: project.cli_checked_at,
-              },
-              {
-                id: "lark",
-                name: "Lark CLI account",
-                state: project.cli?.lark ?? "not checked",
-                checked: project.cli_checked_at,
-              },
             ]}
             columns={[
               {
@@ -450,10 +438,6 @@ function DashboardBody({
               {
                 label: "Status",
                 render: (row) => <Status state={row.state} />,
-              },
-              {
-                label: "Last CLI check",
-                render: (row) => <DateTime value={row.checked ?? null} />,
               },
             ]}
           />

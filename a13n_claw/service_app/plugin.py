@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import TYPE_CHECKING, Annotated, Literal
 
+import httpx
 from a13n_harness import AbstractHarnessPlugin, AgentContext, HarnessRunResult, SafeFailure
 from a13n_harness.environment.models import EnvironmentError
 from a13n_harness.plugin_factories import HarnessPluginFactory, HarnessPluginFactoryContext
@@ -20,6 +21,7 @@ from a13n_service.infra.db import short_session, transaction
 from a13n_service.infra.errors import ServiceError
 from a13n_service.runs.tables import RunRow, ThreadRow
 from a13n_service.tenancy.authorize import ExecutionAuthority, WorkspaceScope, authorize
+from a13n_service.tenancy.tables import WorkspaceRow
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -27,12 +29,13 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import FunctionToolset
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import connectors, inbox, main_thread, project_cli, schedules, workers
 from .main_thread import PLUGIN_KEY
-from .models import ScheduleRequest, Worker
+from .models import Connector, InboxItem, ScheduleRequest, Worker
 
 if TYPE_CHECKING:
     from a13n_service.runs.runtime import Runtime
@@ -48,9 +51,10 @@ Use persistent Worker Threads for longer tasks. Use claw_workers for exact execu
 Use claw_schedule for scheduled Inbox work by default, or choose fresh for self-contained work.
 Include the objective, source IDs, execution target, and intended destination in the prompt.
 Fresh Threads report to Main instead of replying directly.
-Reply explicitly using gh for GitHub or lark-cli for Feishu/Lark in the Project Environment.
-In shell commands, prepend "$HOME/.local/bin" to PATH to use Claw-installed CLIs.
-Use the configured account and the relevant destination IDs.
+Reply explicitly with claw_connector_reply using the chosen connector ID and platform destination.
+It uses the configured account through gh or lark-cli. Do not retry an unknown outcome blindly.
+Use its lark_download operation only for attachments you need.
+For operator-provided integrations, prepend "$HOME/.local/bin" to PATH in shell commands.
 On a quiet heartbeat with no other work and no reply due, call finish_silently.
 """
 WORKER_INSTRUCTIONS = """You are a Claw Worker. Carry out Main's assignment in the shared Project.
@@ -112,6 +116,232 @@ main_tools = FunctionToolset[AgentContext](id="claw_main")
 worker_tools = FunctionToolset[AgentContext](id="claw_worker")
 
 
+ReplyValue = Annotated[str, Field(min_length=1, max_length=32000)]
+
+
+@main_tools.tool
+async def claw_reply_connectors(ctx: RunContext[AgentContext]) -> list[dict[str, str]]:
+    """Find enabled reply connectors for the Project when there is no source connector ID."""
+    async with scope(ctx, "main") as (runtime, bound):
+        if not (environment_id := captured_workspace(bound.run)):
+            return []
+        async with short_session(runtime.storage) as session:
+            rows = await session.scalars(
+                select(Connector)
+                .where(
+                    Connector.claw_id == bound.claw.id,
+                    Connector.enabled,
+                    Connector.reply_environment_id == environment_id,
+                )
+                .order_by(Connector.name)
+                .limit(50)
+            )
+            return [{"id": row.id, "name": row.name, "platform": row.kind} for row in rows]
+
+
+@main_tools.tool
+async def claw_connector_reply(
+    ctx: RunContext[AgentContext],
+    connector_id: str,
+    destination: str,
+    content: ReplyValue,
+    operation: Literal[
+        "issue_comment",
+        "pr_comment",
+        "pr_review_comment",
+        "lark_reply",
+        "lark_send",
+        "lark_download",
+    ],
+    content_type: Literal["text", "markdown", "post", "interactive", "file", "image"] = "text",
+    source_item_id: str | None = None,
+) -> dict:
+    """Reply via a configured connector. GitHub destination: OWNER/REPO#NUMBER.
+
+    Lark reply destination: source message ID (om_...), with its opened source_item_id.
+    Lark send destination:
+    allowed chat ID (oc_...) or sender open ID (ou_...). Post and interactive
+    content take JSON; file and image take an Environment path or platform key.
+    For lark_download use the opened source item, its message ID as destination,
+    its attachment key as content, and content_type file or image.
+    A transport failure can leave the outcome unknown. Do not retry blindly.
+    """
+    async with scope(ctx, "main") as (runtime, bound):
+        async with transaction(runtime.storage) as session:
+            claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
+            run, _ = await workers.fence(session, runtime, claw, bound)
+            if claw.environment_id is None or captured_workspace(run) != claw.environment_id:
+                raise ModelRetry("This Run does not have the current Project Environment")
+            connector = await connectors.find(session, claw.id, connector_id)
+            if not connector.enabled:
+                raise ModelRetry("The chosen connector is disabled")
+            if connector.reply_environment_id != claw.environment_id:
+                raise ModelRetry("An admin must authorize replies in this Project Environment")
+            if connector.kind == "lark" and operation in ("lark_reply", "lark_download"):
+                source = await session.get(InboxItem, source_item_id) if source_item_id else None
+                if (
+                    source is None
+                    or source.claw_id != claw.id
+                    or source.kind != "lark"
+                    or not source.source_key.startswith(f"{connector.id}:")
+                    or source.source.get("message_id") != destination
+                    or source.read_at is None
+                ):
+                    raise ModelRetry("Choose an opened Lark Inbox item for this connector")
+                if operation == "lark_download" and not any(
+                    isinstance(attachment, dict)
+                    and attachment.get("key") == content
+                    and attachment.get("kind") == content_type
+                    for attachment in source.source.get("attachments", [])
+                ):
+                    raise ModelRetry("Choose an attachment on that Lark Inbox item")
+            args = reply_arguments(
+                connector.kind, connector.config, destination, content, operation, content_type
+            )
+            organization_id = await session.scalar(
+                select(WorkspaceRow.organization_id).where(WorkspaceRow.id == claw.workspace_id)
+            )
+            token = (
+                connectors.credential(runtime, organization_id, connector)
+                if organization_id
+                else None
+            )
+        if not token:
+            return {"state": "not configured"}
+        try:
+            variables = await connectors.command_environment(
+                connector.kind, connector.id, connector.config, token
+            )
+        except (httpx.HTTPError, ValueError):
+            return {"state": "credential rejected or unavailable"}
+        try:
+            result = await project_cli.command(
+                ctx.deps.environment,
+                project_cli.REPLY_CLI,
+                args,
+                variables={**variables, "GH_DEBUG": "", "DEBUG": "", "LARKSUITE_CLI_DEBUG": ""},
+                timeout=40,
+            )
+        except EnvironmentError:
+            return {"state": "unknown", "message": "The Project command did not report an outcome."}
+        if result.status.exit_code == 127:
+            return {"state": "not installed"}
+        if result.status.exit_code != 0:
+            return {"state": "unknown", "message": "The CLI did not confirm delivery."}
+        output = (result.output.stdout.inline or b"").decode(errors="replace")
+        for secret in (token, variables.get("LARKSUITE_CLI_TENANT_ACCESS_TOKEN")):
+            if secret:
+                output = output.replace(secret, "[redacted]")
+        return {"state": "downloaded" if operation == "lark_download" else "sent", "output": output}
+
+
+def reply_arguments(
+    kind: str, config: dict, destination: str, content: str, operation: str, content_type: str
+) -> tuple[str, ...]:
+    if "\x00" in content:
+        raise ModelRetry("Reply content cannot contain NUL")
+    if kind == "github":
+        settings = connectors.ExternalSettings.model_validate(config)
+        target = re.fullmatch(r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]{0,17})", destination)
+        if target is None or target[1].lower() not in {repo.lower() for repo in settings.channels}:
+            raise ModelRetry("Choose a configured GitHub repository and issue or PR number")
+        options = {
+            "issue_comment": ("issue", "comment"),
+            "pr_comment": ("pr", "comment"),
+            "pr_review_comment": ("pr", "review", "--comment"),
+        }
+        if operation not in options or content_type not in ("text", "markdown"):
+            raise ModelRetry("Choose a GitHub comment or comment-only review")
+        return (
+            "gh",
+            *options[operation],
+            target[2],
+            "--repo",
+            "github.com/" + target[1],
+            "--body=" + content,
+        )
+    settings = connectors.LarkSettings.model_validate(config)
+    if operation == "lark_download" and content_type in ("file", "image"):
+        return (
+            "lark-cli",
+            "im",
+            "+messages-resources-download",
+            "--as",
+            "bot",
+            "--message-id=" + destination,
+            "--file-key=" + content,
+            "--type=" + content_type,
+        )
+    if operation == "lark_reply" and re.fullmatch(r"om_[a-zA-Z0-9_-]{1,196}", destination):
+        args = ("lark-cli", "im", "+messages-reply", "--message-id", destination, "--as", "bot")
+    elif (
+        operation == "lark_send"
+        and destination.startswith("oc_")
+        and destination in settings.groups
+    ):
+        args = ("lark-cli", "im", "+messages-send", "--chat-id", destination, "--as", "bot")
+    elif (
+        operation == "lark_send"
+        and destination.startswith("ou_")
+        and settings.direct_messages
+        and destination in settings.senders
+    ):
+        args = ("lark-cli", "im", "+messages-send", "--user-id", destination, "--as", "bot")
+    else:
+        raise ModelRetry("Choose a Lark message ID or an allowed chat or user")
+    if content_type in ("post", "interactive"):
+        return (*args, "--msg-type", content_type, "--content=" + content)
+    return (*args, f"--{content_type}={content}")
+
+
+def captured_workspace(run: RunRow) -> str | None:
+    return next(
+        (
+            mount.get("environment_id")
+            for mount in run.environment_mounts
+            if mount.get("name") == "workspace"
+        ),
+        None,
+    )
+
+
+async def maintain_cli(
+    runtime: Runtime, bound: workers.Binding, ctx: RunContext[AgentContext]
+) -> bool:
+    environment_id = captured_workspace(bound.run)
+    if environment_id is None or environment_id != bound.claw.environment_id:
+        return False
+    lock = runtime.redis.lock(
+        f"claw:cli:{environment_id}", timeout=240, blocking_timeout=5, thread_local=False
+    )
+    async with lock:
+        async with transaction(runtime.storage) as session:
+            claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
+            await workers.fence(session, runtime, claw, bound)
+            if claw.environment_id != environment_id:
+                return False
+            update_id = claw.cli_update_id if claw.cli_update_state == "queued" else None
+        try:
+            outcome = await project_cli.provision(
+                ctx.deps.environment, update=update_id is not None
+            )
+        except EnvironmentError:
+            outcome = project_cli.Maintenance({}, True)
+        if not await lock.owned():
+            return False
+        async with transaction(runtime.storage) as session:
+            claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
+            await workers.fence(session, runtime, claw, bound)
+            if claw.environment_id != environment_id:
+                return False
+            # An update queued during an ordinary probe is left for the next Main execution.
+            if outcome.versions or not outcome.failed:
+                claw.cli_versions = outcome.versions
+            if update_id is not None and claw.cli_update_id == update_id:
+                claw.cli_update_state = "failed" if outcome.failed else "succeeded"
+        return not outcome.failed
+
+
 @main_tools.tool
 async def claw_unread(ctx: RunContext[AgentContext]) -> list[dict]:
     """List unread Inbox previews without opening items."""
@@ -127,7 +357,9 @@ async def claw_open(ctx: RunContext[AgentContext], item_id: str) -> dict | None:
         async def opened(item):
             connector_id = item.source.get("connector_id")
             if isinstance(connector_id, str) and item.source_key.startswith(f"{connector_id}:"):
-                await connectors.read_feedback(runtime, bound.claw.id, item.source)
+                await connectors.read_feedback(
+                    runtime, bound.claw.workspace_id, bound.claw.id, item.source
+                )
 
         async def guard(session, claw):
             await workers.fence(session, runtime, claw, bound)
@@ -338,39 +570,18 @@ class ClawCapability(AbstractCapability[AgentContext]):
         if bound is None or bound.role != self.role:
             return request_context
         notices = []
-        if ctx.run_step == 1:
-            try:
-                cli_available = await project_cli.provision(ctx.deps.environment)
-            except EnvironmentError:
-                cli_available = False
-            if not cli_available:
-                logger.warning("Project CLI setup failed", extra={"claw_id": bound.claw.id})
-                notices.append("Project CLI setup failed. Check the Environment before replying.")
         if self.role == "main":
-            checked_at = datetime.now(UTC)
-            if ctx.run_step == 1 and (
-                bound.claw.cli_checked_at is None
-                or checked_at - bound.claw.cli_checked_at >= timedelta(minutes=15)
-            ):
-                states = await project_cli.check_accounts(ctx.deps.environment)
+            if ctx.run_step == 1:
                 try:
-                    async with transaction(runtime.storage) as session:
-                        claw = await inbox.lock_claw(
-                            session, bound.claw.workspace_id, bound.claw.id
-                        )
-                        await workers.fence(session, runtime, claw, bound)
-                        if claw.environment_id == next(
-                            (
-                                mount.get("environment_id")
-                                for mount in bound.run.environment_mounts
-                                if mount.get("name") == "workspace"
-                            ),
-                            None,
-                        ):
-                            claw.cli_observation = states
-                            claw.cli_checked_at = checked_at
-                except (ServiceError, inbox.ClawNotFound):
-                    return request_context
+                    cli_available = await maintain_cli(runtime, bound, ctx)
+                except (ServiceError, RedisError, inbox.ClawNotFound):
+                    cli_available = False
+                if not cli_available:
+                    logger.warning("Project CLI setup failed", extra={"claw_id": bound.claw.id})
+                    notices.append(
+                        "Project CLI setup or update did not complete. "
+                        "Check Project settings before replying."
+                    )
             if ctx.run_step == 1 and bound.claw.worker_models:
                 notices.append(
                     "Configured Worker model guidance: "

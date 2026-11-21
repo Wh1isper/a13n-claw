@@ -19,7 +19,9 @@ Filter arrivals by admission result. Open a record to inspect its message, sourc
 
 ## Connectors
 
-Add GitHub or Lark for the selected Claw. For Lark, enable the long connection in the platform and subscribe to `im.message.receive_v1`. Fill in the App and bot IDs, choose the region, and allow the intended senders and groups. Mount the Lark App secret at `$CLAW_SECRET_DIR/<connector-id>` in the Service process. Last received reports accepted activity, separately from configured and enabled state. For GitHub, see [GitHub intake](./github.md).
+Add GitHub or Lark for the selected Claw. On Lark or Feishu, enable bot capability, enable the long connection, subscribe to `im.message.receive_v1`, grant bot send permissions, and publish the app version. Enter the App ID, App secret, bot open ID, region, and allowed senders and groups in Claw. Add the bot to each allowed group where it should respond.
+
+Save the connector, reopen it, and select **Check credential** to verify authentication. For Lark, **Listener** reports the observed long-connection state; **Last received** records the last eligible event. Test the full path with an allowlisted message that Main should reply to. The credential check does not send anything. To rotate the credential, enter a replacement; a blank field preserves the saved value. Enable replies only for the trusted Project Environment. For GitHub, see [GitHub intake](./github.md).
 
 ## Schedules
 

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from hashlib import sha256
 from typing import Annotated, Literal
 
+import httpx
 import pydantic
 from a13n_service.infra.cursors import keyset_page
 from a13n_service.infra.db import now, short_session, transaction
@@ -100,8 +101,8 @@ class ProjectStatus(BaseModel):
     browser_name: str | None
     browser: str | None
     automation_account: str
-    cli: dict[str, project_cli.CLIStatus] | None
-    cli_checked_at: datetime | None
+    cli_versions: dict[str, str] | None
+    cli_update_state: project_cli.UpdateState | None
 
 
 class Overview(BaseModel):
@@ -475,10 +476,28 @@ async def overview(
                 browser_name=browser.name if browser else None,
                 browser=browser.status if browser else ("missing" if claw.browser_id else None),
                 automation_account=account_status,
-                cli=claw.cli_observation,
-                cli_checked_at=claw.cli_checked_at,
+                cli_versions=claw.cli_versions,
+                cli_update_state=claw.cli_update_state,
             ),
         )
+
+
+@router.post("/claws/{claw_id}/project/cli-update", status_code=202, name="claw_update_cli")
+async def update_cli(
+    claw_id: ResourceId, workspace_id: WorkspaceId, actor: Actor, runtime: CurrentRuntime
+) -> dict[str, str]:
+    async with transaction(runtime.storage) as session:
+        await workspace_scope(session, actor, workspace_id, "admin")
+        try:
+            claw = await inbox.lock_claw(session, workspace_id, claw_id)
+        except inbox.ClawNotFound:
+            raise not_found("claw", claw_id) from None
+        if claw.environment_id is None:
+            raise conflict("claw", claw.id, "environment_required")
+        if claw.cli_update_state != "queued":
+            claw.cli_update_id = inbox.new_id("cup")
+            claw.cli_update_state = "queued"
+    return {"state": "queued"}
 
 
 class ModelUsageView(BaseModel):
@@ -853,18 +872,49 @@ class ConnectorInput(BaseModel):
         return self
 
 
+class ConnectorWrite(ConnectorInput):
+    credential: pydantic.SecretStr | None = None
+    reply_environment_id: ResourceId | None = None
+
+    @pydantic.field_validator("credential")
+    @classmethod
+    def valid_credential(cls, secret: pydantic.SecretStr | None) -> pydantic.SecretStr | None:
+        if secret is not None:
+            value = secret.get_secret_value()
+            if (
+                not 1 <= len(value) <= 8192
+                or not value.isascii()
+                or not all(33 <= ord(char) <= 126 for char in value)
+            ):
+                raise ValueError("Enter a non-empty platform credential without spaces")
+        return secret
+
+
 class ConnectorView(ConnectorInput):
     model_config = ConfigDict(from_attributes=True)
     id: str
     last_event_at: datetime | None
     created_at: datetime
     credential_mounted: bool = False
+    credential_configured: bool = False
+    reply_environment_id: str | None = None
+    listener_status: str | None = None
 
 
-def connector_view(row: Connector) -> ConnectorView:
+async def connector_view(runtime: CurrentRuntime, row: Connector) -> ConnectorView:
     view = ConnectorView.model_validate(row)
     mounted = connectors.secret_path(row.id)
-    return view.model_copy(update={"credential_mounted": bool(mounted and mounted.is_file())})
+    return view.model_copy(
+        update={
+            "credential_mounted": bool(mounted and mounted.is_file()),
+            "credential_configured": row.credential is not None,
+            "listener_status": await connectors.listener_status(runtime, row.id)
+            if row.enabled
+            and row.kind == "lark"
+            and (row.credential or (mounted and mounted.is_file()))
+            else None,
+        }
+    )
 
 
 @router.get("/claws/{claw_id}/connectors", name="claw_list_connectors")
@@ -887,7 +937,10 @@ async def list_connectors(
             limit=limit,
             newest_first=False,
         )
-    return {"items": [connector_view(row) for row in rows], "next_cursor": next_cursor}
+    return {
+        "items": [await connector_view(runtime, row) for row in rows],
+        "next_cursor": next_cursor,
+    }
 
 
 @router.get("/claws/{claw_id}/connectors/{connector_id}", name="claw_connector_detail")
@@ -900,13 +953,18 @@ async def connector_detail(
     async with short_session(runtime.storage) as session:
         await get_claw(session, workspace_id, claw_id)
         row = await connectors.find(session, claw_id, connector_id)
-    return connector_view(row)
+    return await connector_view(runtime, row)
+
+
+def check_reply_environment(claw: Claw, body: ConnectorWrite) -> None:
+    if body.reply_environment_id is not None and body.reply_environment_id != claw.environment_id:
+        raise conflict("claw", claw.id, "reply_environment_changed")
 
 
 @router.post("/claws/{claw_id}/connectors", status_code=201, name="claw_create_connector")
 async def create_connector(
     claw_id: ResourceId,
-    body: ConnectorInput,
+    body: ConnectorWrite,
     workspace_id: WorkspaceId,
     actor: Actor,
     runtime: CurrentRuntime,
@@ -916,22 +974,29 @@ async def create_connector(
         claw = await get_claw(session, workspace_id, claw_id)
         if body.kind != "lark":
             await main_thread.account(session, runtime, scope, str(body.config["principal_id"]))
-        await inbox.lock_claw(session, workspace_id, claw_id)
+        claw = await inbox.lock_claw(session, workspace_id, claw_id)
+        check_reply_environment(claw, body)
         if await session.scalar(
             select(Connector.id).where(Connector.claw_id == claw.id, Connector.name == body.name)
         ):
             raise conflict("connector", body.name, "name_in_use")
-        row = Connector(id=inbox.new_id("con"), claw_id=claw.id, **body.model_dump())
+        row = Connector(
+            id=inbox.new_id("con"), claw_id=claw.id, **body.model_dump(exclude={"credential"})
+        )
+        if body.credential is not None:
+            row.credential = connectors.protect(
+                runtime, scope.organization_id, row.id, body.credential.get_secret_value()
+            )
         session.add(row)
         await session.flush()
-    return connector_view(row)
+    return await connector_view(runtime, row)
 
 
 @router.put("/claws/{claw_id}/connectors/{connector_id}", name="claw_update_connector")
 async def update_connector(
     claw_id: ResourceId,
     connector_id: ResourceId,
-    body: ConnectorInput,
+    body: ConnectorWrite,
     workspace_id: WorkspaceId,
     actor: Actor,
     runtime: CurrentRuntime,
@@ -939,7 +1004,8 @@ async def update_connector(
     async with transaction(runtime.storage) as session:
         scope = await workspace_scope(session, actor, workspace_id, "admin")
         claw = await get_claw(session, workspace_id, claw_id)
-        await inbox.lock_claw(session, workspace_id, claw_id)
+        claw = await inbox.lock_claw(session, workspace_id, claw_id)
+        check_reply_environment(claw, body)
         row = await connectors.find(session, claw.id, connector_id)
         if row.kind != body.kind:
             raise conflict("connector", connector_id, "connector_kind_is_immutable")
@@ -953,7 +1019,35 @@ async def update_connector(
         ):
             raise conflict("connector", body.name, "name_in_use")
         row.name, row.enabled, row.config = body.name, body.enabled, body.config
-    return connector_view(row)
+        if "reply_environment_id" in body.model_fields_set:
+            row.reply_environment_id = body.reply_environment_id
+        if body.credential is not None:
+            row.credential = connectors.protect(
+                runtime, scope.organization_id, row.id, body.credential.get_secret_value()
+            )
+    return await connector_view(runtime, row)
+
+
+@router.post("/claws/{claw_id}/connectors/{connector_id}/check", name="claw_check_connector")
+async def check_connector(
+    claw_id: ResourceId,
+    connector_id: ResourceId,
+    workspace_id: WorkspaceId,
+    actor: Actor,
+    runtime: CurrentRuntime,
+) -> dict[str, str]:
+    async with short_session(runtime.storage) as session:
+        scope = await workspace_scope(session, actor, workspace_id, "admin")
+        await get_claw(session, workspace_id, claw_id)
+        row = await connectors.find(session, claw_id, connector_id)
+        token = connectors.credential(runtime, scope.organization_id, row)
+    if token is None:
+        return {"state": "not configured"}
+    try:
+        await connectors.check(row.kind, row.id, row.config, token)
+    except (httpx.HTTPError, ValueError):
+        return {"state": "failed"}
+    return {"state": "verified"}
 
 
 @router.post(

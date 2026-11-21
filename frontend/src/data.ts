@@ -50,8 +50,8 @@ export interface Overview {
     browser_name: string | null;
     browser: string | null;
     automation_account: string;
-    cli: { github: string; lark: string } | null;
-    cli_checked_at: string | null;
+    cli_versions: Record<string, string> | null;
+    cli_update_state: "queued" | "succeeded" | "failed" | null;
   };
 }
 export interface Worker {
@@ -85,6 +85,9 @@ export interface Connector {
   enabled: boolean;
   last_event_at: string | null;
   credential_mounted: boolean;
+  credential_configured: boolean;
+  listener_status: string | null;
+  reply_environment_id: string | null;
   config: Record<string, unknown>;
 }
 export interface Schedule {
@@ -134,7 +137,7 @@ export const threadPath = (
 ) =>
   `/workspace/${workspace}/sessions/${session}/threads/${thread}${run ? `/runs/${run}` : ""}`;
 
-async function json<T>(response: Response): Promise<T> {
+export async function json<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new Error(
