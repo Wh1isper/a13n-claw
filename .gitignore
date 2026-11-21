@@ -21,6 +21,5 @@ out/
 .idea/
 /.worktrees/
 /a13n_claw/service_app/static/
-/a13n_claw/static/
 /frontend/.console-sdk/
 /.a13n-dev/

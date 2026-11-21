@@ -1,6 +1,8 @@
 **
 !dist/
 !dist/*.whl
+!build/
+!build/image-requirements.txt
 !deploy/
 !deploy/docker/
 !deploy/docker/Dockerfile

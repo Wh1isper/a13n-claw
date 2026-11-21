@@ -7,8 +7,10 @@ LABEL org.opencontainers.image.title="a13n Claw" \
       org.opencontainers.image.licenses="BSD-3-Clause"
 USER root
 COPY dist/*.whl /tmp/claw-wheel/
-RUN /usr/local/bin/python -m pip --python /app/.venv install --no-cache-dir /tmp/claw-wheel/*.whl \
+COPY build/image-requirements.txt /tmp/image-requirements.txt
+RUN /usr/local/bin/python -m pip --python /app/.venv install --no-cache-dir --require-hashes -r /tmp/image-requirements.txt \
+    && /usr/local/bin/python -m pip --python /app/.venv install --no-cache-dir --no-deps /tmp/claw-wheel/*.whl \
     && /usr/local/bin/python -m pip --python /app/.venv check \
     && /app/.venv/bin/python -c 'from importlib.metadata import version; import sys; assert version("a13n-claw") == sys.argv[1]; assert version("a13n-service") == "0.4.1"' "${BUILD_VERSION}" \
-    && rm -r /tmp/claw-wheel
+    && rm -r /tmp/claw-wheel /tmp/image-requirements.txt
 USER app
