@@ -458,7 +458,18 @@ def exercise_lifecycle(
 
     monkeypatch.setattr(workers, "assign", replay_assign)
     recorded = workers._record_notices
+    notify = main_thread.notify
     worker_seals = []
+
+    async def notify_from_seal(runtime, workspace_id, claw_id, **kwargs):
+        if claw_id == claw["id"] and not (
+            kwargs.get("delivery_id") == received["delivery_id"] or kwargs.get("completed_run_id")
+        ):
+            # Worker reports, terminal notices, and the sweep can win the idle slot first.
+            return
+        await notify(runtime, workspace_id, claw_id, **kwargs)
+
+    monkeypatch.setattr(main_thread, "notify", notify_from_seal)
 
     async def record_from_seal(runtime, workspace_id, claw_id, thread_id, *, event=None):
         if claw_id == claw["id"] and event is None:
@@ -563,6 +574,7 @@ def exercise_lifecycle(
 
     assert len(client.portal.call(terminal_notices)) == 1
     monkeypatch.setattr(workers, "_record_notices", recorded)
+    monkeypatch.setattr(main_thread, "notify", notify)
     reports = [item for item in read(f"{path}/deliveries")["items"] if item["origin"] == "worker"]
     assert any(
         read(f"{path}/deliveries/{item['id']}")["content"] == "Worker result" for item in reports
