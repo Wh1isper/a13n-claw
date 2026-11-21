@@ -278,7 +278,7 @@
   width: max-content;
   max-width: 100%;
 }
-@media (min-width: 380px) {
+@media (min-width: 1100px) {
   .headerActions {
     flex-wrap: nowrap;
   }
