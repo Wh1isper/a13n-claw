@@ -2,75 +2,129 @@
 
 ## Product Position
 
-Claw brings Harness UI's interactive Agent experience to messaging platforms. Users send work, add context during execution, answer questions and approvals, stop a selected operation, collaborate with workers, and receive results and files in IM. Claw adapts those interactions to each platform while the embedded Host keeps its native execution and collaboration semantics.
+Claw brings interactive agent work to messaging platforms. Users start work, add context, work with persistent workers, and receive results and files through IM. A13n Console and headless clients are operator surfaces for inspecting progress, responding to native questions and approvals, and stopping a selected operation.
 
-IM is the primary conversation surface; CLI/API provide setup, inspection, and operations. The [operator Console](06-api-console-and-access.md) adds consumption, read-only run investigation, models/accounts, and schedules. The messaging path operates independently of browser presence.
-
-Claw deploys as one process with one embedded `HarnessUiApp`. Direct Python calls connect product services to the App. The supported dependency is the `a13n-harness-ui` package; Harness remains its execution foundation. There is no internal HTTP hop or separately managed Harness UI service.
+One Claw App installation manages multiple Claws in the same Service deployment. Each Claw has its own connector configuration, one Project, and one Main Thread that coordinates its worker Threads. A connector is configured for a Claw; Claw does not select an assistant from message content. All of a Claw's connectors share its Main Thread, Agent, and trust and authority domain. Use separate Claws and resources when isolation is required. Each Claw keeps its own Inbox and heartbeat. Selecting the same Service agent does not join two Claws' conversations.
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-    Frontend[Claw frontend and API clients] --> API
-    Platforms[Messaging platforms] <--> Bridges
-    subgraph Process[One Claw process]
-        API[Claw HTTP and realtime API] --> Product
-        API --> Host
-        Bridges[Embedded adapters] --> Product
-        Product[Inbox, routing, automation, delivery] --> Host
-        Host[Embedded HarnessUiApp] --> Harness
-        Harness[Harness execution] --> Tools[Claw product Capabilities]
-        Tools --> Product
-        Product --> Bridges
+    Platforms[Messaging platforms]
+    Clients[Headless clients]
+    subgraph Deployment[A13n Service deployment]
+        Console[A13n Console with Claw pages]
+        App[Claw App plugin]
+        subgraph A[One Claw]
+            Connector[Connectors and Claw input]
+            Inbox[Inbox]
+            Main[Main Thread]
+            Workers[Worker Threads]
+            Notices[Worker terminal notifier]
+            Heartbeat[Idle heartbeat]
+            ClawSchedule[Claw Main-mode schedules]
+            Connector --> Inbox
+            Inbox -->|Wake or steer with unread preview| Main
+            Main -->|Open a selected message| Inbox
+            Main -->|Delegate or continue| Workers
+            Workers -->|Messages| Inbox
+            Workers -->|Terminal status| Notices
+            Notices -->|Attempt notice| Inbox
+            Heartbeat -->|Wake Main| Main
+            ClawSchedule -->|Admit occurrence| Inbox
+        end
+        B[Other Claws]
+        Service[Service execution and resources]
+        Scheduler[Service schedules: fresh Thread]
+        Project[Claw Project]
+        Work[Service Environment and optional Browser]
+        Console --> App
+        App --> A
+        App --> B
+        App -->|In-process operations| Service
+        Service -->|OrganizationSweep cadence| ClawSchedule
+        Scheduler -->|Fresh Thread occurrence| Service
+        Main -->|Use reply CLIs| Work
+        Main --> Project
+        Workers --> Project
+        Project --> Work
+        Service --> Work
     end
-    Host --> HostState[Host-owned configuration and saved state]
-    Product --> BusinessState[Claw-owned business state]
-    Host --> Environment[Host-managed environments and files]
+    Platforms -->|Incoming messages| Connector
+    Connector -->|Intake feedback| Platforms
+    Work -->|Platform-native replies| Platforms
+    Clients --> Connector
 ```
 
-The diagram describes responsibility, not a required class hierarchy. Product tools invoke bounded Claw operations with Host-bound caller context. They do not start a nested Host, access private execution objects, or synchronously wait for another Agent to complete.
+Service owns Agents, Threads, Entries, Runs, fresh-Thread schedules and their occurrences, models and model-provider configuration, along with resource authorization and lifecycles. Main and worker are roles of native Service Threads, not separate Thread or Agent types. Claw owns its Project, connectors, Inbox, Main-mode schedules and their occurrences, Thread associations, and heartbeat condition. Its AppDatabase stores those business facts and references to the native resources; it does not mirror Service definitions or execution state.
 
-## Ownership
+## Project
 
-| Concern                                                              | Owner                        | Claw's role                                                   |
-| -------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------- |
-| Model, Agent, MCP, Skill, extension, and Project resources           | Harness UI                   | Present and edit through supported Host operations            |
-| Thread identity, composition, execution, decisions, and continuation | Harness UI                   | Select destinations, request operations, and present results  |
-| Coordinator roles, worker ownership, and subagents                   | Harness UI                   | Select Main and integrate product attention                   |
-| Environment selection, preparation, state, and lifecycle             | Harness UI and its providers | Offer product defaults and authorized controls                |
-| File-memory scopes, projection, and organization                     | Harness UI and Harness       | Expose the supported settings and views                       |
-| Channel identity, sender filtering, and routing                      | Claw                         | Normalize external context and apply product policy           |
-| Inbox dispositions and automation occurrences                        | Claw                         | Retain business intent and decide when to request execution   |
-| External message delivery                                            | Claw and platform adapters   | Retain explicit destinations and reconcile transport outcomes |
-| Product API, frontend, and external access policy                    | Claw                         | Authenticate clients and expose only intended operations      |
+Each Claw's [Project](04-project.md) gives Main and its workers a shared persistent working context. The [operator workflows](05-operator-workflows.md) cover setup, inspection, and recovery in A13n Console and headless operation.
 
-Claw stores references to Host Threads and observable operations. It does not mirror checkpoints, capture a second execution composition, implement a second worker graph, or manage a parallel environment pool. [Host integration](11-host-integration.md) owns the required embedding contract.
+## End-to-End Flow
 
-## Product Modes
+The connector addresses a specific Claw. The [Inbox](01-inbox.md) owns acceptance, unread previews, and read history. Claw-owned Main-mode scheduled occurrences also enter that Inbox; fresh-Thread schedules and occurrences remain Service-owned. The [Main Thread](02-main-thread.md) owns the choice of what to read, handle, or delegate. Service executes Main and its worker Threads in their Project context. Acceptance, opening an item, completing its work, and sending a reply are separate events.
 
-[One Thread mode](10-one-thread-mode.md) is the default for new Instances: eligible external messages enter a durable Inbox for one canonical Main Host Thread. Main uses Host-native workers and explicitly publishes external messages through Claw. Per-Channel mode reuses one conversation Thread per Channel; per-trigger mode creates a fresh task Thread for each eligible event. Both are explicit alternatives. Mentions-only is an independent admission filter for all three modes.
+```mermaid
+sequenceDiagram
+    participant U as Lark user
+    participant C as Claw connector
+    participant I as Claw Inbox
+    participant M as Main Thread
+    participant W as Managed worker Thread
+    participant S as Service
+    participant N as Claw notifier
+    participant X as Reply CLI in the Project
+    participant P as Platform API
+    U->>C: Send a message
+    C->>I: Offer fan-in to the configured Claw
+    alt Unread capacity exhausted
+        I-->>C: Not accepted
+        C-->>U: Inbox full
+    else Accepted
+        I-->>C: Stored as unread
+        I-->>M: Wake or attempt immediate steer with a preview
+        M->>I: Open the selected message
+        I-->>M: Body, now marked Read
+        opt Connector provides read feedback
+            I-->>C: Message opened
+            C-->>U: Read indicator
+        end
+        opt Main delegates part of the work
+            M->>W: Assign work in the Project
+            opt Worker sends progress or a question
+                W->>I: Submit message
+                alt Inbox full
+                    I-->>W: Not accepted
+                else Accepted
+                    I-->>W: Stored as unread
+                    I-->>M: Wake or steer with a preview
+                    M->>I: Open the selected message
+                    I-->>M: Worker message
+                end
+            end
+            opt Worker Run reaches a terminal status
+                W-->>S: Run reaches terminal status
+                S-->>N: Terminal status
+                N->>I: Attempt lightweight terminal notice
+                opt Notice accepted and opened
+                    M->>I: Open notice
+                    I-->>M: Thread, Run and status
+                    M->>S: Inspect saved worker outcome
+                end
+            end
+        end
+        opt Main chooses to reply
+            M->>X: Reply to the selected destination
+            X->>P: Send in the platform format
+            P-->>U: Deliver the reply
+        end
+    end
+```
 
-Host Projects and configuration selections are retained as Host concepts. In per-Channel and per-trigger modes, each Channel maps to a stable Host Project so its Threads share Channel memory plus Global memory. One Thread mode uses Main's shared Project and Global memory across all participating Channels, without Channel memory partitions or a Host memory extension. [Memory](09-memory.md) owns the mapping and transition rules; Claw adds no separate memory store.
+## Integration and Distribution
 
-## End-to-End Work Path
+Claw uses A13n's App scaffold and contributes its frontend directly to A13n Console. It uses Service's supported in-process operations rather than maintaining a separate execution runtime. Shared capabilities belong in their A13n subsystem; Claw owns the messaging and operator workflows that use them.
 
-1. An adapter authenticates an external event; Claw checks sender, group filter, and qualified event identity.
-2. Claw retains the eligible message and routing context before acknowledging business acceptance.
-3. Product dispatch checks actionable work, current policy, and Host availability, then records an attempt before calling the Host. This happens without a separate human Inbox approval step.
-4. Claw selects public submission or exact-operation steering; the Host owns admission, composition, decisions, execution, and checkpoint publication. Claw presents supported observations and exact controls back through the adapter.
-5. In One Thread mode, Main reads and explicitly settles Inbox work through Claw Capabilities. Host completion alone does not settle an item.
-6. An authorized send creates a separate delivery record. Adapter failure is reconciled from that record, without rerunning the Agent.
-7. After restart, Claw rediscovers business backlog and checks Host state. Ambiguously affected items or effects remain blocked rather than being replayed; unrelated native interaction remains available.
-
-Explicitly targeted human conversation uses the Host interaction model without a durable Claw prompt queue. Ordinary IM messages use the selected mode's retained ingress. Native worker messages and coordinator follow-up coexist with Inbox drain under the [execution contract](03-execution-lifecycle.md). Automation retains occurrences as business intent and uses the same product-to-Host boundary. [Bridges](07-bridges-and-clients.md#interactive-im-behavior) owns the IM action mapping and feedback.
-
-## Lifetime
-
-Claw owns process startup and shutdown. It opens its business store and the embedded Host through each owner's lifecycle, validates the selected product bindings, and enables dispatch only after the required capabilities are ready. A failed Host startup prevents new execution; it does not erase retained Inbox or deliveries.
-
-Shutdown stops new ingress and automated dispatch, settles product mutations and outbound attempts, then drains or closes Host execution through its supported lifecycle before closing stores. Product services used by active tools remain available during that drain. Browser disconnection is unrelated to shutdown. Only one Claw process owns an Instance; another interactive Host process must not concurrently manage the same embedded store.
-
-## Non-Goals
-
-Claw does not implement distributed scheduling, tenant isolation, a general Host SDK framework, interchangeable local/HTTP backends, a separate execution engine, or recovery of arbitrary operating-system processes. It does not require changing Harness UI into a durable workflow service. The [source boundary](repository-model.md) distinguishes this target from current implementation and publication.
+Claw and Service share a major/minor release line with independent patch numbers. Claw develops and validates against one exact Service version in that line. Its release image derives from that published Service image and includes the Claw App and Console contribution.

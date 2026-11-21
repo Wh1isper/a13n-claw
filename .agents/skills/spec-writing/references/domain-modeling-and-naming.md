@@ -37,7 +37,7 @@ Do not rename stable wire fields merely to improve internal names. A terminology
 
 ## Version and Revision Semantics
 
-Distinguish resource identity, mutable definition versions, captured Run composition, and continuation checkpoint identity. Follow [configuration capture](../../../../spec/02-configuration-and-composition.md) and [persistence](../../../../spec/04-persistence-and-recovery.md) for their owners and lifecycles.
+Distinguish resource identity, mutable definition versions, captured Run composition, and continuation checkpoint identity.
 
 When a contract needs versioning, define what changes the version, which values it covers, and how stale updates or incompatible readers are handled. Do not invent another counter or freeze independently mutable metadata to satisfy a naming pattern. The high-level design does not prescribe a wire format or concurrency token. Protocols, artifacts, packages, and external systems retain their own version semantics.
 

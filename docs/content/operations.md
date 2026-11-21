@@ -1,126 +1,16 @@
 ---
 title: Operations
-description: Operate the embedded Host and reconcile product uncertainty without replaying effects.
+description: Inspect delivery state, configure access, and preserve Project resources.
 ---
 
 ## Access and secrets
 
-The service is for a trusted operator and explicitly allowed messaging participants. Keep the default loopback listener, or use a trusted TLS reverse proxy. `/api` requires an Authorization Bearer token and rejects foreign browser Origins. Static content grants no authority. Keep tokens out of URLs and logs.
-
-The operator token is in `operator.token`. The API grants that operator full product/Host management access. Messaging grants are separate: `allowed_senders` permits intake, and `operators` permits associated IM controls. Shared context and broad native execution authority mean this is not hostile multi-tenancy.
-
-To rotate a token, stop the server and run:
-
-```bash
-a13n-claw reset-operator --root /absolute/private/claw-root
-```
-
-The command takes the same Instance lease and atomically replaces the private token file. Restart to use it. It rejects standalone/uninitialized roots before changing credentials. Restrict filesystem permissions; Windows operators must enforce equivalent ACLs. Provider and Lark secrets can be supplied through environment references. Native Host authentication/storage retains its own security contract.
-
-## Environment authority
-
-Native Host Projects, environments, files, and memory own working context. The starter workspace must exist and be separate from the Instance directory. Main and workers select the shared Project; Channel Projects can still share working files and all use Global memory. Thread history does not isolate shared working files.
-
-The starter selects native files, shell, and Skills capabilities. Actual operations remain subject to native permission and environment policy. Local shell executes as the server OS account and is **not a sandbox**. Host-account code can reach outside logical file roots. Review native environment selections before granting participants access. The service container is a distribution boundary, not automatically a separate sandbox for each worker.
-
-## Decisions, cancellation, and recovery
-
-Use `threads active`, `threads decisions`, `operations show`, and `threads history`. Submit one native decision batch with its exact continuation ID. Include every answer you intend to supply: omitted requests are declined by the Host, not left pending. Invalid answers retain the pending decision and can be corrected; an uncertain submission stays blocked for reconciliation. Ordinary chat is not an approval. Cancellation requests target one receipt; they do not roll back tools or establish that an external effect failed.
-
-Direct operator submission retains native Host admission semantics and is never automatically retried. Receipts are process-local. After restart, inspect saved Thread history and exact available execution evidence. Missing correlation means unknown, not failed. The product stores its own Inbox/dispatch/delivery evidence without writing Host tables.
-
-### Retained tools and Thread copies
-
-Stopping a Run and cancelling a retained tool are separate operations. A shell can remain alive after `operations cancel RECEIPT_ID`. Inspect and cancel its exact execution explicitly:
-
-```bash
-a13n-claw tools list THREAD_ID --offset 0 --limit 20
-a13n-claw tools cancel THREAD_ID EXECUTION_ID
-a13n-claw threads configuration THREAD_ID
-a13n-claw threads fork THREAD_ID
-```
-
-Tool cancellation requests native cancellation; inspect the execution again to confirm its final status. Channel operators can use `/claw tools INBOX_ID [OFFSET]` and `/claw cancel-tool INBOX_ID EXECUTION_ID` for work associated with their current Channel. These commands retain mutation intent and do not automatically repeat an uncertain cancellation.
-
-Fork copies an ordinary independent Thread's saved conversation and Thread-owned files into a new idle Thread. It does not copy unsaved in-flight output, create a new workspace, move a Channel binding, or start inference. Main/coordinators, owned workers, child Threads, and memory Threads cannot be forked. Fork has no idempotency key: after a lost response, inspect the Thread list before considering another call.
-
-### Dispatch attempts
-
-Inspect `a13n-claw attempts`. Interrupted calls and receipts lacking exact evidence remain blocked. Inspect actual effects before explicitly resolving an attempt:
-
-```json
-{"action": "settle", "evidence": "Reviewed saved history and external effects; no further processing required"}
-```
-
-Save this as a file and call `a13n-claw api POST /api/attempts/DISPATCH_ID/resolve --file resolution.json`. `settle` ends the associated business obligations. `retry` explicitly permits another attention/input attempt after review; it can repeat effects if the operator's assessment is wrong. Neither option manufactures Host completion evidence.
-
-### Deliveries
-
-Inspect `deliveries`. A send has `pending`, `sending`, `sent`, `not_sent`, or `unknown` status. Current source/destination authority is checked before each attempt. Unknown sends block automatic resend. Reconcile against platform evidence:
-
-```json
-{"outcome": "not_sent", "evidence": "Platform inspection confirms no message", "retry": true}
-```
-
-POST this body to `/api/deliveries/DELIVERY_ID/resolve`. `retry` defaults to false and is allowed only for confirmed non-send. Saved content and identity are retained. Never rerun the Agent to replace an uncertain delivery.
-
-### Target creation and Inbox disposition
-
-`targets` lists retained creation intents. If the proposed Host Thread exists with the expected Project and role, POST `{"key":"main","action":"adopt","evidence":"Inspected matching Thread"}` to `/api/targets/resolve`. Otherwise, an operator-confirmed `retry` retains the same proposed Thread ID. Claw never silently replaces canonical Main.
-
-For a versioned business disposition, PATCH `/api/inbox/INBOX_ID` with `{"expected_version":1,"disposition":"handled","reason":"Reviewed result"}`. `pending` reopens a settled/deferred item. Unknown dispatches must be reconciled separately first; settlement is not an uncertainty bypass.
-
-A pending native decision blocks dispatch to that Thread. Revoked source authority, missing capabilities, and no-progress backoff have visible reasons. There is no universal Claw pause gate over native collaboration. Stop the service to stop intake; native stop controls one operation.
-
-## Routing mode on restart
-
-Set `mode` in `claw.yaml` and restart Claw. New messages use `one_thread`, `per_channel`, or `per_trigger` as configured. Per-Channel and per-trigger modes need a valid Host `project_id` on each Channel. Existing work does not have to finish before another mode can start. Live product reload does not change the routing mode.
-
-Claw provides no mode-transition command, preview, task migration, or cross-mode continuation guarantee. Inbox items from other modes remain stored but are excluded from automatic dispatch and delivery; they cannot occupy the current mode's dispatch batch. Switching back can make matching-mode items eligible again under normal dispatch rules. Native Host restart recovery is unchanged, so already-admitted Host work may resume independently. A mode change is not a cancellation operation.
-
-Existing histories, workers, and memory stay under the Host's ownership. Retained Channel Threads keep their Project references; there is no automatic knowledge transfer. Main stays in its fixed Project. To select another Main Project or start with completely independent history, initialize a fresh Instance root and preserve the old root.
-
-## Realtime observation
-
-Trusted operators can stream `GET /api/threads/THREAD_ID/events` using the same Bearer header and same-origin rules as other APIs. This SSE endpoint observes one root lineage through the embedded Host; it starts no inference. Every connection starts with a `snapshot`, followed by any finite `replay` frames and then bounded `observation` frames. Payloads retain native Host identities and presentation semantics.
-
-A `refetch` frame means the snapshot changed, the observer fell behind, or the Host stream closed. Discard the partial presentation and reconnect for a fresh snapshot; refetch history and exact operation state as needed. Reconnect always bootstraps anew, including after a process restart; `Last-Event-ID` is not a durable replay cursor. EOF and client disconnect do not mean execution completed and do not cancel work. Keep credentials in request headers, never query strings.
+Use a workspace service account with grants scoped to the resources each Claw needs. Save built-in connector credentials in Claw. Configure accounts for any other tools separately inside the Project Environment. A Project shares working files, Memory Space and optionally a Browser across Main and its workers. Review grants before using an existing resource.
 
 ## Diagnostics and retention
 
-`a13n-claw diagnostics` reports content-free counts, unresolved effects, missing Projects, configuration state, and adapter readiness. It does not expose prompts or tokens and does not probe model providers.
+Use [Console](./console.md) to inspect connector intake, Inbox status, and exact Runs. An accepted arrival, a read Inbox item, a finished Run, and a platform reply are separate observations. For an uncertain external reply, inspect platform history before retrying.
 
-Preview before pruning:
+## Backup and restore
 
-```bash
-a13n-claw retention --older-than-days 30
-a13n-claw retention --older-than-days 30 --apply
-```
-
-Each application processes a bounded batch. Retention removes eligible settled Inbox content and its attachment bytes, preserving deduplication tombstones and all dispatch, delivery, resolution, and unresolved-work evidence. Host history, memory, schedule results, and working directories have separate owners.
-
-## Backup and restart
-
-Stop the service and quiesce working-data writers before backup. Preserve the whole Instance directory, external paths selected by `host_configuration`/`host_data`, and Project working directories. The default layout contains:
-
-- `claw.yaml`: product configuration.
-- `business.sqlite3` and journal files: Inbox, dispatch, target creation, delivery, and resolution evidence.
-- `operator.token` and lease file.
-- `host/`: native configuration, state, Thread files, and memory under their native owners.
-
-For a self-contained Instance root, use the offline checksummed commands:
-
-```bash
-a13n-claw backup --root /private/claw --destination /backups/claw-snapshot \
-  --acknowledge-external-state
-a13n-claw restore --root /private/restored-claw --backup /backups/claw-snapshot \
-  --acknowledge-external-state
-```
-
-The destination snapshot must be new; restore requires an empty root and verifies the complete inventory. Directory enumeration failures abort the snapshot. An incomplete restore leaves a marker that blocks startup. External Host paths and symlinks require an operator-managed coordinated snapshot instead. Workspaces, external memory/Skills, executor home/cache, browser profile/downloads, and environment credentials need separate backup. Stop executor writers and use consistent volume snapshots; the Claw lease cannot quiesce them.
-
-Configuration export alone is not a backup. Restore with matching versions and restrictive permissions, review absolute paths (they are intentionally preserved), reconcile external effects, then start exactly one owner. The product migrates only its business database; the Host owns its own migrations. Business DDL/data/revision changes commit atomically and unknown revisions fail without resetting data. Downgrades require a pre-upgrade backup.
-
-The business migration history starts from a single initial baseline, `7dc31087d742`, containing the complete current schema. Databases from the retired development revisions (including `19c83d6d1f67` and `24dd7559f926`) and old standalone `claw.sqlite3` databases are explicitly rejected. Preserve their files and select a fresh root; automatic conversion or import is unavailable. Routing mode changes take effect on restart as described above; no conversion of old work is performed.
-
-`status` reports Host openness and adapter state, not provider connectivity. Use an intentional model request and inspect its saved outcome to verify that specific provider configuration. Native receipts, platform ACKs, saved continuation, and confirmed delivery remain distinct.
+Back up the AppDatabase with the corresponding Service PostgreSQL state. Preserve the associated Environment files, Browser state, and credentials according to the owning provider's procedures. After restoring, verify resource references and connector identities before reconnecting.

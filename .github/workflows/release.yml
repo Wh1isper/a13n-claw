@@ -36,6 +36,17 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.13"
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Verify pinned Service image
+        run: uv run --no-project python scripts/check_artifacts.py --base-image-only
+      - run: make console-build
       - name: Inject release version
         id: version
         shell: bash
@@ -44,15 +55,7 @@ jobs:
           uv run --no-project python scripts/prepare_release.py "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "python-version=${version/-rc./rc}" >> "$GITHUB_OUTPUT"
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10.30.3
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-          cache: pnpm
-          cache-dependency-path: console/pnpm-lock.yaml
-      - run: make build
+      - run: uv build --clear
       - uses: actions/upload-artifact@v7
         with:
           name: python-dist

@@ -1,54 +1,19 @@
 # Contributing
 
-## Setup
+## Setup and validation
 
-Use Python 3.13, uv, Node.js 24, pnpm 10.30.3, Git, and Make. Docker is needed for workflow and container checks.
+Use Python 3.13, uv, Node.js 24, pnpm 10.30.3, Git, and Make. Run `make install`. Docker is needed for container checks.
 
-```bash
-git clone git@github.com:Wh1isper/a13n-claw.git
-cd a13n-claw
-make install
-```
+| Command                           | Purpose                                                                                        |
+| --------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `make check`                      | Ruff, Pyright, dependencies, Console bridge types, and component tests                         |
+| `make test`                       | Offline tests and optional PostgreSQL integration tests                                        |
+| `make db-check`                   | Apply Service and App migrations and check metadata parity in a disposable PostgreSQL database |
+| `make build artifact-check`       | Verify the Console bundle, installed wheel, and wheel rebuilt from sdist                       |
+| `make workflow-check image-check` | Validate workflows and smoke-test the non-root Service image                                   |
+| `make docs-check docs-build`      | Validate and build the documentation site                                                      |
 
-The independent `uv.lock`, `console/pnpm-lock.yaml`, `console/codegen/pnpm-lock.yaml`, and `docs/pnpm-lock.yaml` own dependency resolution. No neighboring repository is required. `make install` installs the Git hooks; commits must not bypass them.
-
-## Validation
-
-| Command                     | Purpose                                                        |
-| --------------------------- | -------------------------------------------------------------- |
-| `make format`               | Apply pre-commit formatting and file hygiene                   |
-| `make lint`                 | Check Python and Markdown formatting                           |
-| `make typecheck`            | Run Pyright                                                    |
-| `make deps-check`           | Check Python dependency declarations                           |
-| `make test`                 | Run tests without external service credentials                 |
-| `make console-check`        | Check console types and formatting                             |
-| `make console-test`         | Run Console component and protocol tests                       |
-| `make console-e2e`          | Build and exercise Console against a disposable real Host      |
-| `make console-schema`       | Regenerate API types with the isolated generator toolchain     |
-| `make console-schema-check` | Reject generated API type drift                                |
-| `make console-build`        | Install and build packaged console assets                      |
-| `make console-dev`          | Preview the console with hot reload                            |
-| `make serve`                | Serve built console assets on port 8080                        |
-| `make docs-check`           | Check documentation formatting and types                       |
-| `make docs-serve`           | Preview the documentation                                      |
-| `make docs-build`           | Export the static site and check links                         |
-| `make build`                | Build console, wheel, and source distribution                  |
-| `make artifact-check`       | Install and HTTP-test wheel and rebuilt sdist                  |
-| `make workflow-check`       | Run actionlint in Docker                                       |
-| `make image-check`          | Build and run the non-root runtime image                       |
-| `make executor-check`       | Test Compose executor, browser, and Docker socket path mapping |
-| `make check`                | Run static checks                                              |
-| `make check-all`            | Run the full CI-equivalent gates                               |
-
-CI runs backend tests and Console/package checks in parallel on Linux and Windows. The two required `Python` checks aggregate both matrices and fail if either matrix fails or is skipped. Linux backend tests use four isolated worker processes; `make test TEST_ARGS="-n 4 --dist worksteal"` runs the same mode locally. Windows uses three complementary jobs: messaging runs in the main pytest process, while runtime/schedules and every remaining test use two workers each. The messaging suite retains its serial execution mode because native tool cancellation did not settle under Windows xdist workers. This keeps the full suite while reducing contention within each runner. Container CI builds runtime and executor images concurrently, then exercises both isolated Compose configurations with two test workers. Artifact checks install the wheel and rebuilt sdist concurrently in separate temporary environments; on Actions, those environments use `RUNNER_TEMP` to stay on the uv cache volume.
-
-Choose local checks by the changed surface and risk. Do not repeat unaffected checks. CI runs the complete applicable gates for ready pull requests and pushes to `main`. Python checks also run on Windows; package artifacts must be installable without the source checkout. Report unavailable checks honestly.
-
-`make build` owns the source-to-distribution pipeline. A direct `uv build` requires a prior `make console-build`; missing assets fail explicitly. The sdist includes frontend source and prebuilt assets, so rebuilding its wheel requires only Python tooling. Run `make console-install` after console lockfile changes before `make console-dev` or `make console-check`. `make serve` runs the backend with the last built assets, not Vite hot reload. `make console-dev` proxies `/api` to the backend on port 8080. Tests include real embedded App execution and local provider/WebSocket/HTTP protocol fixtures. `make image-check` creates and removes disposable test-owned containers and a volume; it tests distribution, not a live platform account.
-
-## Database changes
-
-Edit the canonical metadata in `a13n_claw/database/schema.py`, then run `make db-migrate msg="describe the change"`. The generator upgrades a disposable database and generates an Alembic revision; it never opens an Instance data root. Review generated operations, add required data transformations, and test upgrades with populated state. See the [migration workflow](docs/content/development.md#sqlite-migrations) for formatting and validation commands.
+CI exercises the App database and lifecycle in PostgreSQL on Linux, package and Console checks on Linux and Windows, and the derived Linux image. Generate migrations using Service's AppDatabase tools, as described in [Development](docs/content/development.md#app-database).
 
 ## Changes and reviews
 
