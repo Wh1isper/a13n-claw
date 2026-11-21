@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import connectors, inbox, main_thread, project_cli, schedules, workers
 from .main_thread import PLUGIN_KEY
-from .models import Connector, InboxItem, ScheduleRequest, Worker
+from .models import Claw, Connector, InboxItem, ScheduleRequest, Worker
 
 if TYPE_CHECKING:
     from a13n_service.runs.runtime import Runtime
@@ -103,6 +103,8 @@ async def scope(
         ):
             raise ModelRetry(f"This tool belongs to Claw {role} Runs")
         yield runtime, bound
+    except inbox.ClawNotFound:
+        raise ModelRetry("This Claw is no longer active") from None
     except ServiceError as error:
         raise ModelRetry(error.message) from None
 
@@ -182,7 +184,7 @@ async def claw_connector_reply(
                 if (
                     source is None
                     or source.claw_id != claw.id
-                    or source.kind != "lark"
+                    or source.source.get("platform") != "lark"
                     or not source.source_key.startswith(f"{connector.id}:")
                     or source.source.get("message_id") != destination
                     or source.read_at is None
@@ -209,7 +211,7 @@ async def claw_connector_reply(
         if not token:
             return {"state": "not configured"}
         try:
-            variables = await connectors.command_environment(
+            variables = await connectors.reply_credentials(
                 connector.kind, connector.id, connector.config, token
             )
         except (httpx.HTTPError, ValueError):
@@ -219,20 +221,48 @@ async def claw_connector_reply(
                 ctx.deps.environment,
                 project_cli.REPLY_CLI,
                 args,
-                variables={**variables, "GH_DEBUG": "", "DEBUG": "", "LARKSUITE_CLI_DEBUG": ""},
+                variables=variables,
                 timeout=40,
             )
         except EnvironmentError:
             return {"state": "unknown", "message": "The Project command did not report an outcome."}
-        if result.status.exit_code == 127:
-            return {"state": "not installed"}
+        secrets = (token, variables.get("LARKSUITE_CLI_TENANT_ACCESS_TOKEN"))
         if result.status.exit_code != 0:
-            return {"state": "unknown", "message": "The CLI did not confirm delivery."}
-        output = (result.output.stdout.inline or b"").decode(errors="replace")
-        for secret in (token, variables.get("LARKSUITE_CLI_TENANT_ACCESS_TOKEN")):
-            if secret:
-                output = output.replace(secret, "[redacted]")
+            stderr = result.output.stderr.inline
+            diagnostic = redacted_cli_output(stderr, secrets, 1000)
+            state = "unknown"
+            if (
+                result.status.exit_code == 127
+                and (stderr or b"").strip() == project_cli.CLI_MISSING
+            ):
+                state = "not installed"
+                async with transaction(runtime.storage) as session:
+                    current = await inbox.lock_claw(session, claw.workspace_id, claw.id)
+                    await workers.fence(session, runtime, current, bound)
+                    versions = dict(current.cli_versions or {})
+                    if current.environment_id == claw.environment_id and versions.pop(
+                        args[0], None
+                    ):
+                        current.cli_versions = versions
+            return {
+                "state": state,
+                "exit_code": result.status.exit_code,
+                "message": diagnostic or "The CLI did not confirm delivery.",
+            }
+        output = redacted_cli_output(result.output.stdout.inline, secrets, 8192)
         return {"state": "downloaded" if operation == "lark_download" else "sent", "output": output}
+
+
+def redacted_cli_output(raw: bytes | None, secrets: tuple[str | None, ...], limit: int) -> str:
+    text = (raw or b"").decode(errors="replace")
+    for secret in sorted({value for value in secrets if value}, key=len, reverse=True):
+        text = text.replace(secret, "[redacted]")
+        # Provider output can end mid-token at the capture boundary.
+        for size in range(min(len(secret) - 1, len(text)), 5, -1):
+            if text.endswith(secret[:size]):
+                text = text[:-size] + "[redacted]"
+                break
+    return text.strip()[:limit]
 
 
 def reply_arguments(
@@ -305,12 +335,21 @@ def captured_workspace(run: RunRow) -> str | None:
     )
 
 
+def cli_is_current(claw: Claw) -> bool:
+    return (
+        claw.cli_update_state != "queued"
+        and project_cli.CLIS.keys() <= (claw.cli_versions or {}).keys()
+    )
+
+
 async def maintain_cli(
     runtime: Runtime, bound: workers.Binding, ctx: RunContext[AgentContext]
 ) -> bool:
     environment_id = captured_workspace(bound.run)
     if environment_id is None or environment_id != bound.claw.environment_id:
         return False
+    if cli_is_current(bound.claw):
+        return True
     lock = runtime.redis.lock(
         f"claw:cli:{environment_id}", timeout=240, blocking_timeout=5, thread_local=False
     )
@@ -320,13 +359,15 @@ async def maintain_cli(
             await workers.fence(session, runtime, claw, bound)
             if claw.environment_id != environment_id:
                 return False
+            if cli_is_current(claw):
+                return True
             update_id = claw.cli_update_id if claw.cli_update_state == "queued" else None
         try:
             outcome = await project_cli.provision(
                 ctx.deps.environment, update=update_id is not None
             )
         except EnvironmentError:
-            outcome = project_cli.Maintenance({}, True)
+            outcome = project_cli.Maintenance({}, True, "Project command unavailable")
         if not await lock.owned():
             return False
         async with transaction(runtime.storage) as session:
@@ -339,6 +380,7 @@ async def maintain_cli(
                 claw.cli_versions = outcome.versions
             if update_id is not None and claw.cli_update_id == update_id:
                 claw.cli_update_state = "failed" if outcome.failed else "succeeded"
+                claw.cli_update_error = outcome.error
         return not outcome.failed
 
 
@@ -610,7 +652,7 @@ class ClawCapability(AbstractCapability[AgentContext]):
         elif self.role == "worker":
             try:
                 notices.extend(await workers.take_steers(runtime, bound))
-            except ServiceError:
+            except (ServiceError, inbox.ClawNotFound):
                 return request_context
         if notices:
             last = request_context.messages[-1]

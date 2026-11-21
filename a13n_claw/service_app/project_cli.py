@@ -20,7 +20,12 @@ VERSION = r"[0-9]+\.[0-9]+\.[0-9]+"
 NOTIFIERS = {"LARKSUITE_CLI_NO_UPDATE_NOTIFIER": "1", "LARKSUITE_CLI_NO_SKILLS_NOTIFIER": "1"}
 RESOLVE = 'binary=$1; shift; export PATH="$HOME/.local/bin:$PATH"'
 RUN_CLI = RESOLVE + '\nexec "$binary" "$@"'
-REPLY_CLI = RESOLVE + '\nexec "$binary" "$@" 2>/dev/null'
+CLI_MISSING = b"claw: platform CLI not found"
+REPLY_CLI = (
+    RESOLVE
+    + '\ncommand -v "$binary" >/dev/null || { echo "claw: platform CLI not found" >&2; exit 127; }'
+    + '\nexec "$binary" "$@"'
+)
 INSTALL = r"""
 set -eu
 name=$1 url=$2 digest=$3 member=$4 version=$5
@@ -45,6 +50,7 @@ mv -f "$tmp/$name" "$install_dir/$name"
 class Maintenance:
     versions: dict[str, str]
     failed: bool
+    error: str | None = None
 
 
 async def command(
@@ -124,8 +130,10 @@ async def provision(environment: BoundEnvironment, *, update: bool = False) -> M
         platform.output.stdout.inline or b""
     )
     if platform.status.exit_code != 0 or arch is None:
-        return Maintenance(versions, True)
-    failed = False
+        return Maintenance(
+            versions, True, "CLI installation requires a supported Linux Environment"
+        )
+    errors = []
     async with httpx.AsyncClient(timeout=8) as client:
         for name in CLIS:
             if name in versions and not update:
@@ -140,10 +148,16 @@ async def provision(environment: BoundEnvironment, *, update: bool = False) -> M
                 if result.status.exit_code == 0:
                     versions[name] = version
                 else:
-                    failed = True
-            except (httpx.HTTPError, KeyError, TypeError, ValueError, EnvironmentError):
-                failed = True
-    return Maintenance(versions, failed)
+                    errors.append(f"{name}: download, verification or installation failed")
+            except httpx.HTTPStatusError as exc:
+                errors.append(f"{name}: release lookup returned HTTP {exc.response.status_code}")
+            except httpx.HTTPError:
+                errors.append(f"{name}: release lookup unavailable")
+            except (KeyError, TypeError, ValueError):
+                errors.append(f"{name}: official release asset or checksum unavailable")
+            except EnvironmentError:
+                errors.append(f"{name}: Project command unavailable")
+    return Maintenance(versions, bool(errors), "; ".join(errors) or None)
 
 
 UpdateState = Literal["queued", "succeeded", "failed"]

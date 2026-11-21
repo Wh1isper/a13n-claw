@@ -10,6 +10,8 @@ Feishu attachment input includes its available metadata and source reference. Th
 
 A connector can reflect Claw's Read state on the platform, for example with a reaction on the original Lark message. When a GitHub-origin message is accepted into the Inbox, the integration adds an eyes reaction to its source where supported. This acknowledges delivery into the Inbox, not opening or completing the work. Claw does not provide built-in GitHub notification polling or mark-read. Intake feedback and Inbox-full errors are connector behavior, separate from Main's replies and not requiring an agent turn.
 
+Lark connector changes reconcile after commit on Control replicas. Periodic reconciliation recovers missed notifications. Connection transitions are observations separate from saved credentials; an App ID leased by another connector reports a conflict. A superseded listener cannot admit messages under its old connection identity or credential.
+
 ## CLI-First Replies
 
 Main chooses the reply target and platform operation. It runs the corresponding CLI in the Project Environment. A reply can address the original message, its conversation, or another explicitly selected destination available to the configured account. The operation and payload follow the platform: for example, Lark text, rich messages, or files; GitHub issue comments, pull request comments, or reviews. Claw does not flatten these operations into a common text-only send format. Worker Threads communicate with Main through the [Inbox](01-inbox.md), and Main can inspect their saved outcomes for publication.
@@ -18,11 +20,11 @@ The initial release supports GitHub and Lark/Feishu. Main uses their official CL
 
 ## Project Setup
 
-Workspace administrators configure a GitHub reply token or Lark App secret on a connector. Service encrypts the write-only credential. The GitHub intake service account is separate from the reply identity. Credential checks, connector intake, CLI installation, and successful replies are distinct facts.
+Workspace administrators configure a GitHub reply token or Lark App secret on a connector. Claw owns the write-only credential and encrypts it using Service key material. Omitting the credential preserves it, a replacement rotates it, and clearing it removes the stored value. Deleting a connector stops future intake and replies without deleting its delivery history. Credential checks return a secret-free diagnostic code and, when available, the provider HTTP status. The GitHub intake service account is separate from the reply identity. Credential checks, connector intake, CLI installation, and successful replies are distinct facts.
 
 On supported Linux Environments, Claw checks for the CLIs before Main runs. It reuses installed binaries and installs missing ones from the official latest release. The administrator can request an update for the bound Environment; it is applied before the next Main execution without starting a Run. An Environment replacement clears queued maintenance. A failed download or verification leaves the prior binary in place.
 
-Administrators explicitly authorize reply credentials for the selected Environment. Rebinding the Environment revokes that selection. Main's connector tool chooses a specific connector and uses only its platform credential for the operation; the credential is not included in Run options, general shell defaults, or readable settings. For Lark the command receives a short-lived bot token. The Environment and code running in it must be trusted with platform credentials; the Main-only tool is a collaboration boundary, not isolation from other processes in the same Environment.
+Administrators explicitly authorize reply credentials for the selected Environment. Rebinding the Environment revokes that selection. Main's connector tool chooses a specific connector and uses only its platform credential for the operation; the credential is not included in Run options, general shell defaults, or readable settings. Claw resolves the credential only during the tool invocation. For Lark the command receives a short-lived bot token. An unconfirmed command outcome remains unknown even when Claw can report a redacted diagnostic; it is not authority to retry. The Environment and code running in it must be trusted with platform credentials; the Main-only tool is a collaboration boundary, not isolation from other processes in the same Environment.
 
 ## Custom Channels
 

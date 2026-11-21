@@ -1,10 +1,13 @@
 """Verify both distributions as installed Service Apps, including the prebuilt ESM."""
 
+import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from tomllib import loads
 
 SMOKE = """
 from importlib.metadata import entry_points, version
@@ -44,7 +47,28 @@ def only(directory: Path, pattern: str) -> Path:
     return files[0].resolve()
 
 
+def check_base_image() -> None:
+    project = loads(Path("pyproject.toml").read_text())["project"]
+    versions = [
+        dep.removeprefix("a13n-service==")
+        for dep in project["dependencies"]
+        if dep.startswith("a13n-service==")
+    ]
+    if len(versions) != 1:
+        raise RuntimeError("Expected exactly one a13n-service version pin")
+    dockerfile = Path("deploy/docker/Dockerfile").read_text()
+    prefix = f"FROM ghcr.io/converge-ai-labs/a13n-service:{versions[0]}@sha256:"
+    if not re.search(rf"^{re.escape(prefix)}[0-9a-f]{{64}}$", dockerfile, re.MULTILINE):
+        raise RuntimeError("Pin the exact Service base image tag and sha256 digest")
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-image-only", action="store_true")
+    options = parser.parse_args()
+    check_base_image()
+    if options.base_image_only:
+        return
     with TemporaryDirectory(prefix="claw-distributions-") as temp:
         root = Path(temp)
         wheel = only(Path("dist"), "*.whl")

@@ -44,6 +44,8 @@ jobs:
           node-version: "24"
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Verify pinned Service image
+        run: uv run --no-project python scripts/check_artifacts.py --base-image-only
       - run: make console-build
       - name: Inject release version
         id: version

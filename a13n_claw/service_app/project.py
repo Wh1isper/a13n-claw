@@ -101,8 +101,9 @@ async def rebind(
         environment_id if environment_changed and environment_template_id is None else None,
         browser_id if browser_changed else None,
     )
-    if environment_changed or browser_changed:
-        await schedules.require_no_fresh_work(session, claw)
+    await schedules.require_no_fresh_work(
+        session, claw, reason="archive_fresh_schedules_before_rebinding"
+    )
     owned_worker = select(Worker.thread_id).where(Worker.claw_id == claw.id)
     threads = await session.scalars(
         select(ThreadRow)
@@ -119,8 +120,11 @@ async def rebind(
         claw.cli_versions = None
         claw.cli_update_id = None
         claw.cli_update_state = None
+        claw.cli_update_error = None
         await session.execute(
-            update(Connector).where(Connector.claw_id == claw.id).values(reply_environment_id=None)
+            update(Connector)
+            .where(Connector.claw_id == claw.id, Connector.reply_environment_id.is_not(None))
+            .values(reply_environment_id=None, reply_reauthorization_required=True)
         )
     authority = execution_authority(account, scope)
     threads = threads.all()

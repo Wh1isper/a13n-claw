@@ -1,8 +1,13 @@
 import {
   Button,
+  Checkbox,
+  ChoiceField,
+  Confirm,
   DetailHeader,
+  DetailLayout,
   DetailPage,
   Empty,
+  ErrorNotice,
   ErrorPage,
   FormActions,
   FormField,
@@ -10,16 +15,30 @@ import {
   Input,
   Loading,
   Page,
+  Rail,
+  RailRow,
+  RailSection,
   React,
   ResourceTable,
+  SaveBar,
+  SearchPicker,
+  Section,
+  Sections,
+  SegmentedControl,
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+  Switch,
   Textarea,
   useAccess,
   useApp,
+  useToast,
 } from "@a13n/console";
 import {
   appPath,
   clawPath,
-  json,
   url,
   useRead,
   useProjectResources,
@@ -31,72 +50,50 @@ import {
   type FreshSchedule,
   type Occurrence,
   type Overview,
-  type Schedule,
   type ResourceKind,
+  type Schedule,
 } from "./data";
 import {
+  ClawLink,
   ClawScope,
   DateTime,
-  Icon,
   InputValue,
   Pager,
   ResourceLink,
   Status,
   ThreadLink,
 } from "./primitives";
+import { useCopy } from "./copy";
 import styles from "./app.module.css";
 
 const field = (form: FormData, name: string) =>
   String(form.get(name) ?? "").trim();
 const items = (form: FormData, name: string) =>
   field(form, name)
-    .split(/\s|,/)
-    .map((item) => item.trim())
+    .split(/[\s,]+/)
     .filter(Boolean);
 const list = (config: Connector["config"] | undefined, key: string) =>
   Array.isArray(config?.[key]) ? config[key].join("\n") : "";
 
-export function ConfigurationPage() {
-  const { params, select } = useSelection();
-  if (params.get("new"))
-    return (
-      <ClawEditor
-        done={(claw) => select({ new: null, claw: claw?.id ?? null })}
-      />
-    );
-  return (
-    <ClawScope
-      setup={<ClawEditor done={(claw) => select({ claw: claw?.id ?? null })} />}
-    >
-      {(claw, picker) => (
-        <ClawEditor
-          key={claw.id}
-          claw={claw}
-          action={
-            <div className={styles.actions}>
-              {picker}
-              <Button variant="outline" onClick={() => select({ new: "1" })}>
-                <Icon name="plus" /> New Claw
-              </Button>
-            </div>
-          }
-        />
-      )}
-    </ClawScope>
-  );
-}
+const resourceCreation: Record<ResourceKind, string> = {
+  agent: "agents/new",
+  account: "settings/service-accounts",
+  environment: "environments/instances",
+  template: "environments/new",
+  browser: "browsers",
+  model: "models",
+};
+
 function ResourcePicker({
   label,
-  name,
   kind,
   account,
   value,
   onChange,
-  optional = false,
-  disabled = false,
+  optional,
+  disabled,
 }: {
   label: string;
-  name: string;
   kind: ResourceKind;
   account?: string;
   value: string;
@@ -104,536 +101,799 @@ function ResourcePicker({
   optional?: boolean;
   disabled?: boolean;
 }) {
+  const { copy } = useCopy();
   const choices = useProjectResources(kind, !disabled, account);
   const rows = choices.data?.pages.flatMap((page) => page.items) ?? [];
+  const selected =
+    value && !rows.some((row) => row.id === value)
+      ? [{ value, label: value }]
+      : [];
+  const options = [
+    ...(optional ? [{ value: "__none__", label: copy("None", "不绑定") }] : []),
+    ...selected,
+    ...rows.map(({ id, name }) => ({ value: id, label: name })),
+  ];
+  const id = React.useId();
   return (
-    <div>
-      <FormField label={label} disabled={disabled}>
-        <select
-          className={styles.select}
-          name={name}
-          required={!optional}
-          value={value}
-          onChange={(event) => onChange(event.currentTarget.value)}
-        >
-          <option value="">
-            {optional
-              ? "None"
-              : disabled
-                ? "Select a service account first"
-                : choices.isPending
-                  ? "Loading…"
-                  : rows.length
-                    ? "Select a resource"
-                    : "No resources available"}
-          </option>
-          {value && !rows.some((row) => row.id === value) && (
-            <option value={value}>{value}</option>
-          )}
-          {rows.map((row) => (
-            <option key={row.id} value={row.id}>
-              {row.name}
-            </option>
-          ))}
-        </select>
-      </FormField>
-      {choices.hasNextPage && (
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={choices.isFetchingNextPage}
-          onClick={() => void choices.fetchNextPage()}
-        >
-          Load more
-        </Button>
-      )}
-      {choices.isError && (
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={() => void choices.refetch()}
-        >
-          Retry loading {label.toLowerCase()}
-        </Button>
-      )}
+    <div className={styles.picker}>
+      <label htmlFor={id}>{label}</label>
+      <SearchPicker
+        id={id}
+        label={label}
+        value={value || (optional ? "__none__" : undefined)}
+        disabled={disabled}
+        placeholder={
+          disabled
+            ? copy("Select a service account first", "请先选择服务账号")
+            : choices.isPending
+              ? copy("Loading…", "加载中…")
+              : copy("Select a resource", "选择资源")
+        }
+        emptyMessage={copy("No matching resources", "没有匹配的资源")}
+        groups={[{ label, options }]}
+        onValueChange={(value) => onChange(value === "__none__" ? "" : value)}
+        footer={
+          choices.hasNextPage && (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={choices.isFetchingNextPage}
+              onClick={() => void choices.fetchNextPage()}
+            >
+              {copy("Load more", "加载更多")}
+            </Button>
+          )
+        }
+      />
+      {!disabled &&
+        (choices.isError || (!choices.isPending && !rows.length)) && (
+          <div className={styles.actions}>
+            {!choices.isError && (
+              <ResourceLink path={resourceCreation[kind]}>
+                {copy("Create in Console", "前往控制台创建")}
+              </ResourceLink>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => void choices.refetch()}
+            >
+              {copy("Refresh choices", "刷新选项")}
+            </Button>
+          </div>
+        )}
     </div>
   );
 }
 
-function ProjectResources({ claw }: { claw: Claw }) {
-  const overview = useRead<Overview>(clawPath(claw.id), 10000);
-  const { can } = useAccess();
-  const save = useWrite<Claw>();
-  const updateCli = useWrite<{ state: string }>();
-  const [editing, setEditing] = React.useState<
-    "environment" | "browser" | null
-  >(null);
-  const [template, setTemplate] = React.useState(false);
-  const [selection, setSelection] = React.useState("");
-  const project = overview.data?.project;
-  const saved = overview.data?.claw ?? claw;
-  const current =
-    editing === "environment" ? saved.environment_id : saved.browser_id;
-  const begin = (kind: "environment" | "browser") => {
-    setEditing(kind);
-    setTemplate(false);
-    setSelection("");
-    save.reset();
-  };
+export function ConfigurationPage() {
+  const { copy } = useCopy();
+  const { params, select } = useSelection();
+  const done = (claw: Claw) => select({ new: null, claw: claw.id });
+  if (params.has("new"))
+    return <ClawEditor done={done} cancel={() => select({ new: null })} />;
   return (
-    <div className={styles.form}>
-      <FormSection
-        title="Project"
-        description="Connect the workspace resources this Claw uses across Runs."
-      >
-        {!saved.environment_id && (
-          <p className={styles.muted}>
-            Add an Environment to start Main. Incoming work stays in the Inbox.
-          </p>
-        )}
-        <div className={styles.references}>
-          <ResourceLink path={`agents/${saved.agent_id}`}>Agent</ResourceLink>
-          <ResourceLink path={`memory-spaces/${saved.memory_space_id}`}>
-            Memory Space
-          </ResourceLink>
-        </div>
-        {(["environment", "browser"] as const).map((kind) => {
-          const environment = kind === "environment";
-          const title = environment ? "Environment" : "Browser";
-          const linked = environment ? saved.environment_id : saved.browser_id;
-          const name = environment
-            ? project?.environment_name
-            : project?.browser_name;
-          const state = environment ? project?.environment : project?.browser;
-          return (
-            <div className={styles.actions} key={kind}>
-              <strong>{title}</strong>
-              <Status
-                state={state ?? (linked ? "configured" : "not configured")}
-              />
-              {linked && <span>{name ?? linked}</span>}
-              <ResourceLink
-                path={environment ? "environments/instances" : "browsers"}
-              >
-                {environment ? "Environments" : "Browsers"}
-              </ResourceLink>
-              {can("admin") && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => begin(kind)}
-                >
-                  {linked ? "Change" : "Add"} {title.toLowerCase()}
+    <ClawScope setup={<ClawEditor done={done} />}>
+      {(claw, picker) => (
+        <Sections key={claw.id}>
+          <Section
+            title={claw.name}
+            actions={
+              <div className={styles.actions}>
+                {picker}
+                <Button variant="outline" onClick={() => select({ new: "1" })}>
+                  {copy("New Claw", "新建 Claw")}
                 </Button>
-              )}
-            </div>
-          );
-        })}
-        {overview.isError && (
-          <p className={styles.error} role="alert">
-            {overview.error.message}
-          </p>
-        )}
-        {editing && (
-          <form
-            className={styles.form}
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (editing === "environment" && !selection) return;
-              const key =
-                editing === "browser"
-                  ? "browser_id"
-                  : template
-                    ? "environment_template_id"
-                    : "environment_id";
-              save.mutate(
-                {
-                  path: `${clawPath(claw.id)}/project`,
-                  method: "PATCH",
-                  body: { [key]: selection || null },
-                },
-                { onSuccess: () => setEditing(null) },
-              );
-            }}
+              </div>
+            }
           >
-            {editing === "environment" && (
-              <FormField label="Environment source">
-                <select
-                  className={styles.select}
-                  value={template ? "template" : "existing"}
-                  onChange={(event) => {
-                    setTemplate(event.currentTarget.value === "template");
-                    setSelection("");
-                  }}
-                >
-                  <option value="existing">Existing Environment</option>
-                  <option value="template">Create from template</option>
-                </select>
-              </FormField>
-            )}
-            <ResourcePicker
-              name="resource"
-              label={
-                editing === "browser"
-                  ? "Browser"
-                  : template
-                    ? "Environment template"
-                    : "Environment"
-              }
-              kind={
-                editing === "browser"
-                  ? "browser"
-                  : template
-                    ? "template"
-                    : "environment"
-              }
-              account={saved.service_account_id}
-              value={selection}
-              onChange={setSelection}
-              optional={editing === "browser" && !!current}
-            />
-            {editing === "browser" && (
-              <ResourceLink path="browsers">
-                Create a Browser in Console
-              </ResourceLink>
-            )}
-            {current && (
-              <p className={styles.muted}>
-                This changes future Runs. Existing files and browser profiles
-                stay with their original resources.
-              </p>
-            )}
-            {save.isError && (
-              <p role="alert" className={styles.error}>
-                {save.error.message}
-              </p>
-            )}
-            <div className={styles.actions}>
-              <Button
-                type="submit"
-                disabled={
-                  save.isPending ||
-                  (!selection && (editing === "environment" || !current)) ||
-                  selection === current
-                }
-              >
-                {!selection && editing === "browser"
-                  ? "Disconnect Browser"
-                  : "Save binding"}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setEditing(null)}
-              >
-                Cancel
-              </Button>
-            </div>
-          </form>
-        )}
-      </FormSection>
-      <FormSection
-        title="Platform CLIs"
-        description="Claw installs missing tools before Main runs. Updates apply at the next Main execution with this Environment."
-      >
-        <dl className={styles.facts}>
-          <dt>GitHub CLI</dt>
-          <dd>{project?.cli_versions?.gh ?? "Not installed yet"}</dd>
-          <dt>Lark CLI</dt>
-          <dd>{project?.cli_versions?.["lark-cli"] ?? "Not installed yet"}</dd>
-        </dl>
-        <div className={styles.actions}>
-          {can("admin") && (
-            <Button
-              type="button"
-              variant="outline"
-              disabled={
-                !saved.environment_id ||
-                !project ||
-                !!editing ||
-                updateCli.isPending ||
-                project.cli_update_state === "queued"
-              }
-              onClick={() =>
-                updateCli.mutate({
-                  path: `${clawPath(claw.id)}/project/cli-update`,
-                  method: "POST",
-                  body: {},
-                })
-              }
-            >
-              Update CLIs
-            </Button>
-          )}
-          {project?.cli_update_state && (
-            <Status state={project.cli_update_state} />
-          )}
-        </div>
-        {updateCli.isError && (
-          <p role="alert" className={styles.error}>
-            {updateCli.error.message}
-          </p>
-        )}
-      </FormSection>
-    </div>
+            <ClawEditor claw={claw} />
+          </Section>
+          <ProjectResources
+            claw={claw}
+            archived={() => select({ claw: null })}
+          />
+        </Sections>
+      )}
+    </ClawScope>
   );
 }
 
 function ClawEditor({
   claw,
-  action,
   done,
+  cancel,
 }: {
   claw?: Claw;
-  action?: React.ReactNode;
-  done?: (claw?: Claw) => void;
+  done?: (claw: Claw) => void;
+  cancel?: () => void;
 }) {
+  const { copy } = useCopy();
+  const toast = useToast();
   const save = useWrite<Claw>();
-  const [template, setTemplate] = React.useState(false);
   const [agent, setAgent] = React.useState("");
   const [account, setAccount] = React.useState("");
   const [environment, setEnvironment] = React.useState("");
+  const [source, setSource] = React.useState("environment");
   const [browser, setBrowser] = React.useState("");
-  const nextModelKey = React.useRef(claw?.worker_models.length ?? 0);
-  const [models, setModels] = React.useState(() =>
-    (claw?.worker_models ?? []).map((row, key) => ({ ...row, key })),
+  const [models, setModels] = React.useState(
+    (claw?.worker_models ?? []).map((model, key) => ({ ...model, key })),
   );
-  const updateModel = (
-    key: number,
-    field: "model" | "description",
-    value: string,
-  ) =>
-    setModels((current) =>
-      current.map((row) =>
-        row.key === key ? { ...row, [field]: value } : row,
-      ),
+  const sequence = React.useRef(models.length);
+  const [dirty, setDirty] = React.useState(false);
+  const form = React.useRef<HTMLFormElement>(null);
+  const discard = () => {
+    form.current?.reset();
+    setModels(
+      (claw?.worker_models ?? []).map((model, key) => ({ ...model, key })),
     );
+    setDirty(false);
+    save.reset();
+  };
   return (
-    <Page
-      title={claw ? "Claw settings" : "Set up Claw"}
-      description="Configure the Project and Inbox behavior."
-      titleAction={action}
-    >
-      {claw && <ProjectResources claw={claw} />}
-      <form
-        className={styles.form}
-        onSubmit={(event) => {
-          event.preventDefault();
-          const form = new FormData(event.currentTarget);
-          const settings = {
-            name: field(form, "name"),
-            heartbeat_seconds: Number(field(form, "heartbeat")),
-            unread_limit: Number(field(form, "unread")),
-            read_limit: Number(field(form, "read")),
-            worker_models: models.map(({ model, description }) => ({
-              model,
-              description: description.trim(),
-            })),
-          };
-          const body = claw
-            ? settings
-            : {
-                ...settings,
-                agent_id: field(form, "agent"),
-                service_account_id: field(form, "account"),
-                browser_id: field(form, "browser") || null,
+    <form
+      ref={form}
+      className={styles.form}
+      onChange={() => setDirty(true)}
+      onSubmit={(event) => {
+        event.preventDefault();
+        const draft = new FormData(event.currentTarget);
+        const body = {
+          name: field(draft, "name"),
+          heartbeat_seconds: Number(field(draft, "heartbeat")),
+          unread_limit: Number(field(draft, "unread")),
+          read_limit: Number(field(draft, "read")),
+          worker_models: models.map(({ model, description }) => ({
+            model,
+            description: description.trim(),
+          })),
+          ...(!claw
+            ? {
+                agent_id: agent,
+                service_account_id: account,
+                browser_id: browser || null,
                 ...(environment
                   ? {
-                      [template ? "environment_template_id" : "environment_id"]:
-                        environment,
+                      [source === "template"
+                        ? "environment_template_id"
+                        : "environment_id"]: environment,
                     }
                   : {}),
-              };
-          save.mutate(
-            {
-              path: claw ? `${clawPath(claw.id)}/settings` : "/claws",
-              method: claw ? "PUT" : "POST",
-              body,
+              }
+            : {}),
+        };
+        save.mutate(
+          {
+            path: claw ? `${clawPath(claw.id)}/settings` : "/claws",
+            method: claw ? "PUT" : "POST",
+            body,
+          },
+          {
+            onSuccess: (result) => {
+              setDirty(false);
+              toast.add({
+                title: copy("Claw settings saved", "Claw 设置已保存"),
+              });
+              done?.(result);
             },
-            { onSuccess: (result) => done?.(result) },
-          );
-        }}
+          },
+        );
+      }}
+    >
+      <FormSection
+        title={
+          claw
+            ? copy("Identity", "基本信息")
+            : copy("Create a Claw", "创建 Claw")
+        }
       >
-        <FormSection title="Identity">
-          <FormField label="Name">
-            <InputValue name="name" value={claw?.name} maxLength={200} />
-          </FormField>
-        </FormSection>
+        <FormField label={copy("Name", "名称")}>
+          <InputValue name="name" value={claw?.name} maxLength={200} />
+        </FormField>
         {!claw && (
-          <FormSection
-            title="Project"
-            description="Use resources from this workspace."
-          >
+          <>
             <ResourcePicker
-              label="Agent"
+              label={copy("Agent", "智能体")}
               kind="agent"
-              name="agent"
               value={agent}
               onChange={setAgent}
             />
             <ResourcePicker
-              label="Workspace service account"
+              label={copy("Automation service account", "自动化服务账号")}
               kind="account"
-              name="account"
               value={account}
               onChange={(value) => {
                 setAccount(value);
-                if (!template) setEnvironment("");
+                setEnvironment("");
+                setBrowser("");
               }}
             />
-            <FormField label="Environment source">
-              <select
-                className={styles.select}
-                value={template ? "template" : "existing"}
-                onChange={(event) => {
-                  setTemplate(event.currentTarget.value === "template");
-                  setEnvironment("");
-                }}
-              >
-                <option value="existing">Existing Environment</option>
-                <option value="template">Create from template</option>
-              </select>
-            </FormField>
-            <ResourcePicker
-              label={template ? "Environment template" : "Environment"}
-              kind={template ? "template" : "environment"}
-              account={template ? undefined : account}
-              disabled={!template && !account}
-              name="environment"
-              value={environment}
-              onChange={setEnvironment}
-              optional
-            />
-            <ResourcePicker
-              label="Browser (optional)"
-              kind="browser"
-              name="browser"
-              value={browser}
-              onChange={setBrowser}
-              optional
-            />
-          </FormSection>
+          </>
         )}
-        <FormSection title="Inbox and heartbeat">
-          <FormField label="Heartbeat interval (seconds)">
-            <Input
-              name="heartbeat"
-              type="number"
-              required
-              min={0}
-              max={86400}
-              defaultValue={claw?.heartbeat_seconds ?? 300}
-            />
-          </FormField>
-          <FormField label="Unread limit">
-            <Input
-              name="unread"
-              type="number"
-              required
-              min={1}
-              max={10000}
-              defaultValue={claw?.unread_limit ?? 500}
-            />
-          </FormField>
-          <FormField label="Read history limit">
-            <Input
-              name="read"
-              type="number"
-              required
-              min={1}
-              max={10000}
-              defaultValue={claw?.read_limit ?? 3000}
-            />
-          </FormField>
-        </FormSection>
+      </FormSection>
+      {!claw && (
         <FormSection
-          title="Worker models"
-          description="Suggest models to Main and describe the work each suits."
-        >
-          {models.map((row) => (
-            <div key={row.key} className={styles.form}>
-              <ResourcePicker
-                label="Model"
-                kind="model"
-                name="worker-model"
-                value={row.model}
-                onChange={(value) => updateModel(row.key, "model", value)}
-              />
-              <FormField label="Use for">
-                <Input
-                  required
-                  maxLength={500}
-                  value={row.description}
-                  onChange={(event) =>
-                    updateModel(
-                      row.key,
-                      "description",
-                      event.currentTarget.value,
-                    )
-                  }
-                />
-              </FormField>
-              <div className={styles.actions}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() =>
-                    setModels((current) =>
-                      current.filter((item) => item.key !== row.key),
-                    )
-                  }
-                >
-                  Remove model
-                </Button>
-              </div>
-            </div>
-          ))}
-          {models.length < 20 && (
-            <div className={styles.actions}>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  const key = nextModelKey.current++;
-                  setModels((current) => [
-                    ...current,
-                    { key, model: "", description: "" },
-                  ]);
-                }}
-              >
-                <Icon name="plus" /> Add model
-              </Button>
-            </div>
+          title={copy("Project resources", "项目资源")}
+          description={copy(
+            "Bind resources now or configure them later.",
+            "现在绑定资源，或在创建后配置。 ",
           )}
+        >
+          <ChoiceField
+            label={copy("Environment source", "环境来源")}
+            value={source}
+            onValueChange={(value) => {
+              setSource(value);
+              setEnvironment("");
+            }}
+            options={[
+              {
+                value: "environment",
+                label: copy("Existing instance", "现有实例"),
+              },
+              {
+                value: "template",
+                label: copy("Create from a template", "使用模板创建"),
+              },
+            ]}
+          />
+          <ResourcePicker
+            label={
+              source === "template"
+                ? copy("Template (optional)", "模板（可选）")
+                : copy("Environment (optional)", "环境（可选）")
+            }
+            kind={source === "template" ? "template" : "environment"}
+            account={account}
+            value={environment}
+            onChange={setEnvironment}
+            optional
+            disabled={!account}
+          />
+          <ResourcePicker
+            label={copy("Browser (optional)", "浏览器（可选）")}
+            kind="browser"
+            account={account}
+            value={browser}
+            onChange={setBrowser}
+            optional
+            disabled={!account}
+          />
         </FormSection>
-        {save.isError && (
-          <p role="alert" className={styles.error}>
-            {save.error.message}
-          </p>
+      )}
+      <FormSection title={copy("Inbox and heartbeat", "收件箱与心跳")}>
+        <FormField
+          label={copy("Heartbeat interval (seconds)", "心跳间隔（秒）")}
+          description={copy(
+            "Set to 0 to disable idle follow-up.",
+            "设为 0 时不触发空闲跟进。",
+          )}
+        >
+          <Input
+            name="heartbeat"
+            type="number"
+            required
+            min={0}
+            max={86400}
+            defaultValue={claw?.heartbeat_seconds ?? 300}
+          />
+        </FormField>
+        <FormField label={copy("Unread limit", "未读上限")}>
+          <Input
+            name="unread"
+            type="number"
+            required
+            min={1}
+            max={10000}
+            defaultValue={claw?.unread_limit ?? 500}
+          />
+        </FormField>
+        <FormField label={copy("Read history limit", "已读保留上限")}>
+          <Input
+            name="read"
+            type="number"
+            required
+            min={1}
+            max={10000}
+            defaultValue={claw?.read_limit ?? 3000}
+          />
+        </FormField>
+      </FormSection>
+      <FormSection
+        title={copy("Worker model guidance", "工作线程模型指引")}
+        description={copy(
+          "Describe when Main should select an alternative model for a worker.",
+          "说明主线程何时应为工作线程选择其他模型。",
         )}
-        {save.isSuccess && claw && (
-          <span role="status" className={styles.muted}>
-            Settings saved
-          </span>
-        )}
+      >
+        {models.map((row) => (
+          <div className={styles.stack} key={row.key}>
+            <ResourcePicker
+              label={copy("Model", "模型")}
+              kind="model"
+              value={row.model}
+              onChange={(value) => {
+                setModels(
+                  models.map((item) =>
+                    item.key === row.key ? { ...item, model: value } : item,
+                  ),
+                );
+                setDirty(true);
+              }}
+            />
+            <FormField label={copy("When to use this model", "适用场景")}>
+              <Textarea
+                rows={2}
+                required
+                maxLength={500}
+                value={row.description}
+                onChange={(event) =>
+                  setModels(
+                    models.map((item) =>
+                      item.key === row.key
+                        ? { ...item, description: event.target.value }
+                        : item,
+                    ),
+                  )
+                }
+              />
+            </FormField>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setModels(models.filter((item) => item.key !== row.key));
+                setDirty(true);
+              }}
+            >
+              {copy("Remove guidance", "移除指引")}
+            </Button>
+          </div>
+        ))}
+        <Button
+          type="button"
+          variant="outline"
+          disabled={models.length >= 20}
+          onClick={() => {
+            setModels([
+              ...models,
+              { key: sequence.current++, model: "", description: "" },
+            ]);
+            setDirty(true);
+          }}
+        >
+          {copy("Add model guidance", "添加模型指引")}
+        </Button>
+      </FormSection>
+      {save.isError && <ErrorNotice error={save.error} />}
+      {claw ? (
+        dirty && (
+          <SaveBar
+            title={copy("Unsaved changes", "有未保存的更改")}
+            saveLabel={copy("Save settings", "保存设置")}
+            discardLabel={copy("Discard", "放弃更改")}
+            pending={save.isPending}
+            disabled={models.some((m) => !m.model)}
+            onDiscard={discard}
+          />
+        )
+      ) : (
         <FormActions
           pending={save.isPending}
-          onCancel={done ? () => done() : undefined}
+          disabled={!agent || !account || models.some((m) => !m.model)}
+          onCancel={cancel}
+          label={copy("Create Claw", "创建 Claw")}
         />
-      </form>
-    </Page>
+      )}
+    </form>
   );
 }
 
+export function projectResourceState(state: string | null, permanent = false) {
+  if (
+    permanent ||
+    (state &&
+      ["missing", "lost", "failed", "deleted", "unavailable"].includes(state))
+  )
+    return "replace";
+  return !state || state === "not configured"
+    ? "bind"
+    : state === "stopped"
+      ? "resume"
+      : "bound";
+}
+
+function ProjectResources({
+  claw,
+  archived,
+}: {
+  claw: Claw;
+  archived: () => void;
+}) {
+  const { copy } = useCopy();
+  const toast = useToast();
+  const path = clawPath(claw.id);
+  const overview = useRead<Overview>(path, 10000);
+  const write = useWrite<Claw>();
+  const [edit, setEdit] = React.useState<"environment" | "browser" | null>(
+    null,
+  );
+  const [source, setSource] = React.useState("environment");
+  const [selection, setSelection] = React.useState("");
+  const [environmentChanged, setEnvironmentChanged] = React.useState(false);
+  const snapshot = overview.data;
+  if (!snapshot)
+    return overview.isError ? (
+      <ErrorNotice error={overview.error} />
+    ) : (
+      <Loading />
+    );
+  const project = snapshot.project;
+  const linked = edit === "environment" ? claw.environment_id : claw.browser_id;
+  const fresh = project.fresh_schedule_count > 0;
+  const freshLink = (
+    <ClawLink id={claw.id} page="schedules" query={{ mode: "fresh" }}>
+      {copy("Open Fresh Schedules", "打开新线程排程")}
+    </ClawLink>
+  );
+  const rebind = () =>
+    write.mutateAsync({
+      path: `${path}/project`,
+      method: "PATCH",
+      body: {
+        [edit === "environment"
+          ? source === "template"
+            ? "environment_template_id"
+            : "environment_id"
+          : "browser_id"]: selection || null,
+      },
+    });
+  const changed = () => {
+    if (edit === "environment") {
+      setEnvironmentChanged(true);
+      toast.add({
+        title: copy("Environment changed", "环境已更换"),
+        description: copy(
+          "Reauthorize connector replies in the new Environment.",
+          "请为新环境重新授权连接器回复。",
+        ),
+      });
+    } else
+      toast.add({ title: copy("Browser binding saved", "浏览器绑定已保存") });
+    setEdit(null);
+  };
+  return (
+    <>
+      <FormSection
+        title={copy("Project", "项目")}
+        description={copy(
+          "Native resources remain owned by Service.",
+          "原生资源由 Service 管理。",
+        )}
+      >
+        <div className={styles.references}>
+          <ResourceLink path={`agents/${claw.agent_id}`}>
+            {copy("Open Agent", "打开智能体")}
+          </ResourceLink>
+          <ResourceLink path={`memory-spaces/${claw.memory_space_id}`}>
+            {copy("Open Memory Space", "打开记忆空间")}
+          </ResourceLink>
+          <ResourceLink path="settings/service-accounts">
+            {copy("Service accounts", "服务账号")}
+          </ResourceLink>
+        </div>
+        {(["environment", "browser"] as const).map((kind) => {
+          const env = kind === "environment";
+          const name = env ? project.environment_name : project.browser_name;
+          const state =
+            (env ? project.environment : project.browser) ?? "not configured";
+          const failure = env
+            ? project.environment_failure?.message
+            : project.browser_failure;
+          const guidance = projectResourceState(
+            state,
+            env && project.environment_failure?.permanent,
+          );
+          const title = env
+            ? copy("Environment", "环境")
+            : copy("Browser", "浏览器");
+          return (
+            <div className={styles.stack} key={kind}>
+              <div className={styles.actions}>
+                <strong>
+                  {title}
+                  {name ? ` · ${name}` : ""}
+                </strong>
+                <Status state={state} />
+                <ResourceLink
+                  path={env ? "environments/instances" : "browsers"}
+                >
+                  {env
+                    ? copy("Open Environments", "打开环境")
+                    : copy("Open Browsers", "打开浏览器")}
+                </ResourceLink>
+                {guidance !== "resume" && (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setEdit(kind);
+                      setSource("environment");
+                      setSelection(env ? "" : (claw.browser_id ?? ""));
+                      write.reset();
+                    }}
+                  >
+                    {guidance === "bind"
+                      ? copy("Bind", "绑定")
+                      : guidance === "replace"
+                        ? copy("Replace", "更换")
+                        : copy("Change binding", "更改绑定")}
+                  </Button>
+                )}
+              </div>
+              {guidance === "resume" && (
+                <p className={styles.muted}>
+                  {copy(
+                    "Normally stopped. Start the same instance in Console; do not replace it.",
+                    "此实例正常停止。请在控制台启动同一实例，无需更换。",
+                  )}
+                </p>
+              )}
+              {guidance === "replace" && (
+                <p className={styles.error}>
+                  {failure ||
+                    copy(
+                      "This resource is unavailable. Bind a replacement.",
+                      "资源不可用，请绑定替代资源。",
+                    )}
+                </p>
+              )}
+              {guidance === "bind" && (
+                <p className={styles.muted}>
+                  {env
+                    ? copy(
+                        "Choose an existing instance or create from a template.",
+                        "选择现有实例，或使用模板创建。",
+                      )
+                    : copy(
+                        "You can bind an existing Browser or create one in Console.",
+                        "可以绑定现有浏览器，也可以前往控制台创建。",
+                      )}
+                </p>
+              )}
+            </div>
+          );
+        })}
+        {edit && (
+          <div className={styles.stack}>
+            {fresh && (
+              <p role="status">
+                {copy(
+                  "Archive the Fresh Schedules that still reference this Project before changing bindings.",
+                  "更改绑定前，请先归档仍引用此项目的新线程排程。 ",
+                )}{" "}
+                {freshLink}
+              </p>
+            )}
+            {edit === "environment" && (
+              <ChoiceField
+                label={copy("Environment source", "环境来源")}
+                value={source}
+                onValueChange={(value) => {
+                  setSource(value);
+                  setSelection("");
+                }}
+                options={[
+                  {
+                    value: "environment",
+                    label: copy("Existing instance", "现有实例"),
+                  },
+                  {
+                    value: "template",
+                    label: copy("Create from a template", "使用模板创建"),
+                  },
+                ]}
+              />
+            )}
+            <ResourcePicker
+              label={copy("New binding", "新绑定")}
+              kind={
+                edit === "browser"
+                  ? "browser"
+                  : source === "template"
+                    ? "template"
+                    : "environment"
+              }
+              account={claw.service_account_id}
+              value={selection}
+              onChange={setSelection}
+              optional={edit === "browser"}
+            />
+            <div className={styles.actions}>
+              <Button variant="ghost" onClick={() => setEdit(null)}>
+                {copy("Cancel", "取消")}
+              </Button>
+              {!fresh &&
+                (selection || (edit === "browser" && linked)) &&
+                (source === "template" || selection !== (linked ?? "")) &&
+                (linked ? (
+                  <Confirm
+                    title={copy("Change Project binding?", "更改项目绑定？")}
+                    description={copy(
+                      "Files and browser profiles stay with the original resources. Existing Runs keep captured bindings.",
+                      "文件和浏览器配置保留在原资源中。已有运行继续使用其捕获的绑定。",
+                    )}
+                    subject={claw.name}
+                    trigger={copy("Change binding", "更改绑定")}
+                    action={rebind}
+                    onSuccess={changed}
+                  />
+                ) : (
+                  <Button
+                    disabled={write.isPending}
+                    onClick={() => void rebind().then(changed, () => undefined)}
+                  >
+                    {copy("Bind resource", "绑定资源")}
+                  </Button>
+                ))}
+            </div>
+            {write.isError && <ErrorNotice error={write.error} />}
+          </div>
+        )}
+        {(environmentChanged || project.unauthorized_reply_connectors > 0) && (
+          <p role="status">
+            {copy(
+              "Reauthorize connector replies for the current Environment.",
+              "请为当前环境重新授权连接器回复。 ",
+            )}{" "}
+            <ClawLink id={claw.id} page="connectors">
+              {copy("Open Connectors", "打开连接器")}
+            </ClawLink>
+          </p>
+        )}
+      </FormSection>
+      <FormSection title={copy("Agent revision", "智能体修订版")}>
+        <p>
+          {snapshot.agent_revision_outdated
+            ? copy(
+                "A newer default revision is available.",
+                "有新的默认修订版可用。",
+              )
+            : copy(
+                "The pinned revision is current.",
+                "已固定的修订版是最新版本。",
+              )}
+        </p>
+        <div className={styles.actions}>
+          <code>{claw.agent_revision_id}</code>
+          {snapshot.agent_revision_outdated && (
+            <Confirm
+              title={copy("Sync Agent revision?", "同步智能体修订版？")}
+              subject={claw.name}
+              description={copy(
+                "Future Claw admissions use the new revision. Existing Runs and native schedules keep their captures.",
+                "后续 Claw 工作将使用新修订版。已有运行和原生排程不受影响。",
+              )}
+              trigger={copy("Sync revision", "同步修订版")}
+              action={() =>
+                write.mutateAsync({
+                  path: `${path}/agent-revision/sync`,
+                  method: "POST",
+                  body: {},
+                })
+              }
+            />
+          )}
+        </div>
+      </FormSection>
+      <FormSection title={copy("Platform CLIs", "平台命令行工具")}>
+        <div className={styles.actions}>
+          {Object.entries(project.cli_versions ?? {}).map(([name, version]) => (
+            <code key={name}>
+              {name} {version}
+            </code>
+          ))}
+          {!project.cli_versions && (
+            <span className={styles.muted}>
+              {copy("Not checked", "尚未检查")}
+            </span>
+          )}
+          {project.cli_update_state && (
+            <Status state={project.cli_update_state} />
+          )}
+          {claw.environment_id && project.cli_update_state !== "queued" && (
+            <Confirm
+              title={copy("Queue CLI update?", "将命令行工具更新加入队列？")}
+              subject={claw.name}
+              description={copy(
+                "The tools update in the Project Environment on the next eligible Main Run.",
+                "工具会在下一次符合条件的主线程运行中更新。",
+              )}
+              trigger={copy("Update CLIs", "更新命令行工具")}
+              action={() =>
+                write.mutateAsync({
+                  path: `${path}/project/cli-update`,
+                  method: "POST",
+                  body: {},
+                })
+              }
+            />
+          )}
+        </div>
+        {project.cli_update_error && (
+          <p className={styles.error}>{project.cli_update_error}</p>
+        )}
+      </FormSection>
+      <FormSection
+        title={copy("Archive Claw", "归档 Claw")}
+        description={copy(
+          "Stop new Claw work without deleting native resources or existing records.",
+          "停止新的 Claw 工作，不删除原生资源或已有记录。 ",
+        )}
+      >
+        {fresh ? (
+          <p>
+            {copy(
+              "Archive the associated Fresh Schedules first.",
+              "请先归档关联的新线程排程。 ",
+            )}{" "}
+            {freshLink}
+          </p>
+        ) : (
+          <Confirm
+            title={copy("Archive this Claw?", "归档此 Claw？")}
+            subject={claw.name}
+            danger
+            description={copy(
+              "Intake and Claw automation stop. Native Threads, Runs, and Project resources remain in Console.",
+              "消息接收和 Claw 自动化将停止。原生线程、运行和项目资源仍保留在控制台。 ",
+            )}
+            trigger={copy("Archive Claw", "归档 Claw")}
+            action={() =>
+              write.mutateAsync({ path, method: "DELETE", body: null })
+            }
+            onSuccess={archived}
+          />
+        )}
+      </FormSection>
+    </>
+  );
+}
+
+interface CheckResult {
+  state: string;
+  reason?: string;
+  http_status?: number;
+}
+
 export function ConnectorsPage() {
+  const { params } = useSelection();
+  const id = params.get("connector");
   return (
     <ClawScope>
-      {(claw, picker) => (
-        <ConnectorList key={claw.id} claw={claw} picker={picker} />
-      )}
+      {(claw, picker) =>
+        id ? (
+          <ConnectorRoute key={id} claw={claw} id={id} />
+        ) : (
+          <ConnectorList key={claw.id} claw={claw} picker={picker} />
+        )
+      }
     </ClawScope>
   );
 }
+
+function replyState(row: Connector, claw: Claw) {
+  return row.reply_reauthorization_required ||
+    (row.reply_environment_id &&
+      row.reply_environment_id !== claw.environment_id)
+    ? "reauthorize needed"
+    : row.reply_environment_id
+      ? "authorized"
+      : "off";
+}
+function credentialState(row: Connector) {
+  return row.credential_configured ? "saved" : "not configured";
+}
+
 function ConnectorList({
   claw,
   picker,
@@ -641,445 +901,515 @@ function ConnectorList({
   claw: Claw;
   picker: React.ReactNode;
 }) {
-  const { params, select } = useSelection();
-  const editing = params.get("connector");
+  const { copy } = useCopy();
   const { can } = useAccess();
-  const admin = can("admin");
+  const { select } = useSelection();
   const [pages, setPages] = React.useState<string[]>([]);
-  const path = `${clawPath(claw.id)}/connectors`;
   const query = useRead<Collection<Connector>>(
-    editing ? null : url(path, { cursor: pages.at(-1) }),
-    pages.length ? undefined : 15000,
+    url(`${clawPath(claw.id)}/connectors`, { cursor: pages.at(-1) }),
+    5000,
   );
-  const record = useRead<Connector>(
-    editing && editing !== "new"
-      ? `${path}/${encodeURIComponent(editing)}`
-      : null,
-    15000,
-  );
-  const close = () => select({ connector: null });
-  if (editing === "new" && admin)
-    return <ConnectorEditor key="new" claw={claw} close={close} />;
-  if (editing && editing !== "new") {
-    if (record.isPending) return <Loading page />;
-    if (record.isError)
-      return (
-        <Page
-          title="Connector"
-          titleAction={
-            <Button variant="outline" onClick={close}>
-              Back to connectors
-            </Button>
-          }
-        >
-          <ErrorPage error={record.error} />
-        </Page>
-      );
-    return (
-      <ConnectorEditor
-        key={editing}
-        claw={claw}
-        connector={record.data}
-        close={close}
-        readOnly={!admin}
-      />
-    );
-  }
-  if (editing === "new")
-    return (
-      <Empty
-        title="Manage connectors"
-        description="Workspace admins add connectors."
-        action={
-          <Button variant="outline" onClick={close}>
-            Back to connectors
-          </Button>
-        }
-      />
-    );
-  if (query.isPending) return <Loading page />;
-  if (query.isError) return <ErrorPage error={query.error} />;
-  const { items: rows, next_cursor: next } = query.data;
-  const add = admin && (
-    <Button
-      variant={rows.length ? "outline" : "default"}
-      onClick={() => select({ connector: "new" })}
-    >
-      <Icon name="plus" /> Add connector
+  const add = (
+    <Button onClick={() => select({ connector: "new" })}>
+      {copy("New connector", "新建连接器")}
     </Button>
   );
   return (
     <Page
-      title="Connectors"
-      description="Receive GitHub and Lark messages in Claw Inbox."
-      titleAction={
-        <div className={styles.actions}>
-          {picker}
-          {!!rows.length && add}
-        </div>
-      }
+      title={copy("Connectors", "连接器")}
+      titleAction={picker}
+      description={copy(
+        "Control platform intake, credentials, and authorization for replies.",
+        "管理平台接收、凭据和回复授权。",
+      )}
+      actions={can("admin") && !!query.data?.items.length ? add : undefined}
     >
-      {rows.length ? (
+      {query.isPending ? (
+        <Loading />
+      ) : query.isError ? (
+        <ErrorPage error={query.error} />
+      ) : !query.data.items.length ? (
+        <Empty
+          title={copy("No connectors yet", "还没有连接器")}
+          description={copy(
+            "Connect Lark / Feishu or a GitHub event forwarder.",
+            "连接飞书 / Lark 或 GitHub 事件转发器。",
+          )}
+          action={can("admin") && add}
+        />
+      ) : (
         <>
           <ResourceTable
-            caption="Connectors"
-            items={rows}
+            caption={copy("Connectors", "连接器")}
+            items={query.data.items}
             columns={[
               {
-                label: "Connector",
+                label: copy("Name", "名称"),
                 tone: "primary",
                 render: (row) => (
-                  <button
-                    className={styles.rowAction}
-                    onClick={() => select({ connector: row.id })}
+                  <ClawLink
+                    id={claw.id}
+                    page="connectors"
+                    query={{ connector: row.id }}
                   >
                     {row.name}
-                    <Icon name="next" />
-                  </button>
+                  </ClawLink>
                 ),
               },
               {
-                label: "Platform",
-                render: (row) => (row.kind === "github" ? "GitHub" : "Lark"),
+                label: copy("Platform", "平台"),
+                render: (row) =>
+                  row.kind === "github"
+                    ? "GitHub"
+                    : copy("Lark / Feishu", "飞书 / Lark"),
               },
               {
-                label: "State",
+                label: copy("State", "状态"),
                 render: (row) => (
                   <Status state={row.enabled ? "enabled" : "disabled"} />
                 ),
               },
               {
-                label: "Last received",
+                label: copy("Credential", "凭据"),
+                render: (row) => <Status state={credentialState(row)} />,
+              },
+              {
+                label: copy("Replies", "回复"),
+                render: (row) => <Status state={replyState(row, claw)} />,
+              },
+              {
+                label: copy("Listener", "监听状态"),
+                render: (row) =>
+                  row.listener_status ? (
+                    <Status state={row.listener_status} />
+                  ) : (
+                    "—"
+                  ),
+              },
+              {
+                label: copy("Last received", "最近接收"),
                 render: (row) => <DateTime value={row.last_event_at} />,
               },
             ]}
           />
-          {(next || pages.length > 0) && (
-            <Pager
-              next={!!next}
-              onNext={() => setPages([...pages, next!])}
-              onPrevious={
-                pages.length ? () => setPages(pages.slice(0, -1)) : undefined
-              }
-            />
-          )}
+          <Pager
+            nextCursor={query.data.next_cursor}
+            pages={pages}
+            setPages={setPages}
+          />
         </>
-      ) : (
-        <Empty
-          title="No connectors"
-          description="Connect GitHub or Lark to receive messages."
-          action={add}
-        />
       )}
     </Page>
   );
 }
+
+function ConnectorRoute({ claw, id }: { claw: Claw; id: string }) {
+  const { can } = useAccess();
+  const { copy } = useCopy();
+  const { select } = useSelection();
+  const query = useRead<Connector>(
+    id === "new"
+      ? null
+      : `${clawPath(claw.id)}/connectors/${encodeURIComponent(id)}`,
+    5000,
+  );
+  const close = () => select({ connector: null });
+  if (id === "new")
+    return can("admin") ? (
+      <ConnectorEditor claw={claw} close={close} />
+    ) : (
+      <ErrorPage
+        error={
+          new Error(
+            copy(
+              "Connector administration is not permitted.",
+              "没有管理连接器的权限。",
+            ),
+          )
+        }
+      />
+    );
+  if (query.isPending) return <Loading page />;
+  if (query.isError) return <ErrorPage error={query.error} />;
+  return <ConnectorEditor claw={claw} row={query.data} close={close} />;
+}
+
 function ConnectorEditor({
   claw,
-  connector,
+  row,
   close,
-  readOnly = false,
 }: {
   claw: Claw;
-  connector?: Connector;
+  row?: Connector;
   close: () => void;
-  readOnly?: boolean;
 }) {
-  const app = useApp();
-  const { workspaceId } = app;
-  const check = useWrite<{ state: string }>();
-  const [saving, setSaving] = React.useState(false);
-  const [saveError, setSaveError] = React.useState<string | null>(null);
-  const path = `${clawPath(claw.id)}/connectors${connector ? `/${connector.id}` : ""}`;
-  const credentialState = connector?.credential_configured
-    ? "Saved"
-    : connector?.credential_mounted
-      ? "Mounted (legacy)"
-      : "Not configured";
-  const [kind, setKind] = React.useState(connector?.kind ?? "github");
-  const config = connector?.config;
+  const { copy } = useCopy();
+  const toast = useToast();
+  const { can } = useAccess();
+  const { workspaceId } = useApp();
+  const write = useWrite<Connector>();
+  const check = useWrite<CheckResult>();
+  const path = `${clawPath(claw.id)}/connectors${row ? `/${row.id}` : ""}`;
+  const config = row?.config;
+  const [kind, setKind] = React.useState(row?.kind ?? "github");
+  const [account, setAccount] = React.useState(
+    String(config?.principal_id ?? ""),
+  );
+  const [domain, setDomain] = React.useState(
+    String(config?.domain ?? "https://open.feishu.cn"),
+  );
+  const [direct, setDirect] = React.useState(config?.direct_messages !== false);
+  const [enabled, setEnabled] = React.useState(row?.enabled ?? true);
+  const [reply, setReply] = React.useState(
+    !!claw.environment_id && row?.reply_environment_id === claw.environment_id,
+  );
+  const [replyChanged, setReplyChanged] = React.useState(false);
+  const allowed = can("admin");
   const back = url(appPath(workspaceId!, "connectors"), { claw: claw.id });
+  const endpoint = `${window.location.origin}/api/v1/apps/a13n.claw${path}/input`;
+  const reason: Record<string, string> = {
+    provider_unreachable: copy(
+      "Could not reach the provider.",
+      "无法连接服务提供方。",
+    ),
+    check_region_and_credentials: copy(
+      "Check the provider region, App ID and App secret.",
+      "请检查平台区域、应用 ID 和应用密钥。",
+    ),
+    invalid_repository: copy(
+      "Use an allowlisted repository in owner/repo form.",
+      "请按 owner/repo 格式填写允许的仓库。",
+    ),
+    provider_auth_rejected: copy(
+      "The provider rejected the credential.",
+      "平台拒绝了该凭据。",
+    ),
+    repository_not_found_or_forbidden: copy(
+      "The repository is missing or the credential cannot access it.",
+      "仓库不存在，或该凭据无权访问。",
+    ),
+    credential_unavailable: copy(
+      "The stored credential could not be opened.",
+      "无法读取已保存的凭据。",
+    ),
+  };
+  const label =
+    kind === "github" ? "GitHub" : copy("Lark / Feishu", "飞书 / Lark");
+  const rail = row && (
+    <Rail>
+      <RailSection title={copy("Connection status", "连接状态")}>
+        <RailRow label={copy("Credential", "凭据")}>
+          <Status state={credentialState(row)} />
+        </RailRow>
+        <RailRow label={copy("Replies", "回复")}>
+          <Status state={replyState(row, claw)} />
+        </RailRow>
+        {row.listener_status && (
+          <RailRow label={copy("Listener", "监听状态")}>
+            <Status state={row.listener_status} />
+          </RailRow>
+        )}
+        <RailRow label={copy("Last received", "最近接收")}>
+          <DateTime value={row.last_event_at} />
+        </RailRow>
+      </RailSection>
+    </Rail>
+  );
   return (
     <DetailPage
       back={back}
-      backLabel="Connectors"
+      backLabel={copy("Connectors", "连接器")}
       header={
         <DetailHeader
-          name={connector?.name ?? "Add connector"}
+          name={row?.name ?? copy("New connector", "新建连接器")}
+          description={label}
+          resourceKey={row?.id}
           status={
-            connector && (
-              <Status state={connector.enabled ? "enabled" : "disabled"} />
-            )
+            row && <Status state={row.enabled ? "enabled" : "disabled"} />
           }
         />
       }
     >
-      {readOnly && connector ? (
-        <FormSection title="Connection status">
-          <dl className={styles.facts}>
-            <dt>Platform</dt>
-            <dd>{kind === "github" ? "GitHub" : "Lark"}</dd>
-            <dt>Connector ID</dt>
-            <dd>{connector.id}</dd>
-            <dt>Credential</dt>
-            <dd>{credentialState}</dd>
-            {connector.listener_status && (
-              <>
-                <dt>Listener</dt>
-                <dd>
-                  <Status state={connector.listener_status} />
-                </dd>
-              </>
-            )}
-            <dt>Last received</dt>
-            <dd>
-              <DateTime value={connector.last_event_at} />
-            </dd>
-          </dl>
-        </FormSection>
-      ) : (
+      <DetailLayout rail={rail}>
         <form
           className={styles.form}
-          onSubmit={async (event) => {
+          onSubmit={(event) => {
             event.preventDefault();
-            if (saving) return;
-            setSaving(true);
-            setSaveError(null);
             const form = new FormData(event.currentTarget);
-            const senders = items(form, "senders");
-            const settings =
-              kind === "github"
-                ? {
-                    senders,
-                    principal_id: field(form, "principal"),
-                    channels: items(form, "channels"),
-                  }
-                : {
-                    senders,
-                    app_id: field(form, "app"),
-                    bot_open_id: field(form, "bot"),
-                    domain: field(form, "domain"),
-                    groups: items(form, "groups"),
-                    unmentioned_groups: items(form, "unmentioned"),
-                    direct_messages: form.has("direct"),
-                  };
-            try {
-              await json<Connector>(
-                await app.request(path, {
-                  method: connector ? "PUT" : "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    name: field(form, "name"),
-                    kind,
-                    enabled: form.has("enabled"),
-                    config: settings,
-                    credential: field(form, "credential") || undefined,
-                    reply_environment_id: form.has("enable-replies")
-                      ? claw.environment_id
-                      : null,
-                  }),
-                }),
-              );
-              close();
-            } catch (error) {
-              setSaveError(
-                error instanceof Error
-                  ? error.message
-                  : "Could not save connector",
-              );
-            } finally {
-              setSaving(false);
-            }
+            const body = {
+              name: field(form, "name"),
+              kind,
+              enabled,
+              config:
+                kind === "github"
+                  ? {
+                      principal_id: account,
+                      channels: items(form, "channels"),
+                      senders: items(form, "senders"),
+                    }
+                  : {
+                      app_id: field(form, "app"),
+                      bot_open_id: field(form, "bot"),
+                      domain,
+                      groups: items(form, "groups"),
+                      unmentioned_groups: items(form, "unmentioned"),
+                      direct_messages: direct,
+                      senders: items(form, "senders"),
+                    },
+              credential: field(form, "credential") || undefined,
+              ...(replyChanged || !row
+                ? { reply_environment_id: reply ? claw.environment_id : null }
+                : {}),
+            };
+            write.mutate(
+              { path, method: row ? "PUT" : "POST", body },
+              {
+                onSuccess: () => {
+                  toast.add({ title: copy("Connector saved", "连接器已保存") });
+                  close();
+                },
+              },
+            );
           }}
         >
-          <FormSection title="Connector">
-            <FormField label="Name">
-              <InputValue name="name" value={connector?.name} maxLength={200} />
+          <FormSection title={copy("Basic information", "基本信息")}>
+            <FormField label={copy("Name", "名称")}>
+              <Input
+                name="name"
+                defaultValue={row?.name}
+                required
+                maxLength={200}
+                readOnly={!allowed}
+              />
             </FormField>
-            <FormField label="Platform">
-              <select
-                className={styles.select}
-                disabled={!!connector}
+            {!row && (
+              <ChoiceField
+                label={copy("Platform", "平台")}
                 value={kind}
-                onChange={(e) => setKind(e.target.value as Connector["kind"])}
-              >
-                <option value="github">GitHub</option>
-                <option value="lark">Lark</option>
-              </select>
+                onValueChange={(value) =>
+                  setKind(value === "lark" ? "lark" : "github")
+                }
+                options={[
+                  { value: "github", label: "GitHub" },
+                  {
+                    value: "lark",
+                    label: copy("Lark / Feishu", "飞书 / Lark"),
+                  },
+                ]}
+              />
+            )}
+            <FormField label={copy("Enabled", "启用")}>
+              <Switch
+                checked={enabled}
+                onCheckedChange={setEnabled}
+                disabled={!allowed}
+              />
             </FormField>
-            <label className={styles.check}>
-              <input
-                name="enabled"
-                type="checkbox"
-                defaultChecked={connector?.enabled ?? true}
-              />{" "}
-              Enabled
-            </label>
           </FormSection>
           <FormSection
-            title="Intake"
+            title={copy("Intake", "消息接收")}
             description={
               kind === "github"
-                ? "Use a workspace service account for the GitHub integration."
-                : "Connect with a Lark long connection and mount its App secret on Service."
+                ? copy(
+                    "Forward GitHub events through your integration or GitHub Actions. Authenticate with the selected Service account and send the workspace ID in X-Workspace-ID.",
+                    "通过自有集成或 GitHub Actions 转发事件。使用所选服务账号认证，并在 X-Workspace-ID 中发送工作区 ID。",
+                  )
+                : copy(
+                    "Enable long-connection event delivery for im.message.receive_v1 in the Lark / Feishu developer console. Approve the required bot permissions and publish the app.",
+                    "在飞书 / Lark 开发者控制台启用长连接并订阅 im.message.receive_v1，批准机器人所需权限后发布应用。",
+                  )
             }
           >
             {kind === "github" ? (
               <>
-                <FormField label="Integration service account ID">
-                  <InputValue
-                    name="principal"
-                    value={String(config?.principal_id ?? "")}
-                  />
-                </FormField>
+                <ResourcePicker
+                  label={copy("Integration service account", "集成服务账号")}
+                  kind="account"
+                  value={account}
+                  onChange={setAccount}
+                  disabled={!allowed}
+                />
+                {row && (
+                  <div className={styles.stack}>
+                    <FormField label={copy("Intake endpoint", "接收端点")}>
+                      <Input readOnly value={endpoint} />
+                    </FormField>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() =>
+                        void navigator.clipboard.writeText(endpoint).then(
+                          () =>
+                            toast.add({
+                              title: copy("Endpoint copied", "接收端点已复制"),
+                            }),
+                          () =>
+                            toast.add({
+                              title: copy(
+                                "Select and copy the endpoint manually",
+                                "请手动选择并复制端点",
+                              ),
+                            }),
+                        )
+                      }
+                    >
+                      {copy("Copy endpoint", "复制端点")}
+                    </Button>
+                  </div>
+                )}
                 <FormField
-                  label="Repositories"
-                  description="One owner/repository per line."
+                  label={copy(
+                    "Allowed repositories (owner/repo)",
+                    "允许的仓库（owner/repo）",
+                  )}
                 >
                   <Textarea
                     name="channels"
                     rows={3}
-                    defaultValue={list(config, "channels")}
                     required
+                    readOnly={!allowed}
+                    defaultValue={list(config, "channels")}
                   />
                 </FormField>
               </>
             ) : (
               <>
-                <FormField label="App ID">
-                  <InputValue name="app" value={String(config?.app_id ?? "")} />
-                </FormField>
-                <FormField label="Bot open ID">
-                  <InputValue
-                    name="bot"
-                    value={String(config?.bot_open_id ?? "")}
+                <FormField label={copy("App ID", "应用 ID")}>
+                  <Input
+                    name="app"
+                    required
+                    readOnly={!allowed}
+                    defaultValue={String(config?.app_id ?? "")}
                   />
                 </FormField>
-                <FormField label="Region">
-                  <select
-                    name="domain"
-                    className={styles.select}
-                    defaultValue={String(
-                      config?.domain ?? "https://open.feishu.cn",
-                    )}
-                  >
-                    <option value="https://open.feishu.cn">Feishu</option>
-                    <option value="https://open.larksuite.com">Lark</option>
-                  </select>
+                <FormField label={copy("Bot open ID", "机器人 Open ID")}>
+                  <Input
+                    name="bot"
+                    required
+                    readOnly={!allowed}
+                    defaultValue={String(config?.bot_open_id ?? "")}
+                  />
                 </FormField>
-                <FormField label="Groups (optional)">
+                <ChoiceField
+                  label={copy("Region", "区域")}
+                  disabled={!allowed}
+                  value={domain}
+                  onValueChange={setDomain}
+                  options={[
+                    {
+                      value: "https://open.feishu.cn",
+                      label: copy("Feishu", "飞书"),
+                    },
+                    { value: "https://open.larksuite.com", label: "Lark" },
+                  ]}
+                />
+                <FormField
+                  label={copy("Allow direct messages", "允许私聊消息")}
+                >
+                  <Checkbox
+                    checked={direct}
+                    onCheckedChange={setDirect}
+                    disabled={!allowed}
+                  />
+                </FormField>
+                <FormField
+                  label={copy(
+                    "Allowed group IDs (optional)",
+                    "允许的群组 ID（可选）",
+                  )}
+                >
                   <Textarea
                     name="groups"
                     rows={2}
+                    readOnly={!allowed}
                     defaultValue={list(config, "groups")}
                   />
                 </FormField>
-                <FormField label="Groups without a mention (optional)">
+                <FormField
+                  label={copy(
+                    "Groups that do not require mentioning the bot (optional)",
+                    "无需提及机器人的群组（可选）",
+                  )}
+                >
                   <Textarea
                     name="unmentioned"
                     rows={2}
+                    readOnly={!allowed}
                     defaultValue={list(config, "unmentioned_groups")}
                   />
                 </FormField>
-                <label className={styles.check}>
-                  <input
-                    name="direct"
-                    type="checkbox"
-                    defaultChecked={config?.direct_messages !== false}
-                  />{" "}
-                  Accept direct messages
-                </label>
               </>
             )}
             <FormField
-              label="Allowed senders"
-              description="One identifier per line."
+              label={
+                kind === "github"
+                  ? copy("Allowed GitHub usernames", "允许的 GitHub 用户名")
+                  : copy("Allowed sender open IDs", "允许的发送人 Open ID")
+              }
+              description={copy(
+                "Separate entries with spaces or new lines.",
+                "用空格或换行分隔多个条目。",
+              )}
             >
               <Textarea
                 name="senders"
                 rows={3}
-                defaultValue={list(config, "senders")}
                 required
+                readOnly={!allowed}
+                defaultValue={list(config, "senders")}
               />
             </FormField>
           </FormSection>
-          <FormSection
-            title="Platform credential"
-            description={
-              kind === "github"
-                ? "Use a GitHub token with access to the configured repositories. The intake service account is separate."
-                : "Use the App secret from the Lark or Feishu developer console for the selected region."
-            }
-          >
+          <FormSection title={copy("Credentials and replies", "凭据与回复")}>
+            {allowed && (
+              <FormField
+                label={
+                  kind === "github"
+                    ? copy("GitHub token (optional)", "GitHub 令牌（可选）")
+                    : copy("App secret (optional)", "应用密钥（可选）")
+                }
+                description={copy(
+                  "Write-only. Leave blank to keep the saved value.",
+                  "凭据只写。留空可保留已保存值。",
+                )}
+              >
+                <Input
+                  type="password"
+                  name="credential"
+                  autoComplete="new-password"
+                  maxLength={8192}
+                />
+              </FormField>
+            )}
             <FormField
-              label={kind === "github" ? "GitHub token" : "App secret"}
+              label={copy(
+                "Authorize replies in the current Environment",
+                "授权在当前环境中回复",
+              )}
               description={
-                connector && credentialState !== "Not configured"
-                  ? "Leave blank to keep the saved credential."
-                  : "The credential is write-only."
+                !claw.environment_id
+                  ? copy(
+                      "Bind a Project Environment first.",
+                      "请先绑定项目环境。",
+                    )
+                  : undefined
               }
             >
-              <Input
-                type="password"
-                name="credential"
-                autoComplete="new-password"
-                maxLength={8192}
+              <Switch
+                disabled={!allowed || !claw.environment_id}
+                checked={reply}
+                onCheckedChange={(value) => {
+                  setReply(value);
+                  setReplyChanged(true);
+                }}
               />
             </FormField>
-            {claw.environment_id ? (
-              <label className={styles.check}>
-                <input
-                  type="checkbox"
-                  name="enable-replies"
-                  defaultChecked={
-                    connector?.reply_environment_id === claw.environment_id
-                  }
-                />
-                Allow replies from this Project Environment
-              </label>
-            ) : (
-              <p className={styles.muted}>
-                Attach an Environment before enabling replies.
-              </p>
-            )}
-            <p className={styles.muted}>
-              Only enable replies for an Environment you trust. Code running
-              there can access the credential during a reply. Reauthorize
-              replies after changing the Environment.
-            </p>
-          </FormSection>
-          {connector && (
-            <FormSection
-              title="Connection status"
-              description="Check the saved credential. For GitHub this checks read access to the first configured repository, not write permissions."
-            >
-              <dl className={styles.facts}>
-                <dt>Connector ID</dt>
-                <dd>{connector.id}</dd>
-                <dt>Credential</dt>
-                <dd>{credentialState}</dd>
-                {connector.listener_status && (
-                  <>
-                    <dt>Listener</dt>
-                    <dd>
-                      <Status state={connector.listener_status} />
-                    </dd>
-                  </>
-                )}
-                <dt>Last received</dt>
-                <dd>
-                  <DateTime value={connector.last_event_at} />
-                </dd>
-              </dl>
+            {allowed && row && (
               <div className={styles.actions}>
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={
-                    saving ||
-                    check.isPending ||
-                    credentialState === "Not configured"
-                  }
+                  disabled={check.isPending}
                   onClick={() =>
                     check.mutate({
                       path: `${path}/check`,
@@ -1088,39 +1418,107 @@ function ConnectorEditor({
                     })
                   }
                 >
-                  {check.isPending ? "Checking…" : "Check credential"}
+                  {copy("Check saved connection", "检查已保存的连接")}
                 </Button>
-                {check.data && (
-                  <span role="status">
-                    <Status state={check.data.state} />
-                  </span>
+                {row.credential_configured && (
+                  <Confirm
+                    title={copy(
+                      "Remove saved credential?",
+                      "移除已保存的凭据？",
+                    )}
+                    subject={row.name}
+                    danger
+                    description={copy(
+                      "Claw stops using this credential for platform calls. Rotate or revoke it at the provider if needed.",
+                      "Claw 将停止使用该凭据调用平台。需要时，请在平台侧轮换或撤销它。",
+                    )}
+                    trigger={copy("Remove credential", "移除凭据")}
+                    action={() =>
+                      write.mutateAsync({
+                        path,
+                        method: "PUT",
+                        body: {
+                          name: row.name,
+                          kind: row.kind,
+                          enabled: row.enabled,
+                          config: row.config,
+                          credential: null,
+                        },
+                      })
+                    }
+                    onSuccess={() => {
+                      check.reset();
+                      toast.add({
+                        title: copy(
+                          "Saved credential removed",
+                          "已移除保存的凭据",
+                        ),
+                      });
+                    }}
+                  />
                 )}
               </div>
-              {check.isError && (
-                <p role="alert" className={styles.error}>
-                  {check.error.message}
-                </p>
-              )}
-            </FormSection>
+            )}
+            {check.data && (
+              <p role="status">
+                <Status state={check.data.state} />{" "}
+                {check.data.reason
+                  ? (reason[check.data.reason] ??
+                    copy(
+                      "The provider did not confirm connectivity.",
+                      "平台未确认连接。",
+                    ))
+                  : ""}{" "}
+                {check.data.http_status ? `HTTP ${check.data.http_status}` : ""}
+              </p>
+            )}
+            {check.isError && <ErrorNotice error={check.error} />}
+          </FormSection>
+          {write.isError && <ErrorNotice error={write.error} />}
+          {allowed && (
+            <FormActions
+              pending={write.isPending}
+              disabled={kind === "github" && !account}
+              onCancel={close}
+              label={copy("Save connector", "保存连接器")}
+              leading={
+                row && (
+                  <Confirm
+                    title={copy("Delete this connector?", "删除此连接器？")}
+                    subject={row.name}
+                    danger
+                    description={copy(
+                      "Intake and replies stop. Existing deliveries remain available.",
+                      "停止接收和回复，已有投递记录保留。",
+                    )}
+                    trigger={copy("Delete connector", "删除连接器")}
+                    action={() =>
+                      write.mutateAsync({ path, method: "DELETE", body: null })
+                    }
+                    onSuccess={close}
+                  />
+                )
+              }
+            />
           )}
-          {saveError && (
-            <p role="alert" className={styles.error}>
-              {saveError}
-            </p>
-          )}
-          <FormActions pending={saving} onCancel={close} />
         </form>
-      )}
+      </DetailLayout>
     </DetailPage>
   );
 }
 
 export function SchedulesPage() {
+  const { params } = useSelection();
+  const id = params.get("schedule");
   return (
     <ClawScope>
-      {(claw, picker) => (
-        <ScheduleList key={claw.id} claw={claw} picker={picker} />
-      )}
+      {(claw, picker) =>
+        id ? (
+          <ScheduleRoute key={id} claw={claw} id={id} />
+        ) : (
+          <ScheduleList key={claw.id} claw={claw} picker={picker} />
+        )
+      }
     </ClawScope>
   );
 }
@@ -1131,340 +1529,525 @@ function ScheduleList({
   claw: Claw;
   picker: React.ReactNode;
 }) {
-  const { params, select } = useSelection();
+  const { copy } = useCopy();
   const { can } = useAccess();
-  const id = params.get("schedule");
-  const fresh = params.get("owner") === "service";
+  const { params, select } = useSelection();
+  const fresh = params.get("mode") === "fresh";
   const [pages, setPages] = React.useState<string[]>([]);
-  const base = clawPath(claw.id);
   const query = useRead<Collection<Schedule | FreshSchedule>>(
-    id && id !== "new"
-      ? null
-      : url(`${base}/${fresh ? "fresh-schedules" : "schedules"}`, {
-          cursor: pages.at(-1),
-        }),
+    url(`${clawPath(claw.id)}/${fresh ? "fresh-schedules" : "schedules"}`, {
+      cursor: pages.at(-1),
+    }),
+    10000,
   );
-  const detail = useRead<Schedule>(
-    id && id !== "new" ? `${base}/schedules/${encodeURIComponent(id)}` : null,
-  );
-  const close = () => select({ schedule: null });
-  if (id === "new" && can("write"))
-    return <ScheduleEditor claw={claw} close={close} />;
-  if (id && id !== "new") {
-    if (detail.isPending) return <Loading page />;
-    if (detail.isError) return <ErrorPage error={detail.error} />;
-    return (
-      <ScheduleDetails
-        key={id}
-        claw={claw}
-        schedule={detail.data}
-        close={close}
-      />
-    );
-  }
-  const rows = (query.data?.items ?? []).map((entry) => ({
-    ...entry,
-    state:
-      "state" in entry ? entry.state : entry.enabled ? "enabled" : "paused",
-    owner: fresh ? "Service" : "Main",
-  }));
-  const add = can("write") ? (
+  const add = can("write") && (
     <Button
-      variant={rows.length ? "outline" : "default"}
+      disabled={fresh && !claw.environment_id}
       onClick={() => select({ schedule: "new" })}
     >
-      <Icon name="plus" /> New schedule
+      {copy("New schedule", "新建排程")}
     </Button>
-  ) : undefined;
+  );
   return (
     <Page
-      title="Schedules"
-      description="Deliver to Main or start a fresh Thread on each occurrence."
-      titleAction={
-        <div className={styles.actions}>
-          {picker}
-          {!!rows.length && add}
-        </div>
+      title={copy("Schedules", "排程")}
+      titleAction={picker}
+      actions={query.data?.items.length ? add : undefined}
+      description={copy(
+        "Schedule work for Main or start a new native Thread on each occurrence.",
+        "将工作安排给主线程，或在每次触发时启动一个新的原生线程。",
+      )}
+      toolbar={
+        <SegmentedControl
+          label={copy("Schedule mode", "排程模式")}
+          value={fresh ? "fresh" : "main"}
+          onValueChange={(value) => {
+            setPages([]);
+            select({ mode: value === "fresh" ? value : null });
+          }}
+          options={[
+            { value: "main", label: copy("Main", "主线程") },
+            { value: "fresh", label: copy("Fresh Threads", "新线程") },
+          ]}
+        />
       }
     >
-      <select
-        aria-label="Schedule owner"
-        className={styles.select}
-        value={fresh ? "service" : "main"}
-        onChange={(event) => {
-          setPages([]);
-          select({
-            owner: event.currentTarget.value === "service" ? "service" : null,
-            schedule: null,
-          });
-        }}
-      >
-        <option value="main">Main</option>
-        <option value="service">Fresh Threads</option>
-      </select>
+      {fresh && !claw.environment_id && (
+        <p className={styles.muted}>
+          {copy(
+            "Bind a Project Environment before creating a Fresh Schedule.",
+            "创建新线程排程前，请先绑定项目环境。",
+          )}
+        </p>
+      )}
       {query.isPending ? (
         <Loading />
       ) : query.isError ? (
         <ErrorPage error={query.error} />
-      ) : rows.length ? (
-        <ResourceTable
-          caption="Schedules"
-          items={rows}
-          columns={[
-            {
-              label: "Schedule",
-              tone: "primary",
-              render: (row) =>
-                row.owner === "Service" ? (
-                  <ResourceLink path={`schedules/${row.id}`}>
-                    {row.name}
-                  </ResourceLink>
-                ) : (
-                  <button
-                    className={styles.rowAction}
-                    onClick={() => select({ schedule: row.id })}
-                  >
-                    {row.name}
-                    <Icon name="next" />
-                  </button>
-                ),
-            },
-            { label: "Owner", render: (row) => row.owner },
-            { label: "State", render: (row) => <Status state={row.state} /> },
-            {
-              label: "Next delivery",
-              render: (row) => <DateTime value={row.next_at} />,
-            },
-          ]}
-        />
-      ) : (
+      ) : query.data.items.length === 0 ? (
         <Empty
-          title="No schedules"
-          description="Create a schedule to automate recurring work."
+          title={copy("No schedules in this mode", "此模式下没有排程")}
+          description={copy(
+            "Schedules appear here after creation.",
+            "创建排程后将在这里显示。 ",
+          )}
           action={add}
         />
-      )}
-      {query.data && (pages.length > 0 || query.data.next_cursor) && (
-        <Pager
-          next={!!query.data.next_cursor}
-          onPrevious={
-            pages.length ? () => setPages(pages.slice(0, -1)) : undefined
-          }
-          onNext={() => {
-            const cursor = query.data.next_cursor;
-            if (cursor) setPages([...pages, cursor]);
-          }}
-        />
+      ) : (
+        <>
+          <ResourceTable
+            caption={copy("Schedules", "排程")}
+            items={query.data.items}
+            columns={[
+              {
+                label: copy("Name", "名称"),
+                tone: "primary",
+                render: (row) =>
+                  "state" in row ? (
+                    <ResourceLink path={`schedules/${row.id}`}>
+                      {row.name}
+                    </ResourceLink>
+                  ) : (
+                    <ClawLink
+                      id={claw.id}
+                      page="schedules"
+                      query={{ schedule: row.id }}
+                    >
+                      {row.name}
+                    </ClawLink>
+                  ),
+              },
+              {
+                label: copy("State", "状态"),
+                render: (row) => (
+                  <Status
+                    state={
+                      "state" in row
+                        ? row.state
+                        : row.enabled
+                          ? "enabled"
+                          : "paused"
+                    }
+                  />
+                ),
+              },
+              {
+                label: copy("Next occurrence", "下次触发"),
+                render: (row) => <DateTime value={row.next_at} />,
+              },
+            ]}
+          />
+          <Pager
+            nextCursor={query.data.next_cursor}
+            pages={pages}
+            setPages={setPages}
+          />
+        </>
       )}
     </Page>
   );
 }
-function ScheduleEditor({ claw, close }: { claw: Claw; close: () => void }) {
-  const [mode, setMode] = React.useState("cron");
-  const save = useWrite<Schedule | FreshSchedule>();
-  const request = React.useRef(crypto.randomUUID());
+
+function ScheduleRoute({ claw, id }: { claw: Claw; id: string }) {
+  const { params, select } = useSelection();
+  const { can } = useAccess();
+  const { copy } = useCopy();
+  const fresh = params.get("mode") === "fresh";
+  const edit = params.get("edit") === "1";
+  const query = useRead<Schedule>(
+    id === "new"
+      ? null
+      : `${clawPath(claw.id)}/schedules/${encodeURIComponent(id)}`,
+    edit ? undefined : 10000,
+  );
+  const close = () =>
+    select(id === "new" ? { schedule: null, edit: null } : { edit: null });
+  if (id === "new")
+    return can("write") ? (
+      <ScheduleEditor claw={claw} fresh={fresh} close={close} />
+    ) : (
+      <ErrorPage
+        error={
+          new Error(
+            copy("Schedule writing is not permitted.", "没有写入排程的权限。"),
+          )
+        }
+      />
+    );
+  if (query.isPending) return <Loading page />;
+  if (query.isError) return <ErrorPage error={query.error} />;
+  if (edit && can("write") && !query.data.deleted_at)
+    return (
+      <ScheduleEditor
+        claw={claw}
+        row={query.data}
+        fresh={false}
+        close={close}
+      />
+    );
+  return <ScheduleDetails claw={claw} row={query.data} />;
+}
+
+export function requestForPayload(
+  previous: { payload: string; key: string } | null,
+  payload: string,
+) {
+  return previous?.payload === payload
+    ? previous
+    : { payload, key: crypto.randomUUID() };
+}
+
+function localTime(value: string | null | undefined) {
+  if (!value) return "";
+  const date = new Date(value);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 19);
+}
+
+function ScheduleEditor({
+  claw,
+  row,
+  fresh,
+  close,
+}: {
+  claw: Claw;
+  row?: Schedule;
+  fresh: boolean;
+  close: () => void;
+}) {
+  const { copy } = useCopy();
+  const { workspaceId } = useApp();
+  const [mode, setMode] = React.useState(row && !row.cron ? "once" : "cron");
+  const [changeRule, setChangeRule] = React.useState(!row);
+  const write = useWrite<Schedule>();
+  const request = React.useRef<{ payload: string; key: string } | null>(null);
+  const back = url(appPath(workspaceId!, "schedules"), {
+    claw: claw.id,
+    mode: fresh ? "fresh" : null,
+    schedule: row?.id,
+  });
   return (
-    <Page title="New schedule">
+    <Page
+      title={
+        row
+          ? copy("Edit Main schedule", "编辑主线程排程")
+          : fresh
+            ? copy("New Fresh Schedule", "新建新线程排程")
+            : copy("New Main schedule", "新建主线程排程")
+      }
+      back={back}
+      backLabel={copy("Schedules", "排程")}
+    >
       <form
         className={styles.form}
         onSubmit={(event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
-          const rule =
-            mode === "cron"
+          const body = {
+            name: field(form, "name"),
+            prompt: field(form, "prompt"),
+            lateness_seconds: Number(field(form, "lateness")),
+            ...(changeRule
               ? {
-                  type: mode,
-                  expression: field(form, "cron"),
-                  timezone: field(form, "zone"),
+                  rule:
+                    mode === "cron"
+                      ? {
+                          type: "cron",
+                          expression: field(form, "cron"),
+                          timezone: field(form, "zone"),
+                        }
+                      : {
+                          type: "once",
+                          run_at: new Date(field(form, "time")).toISOString(),
+                        },
                 }
-              : {
-                  type: mode,
-                  run_at: new Date(field(form, "time")).toISOString(),
-                };
-          const target =
-            field(form, "target") === "fresh" ? "fresh-schedules" : "schedules";
-          save.mutate(
+              : {}),
+          };
+          const path = `${clawPath(claw.id)}/${fresh ? "fresh-schedules" : `schedules${row ? `/${row.id}` : ""}`}`;
+          request.current = requestForPayload(
+            request.current,
+            JSON.stringify([path, body]),
+          );
+          write.mutate(
             {
-              path: `${clawPath(claw.id)}/${target}`,
-              method: "POST",
-              body: {
-                name: field(form, "name"),
-                prompt: field(form, "prompt"),
-                rule,
-              },
-              key: request.current,
+              path,
+              method: row ? "PUT" : "POST",
+              body,
+              key: request.current.key,
             },
             { onSuccess: close },
           );
         }}
       >
-        <FormSection title="Task">
-          <FormField label="Name">
-            <InputValue name="name" maxLength={128} />
+        <FormSection title={copy("Task", "任务")}>
+          <FormField label={copy("Name", "名称")}>
+            <InputValue name="name" value={row?.name} maxLength={128} />
           </FormField>
-          <FormField label="Prompt">
-            <Textarea name="prompt" rows={5} required maxLength={32000} />
-          </FormField>
-          <FormField label="Target">
-            <select className={styles.select} name="target">
-              <option value="main">Main Inbox</option>
-              <option value="fresh" disabled={!claw.environment_id}>
-                Fresh Thread
-              </option>
-            </select>
+          <FormField label={copy("Prompt", "提示词")}>
+            <Textarea
+              name="prompt"
+              defaultValue={row?.prompt}
+              rows={5}
+              required
+              maxLength={32000}
+            />
           </FormField>
         </FormSection>
-        <FormSection title="Timing">
-          <FormField label="Frequency">
-            <select
-              className={styles.select}
-              value={mode}
-              onChange={(e) => setMode(e.target.value)}
-            >
-              <option value="cron">Recurring</option>
-              <option value="once">Once</option>
-            </select>
-          </FormField>
-          {mode === "cron" ? (
-            <>
-              <FormField label="Cron expression">
-                <InputValue name="cron" />
-              </FormField>
-              <FormField label="Time zone">
-                <InputValue name="zone" value="UTC" />
-              </FormField>
-            </>
-          ) : (
-            <FormField label="Run at (local time)">
-              <Input type="datetime-local" name="time" required />
+        <FormSection title={copy("Timing", "时间设置")}>
+          {row && (
+            <FormField label={copy("Change the schedule rule", "更改排程规则")}>
+              <Switch checked={changeRule} onCheckedChange={setChangeRule} />
             </FormField>
           )}
+          {changeRule && (
+            <>
+              <FormField label={copy("Frequency", "频率")}>
+                <Select
+                  value={mode}
+                  onValueChange={(value) => value && setMode(value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue>
+                      {mode === "cron"
+                        ? copy("Recurring", "重复执行")
+                        : copy("Once", "仅一次")}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value="cron">
+                      {copy("Recurring", "重复执行")}
+                    </SelectItem>
+                    <SelectItem value="once">
+                      {copy("Once", "仅一次")}
+                    </SelectItem>
+                  </SelectPopup>
+                </Select>
+              </FormField>
+              {mode === "cron" ? (
+                <>
+                  <FormField label={copy("Cron expression", "Cron 表达式")}>
+                    <InputValue name="cron" value={row?.cron} maxLength={128} />
+                  </FormField>
+                  <FormField label={copy("Time zone", "时区")}>
+                    <InputValue
+                      name="zone"
+                      value={row?.timezone ?? "UTC"}
+                      maxLength={100}
+                    />
+                  </FormField>
+                </>
+              ) : (
+                <FormField
+                  label={copy("Run at (local time)", "运行时间（本地时间）")}
+                >
+                  <Input
+                    type="datetime-local"
+                    name="time"
+                    step={1}
+                    required
+                    defaultValue={localTime(row?.cron ? null : row?.next_at)}
+                  />
+                </FormField>
+              )}
+            </>
+          )}
+          <FormField
+            label={copy("Lateness allowance (seconds)", "允许迟到时间（秒）")}
+            description={copy(
+              "Occurrences later than this are skipped.",
+              "超过此时间的触发会被跳过。",
+            )}
+          >
+            <Input
+              name="lateness"
+              type="number"
+              min={60}
+              max={86400}
+              required
+              defaultValue={row?.lateness_seconds ?? 300}
+            />
+          </FormField>
         </FormSection>
-        {save.isError && (
-          <p role="alert" className={styles.error}>
-            {save.error.message}
-          </p>
-        )}
-        <FormActions pending={save.isPending} onCancel={close} />
+        {write.isError && <ErrorNotice error={write.error} />}
+        <FormActions
+          onCancel={close}
+          label={copy("Save schedule", "保存排程")}
+          pending={write.isPending}
+        />
       </form>
     </Page>
   );
 }
-function ScheduleDetails({
-  claw,
-  schedule,
-  close,
-}: {
-  claw: Claw;
-  schedule: Schedule;
-  close: () => void;
-}) {
-  const path = `${clawPath(claw.id)}/schedules/${schedule.id}`;
+
+function ScheduleDetails({ claw, row }: { claw: Claw; row: Schedule }) {
+  const { copy } = useCopy();
   const { can } = useAccess();
+  const { workspaceId } = useApp();
+  const { select } = useSelection();
+  const write = useWrite<Schedule>();
+  const [tab, setTab] = React.useState("occurrences");
   const [pages, setPages] = React.useState<string[]>([]);
-  const rows = useRead<Collection<Occurrence>>(
+  const path = `${clawPath(claw.id)}/schedules/${row.id}`;
+  const query = useRead<Collection<Occurrence>>(
     url(`${path}/occurrences`, { cursor: pages.at(-1) }),
-    pages.length ? undefined : 10000,
+    10000,
   );
-  const save = useWrite<Schedule>();
-  const enabled = save.data?.enabled ?? schedule.enabled;
+  const back = url(appPath(workspaceId!, "schedules"), { claw: claw.id });
   return (
-    <Page
-      title={schedule.name}
-      description={
-        schedule.cron
-          ? `${schedule.cron} · ${schedule.timezone}`
-          : "One-time schedule"
-      }
-      titleAction={
-        <div className={styles.actions}>
-          <Button variant="ghost" onClick={close}>
-            Schedules
-          </Button>
-          {can("write") && (
-            <Button
-              variant="outline"
-              disabled={
-                save.isPending ||
-                (!enabled && schedule.next_at === null && !schedule.cron)
+    <DetailPage
+      back={back}
+      backLabel={copy("Schedules", "排程")}
+      tab={tab}
+      onTabChange={setTab}
+      tabs={[
+        { value: "occurrences", label: copy("Occurrences", "触发记录") },
+        { value: "task", label: copy("Task", "任务") },
+      ]}
+      header={
+        <DetailHeader
+          name={row.name}
+          resourceKey={row.id}
+          status={
+            <Status
+              state={
+                row.deleted_at ? "deleted" : row.enabled ? "enabled" : "paused"
               }
-              onClick={() =>
-                save.mutate({
-                  path,
-                  method: "PATCH",
-                  body: { enabled: !enabled },
-                })
-              }
-            >
-              {enabled ? "Pause" : "Enable"}
-            </Button>
-          )}
-        </div>
+            />
+          }
+          actions={
+            can("write") &&
+            !row.deleted_at && (
+              <div className={styles.actions}>
+                <Button variant="outline" onClick={() => select({ edit: "1" })}>
+                  {copy("Edit", "编辑")}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={
+                    write.isPending ||
+                    (!row.enabled && !row.cron && !row.next_at)
+                  }
+                  onClick={() =>
+                    write.mutate({
+                      path,
+                      method: "PATCH",
+                      body: { enabled: !row.enabled },
+                    })
+                  }
+                >
+                  {row.enabled ? copy("Pause", "暂停") : copy("Resume", "恢复")}
+                </Button>
+                <Confirm
+                  title={copy("Delete Main schedule?", "删除主线程排程？")}
+                  subject={row.name}
+                  danger
+                  trigger={copy("Delete", "删除")}
+                  description={copy(
+                    "Future occurrences stop. Existing occurrences and Inbox deliveries remain.",
+                    "停止将来触发，保留已有触发记录和收件投递。",
+                  )}
+                  action={() =>
+                    write.mutateAsync({ path, method: "DELETE", body: null })
+                  }
+                />
+              </div>
+            )
+          }
+        />
       }
     >
-      <div className={styles.actions}>
-        <Status state={enabled ? "enabled" : "paused"} />
-        <DateTime value={schedule.next_at} />
-      </div>
-      <pre className={styles.payload}>{schedule.prompt}</pre>
-      {save.isError && (
-        <p role="alert" className={styles.error}>
-          {save.error.message}
-        </p>
-      )}
-      {rows.isPending ? (
-        <Loading />
-      ) : rows.isError ? (
-        <ErrorPage error={rows.error} />
-      ) : rows.data.items.length ? (
-        <ResourceTable
-          caption="Occurrences"
-          items={rows.data.items}
-          columns={[
-            {
-              label: "Occurrence",
-              tone: "primary",
-              render: (row) => <DateTime value={row.scheduled_at} />,
-            },
-            {
-              label: "Outcome",
-              render: (row) => <Status state={row.status} />,
-            },
-            {
-              label: "Main Run",
-              render: (row) =>
-                row.run_id ? (
-                  <ThreadLink
-                    session={claw.main_session_id}
-                    thread={claw.main_thread_id}
-                    run={row.run_id}
-                  >
-                    Inspect
-                  </ThreadLink>
-                ) : (
-                  "—"
-                ),
-            },
-          ]}
-        />
-      ) : (
-        <Empty
-          title="No occurrences"
-          description="The first delivery will appear here."
-        />
-      )}
-      {rows.data && (pages.length > 0 || rows.data.next_cursor) && (
-        <Pager
-          next={!!rows.data.next_cursor}
-          onPrevious={
-            pages.length ? () => setPages(pages.slice(0, -1)) : undefined
-          }
-          onNext={() => {
-            const cursor = rows.data.next_cursor;
-            if (cursor) setPages([...pages, cursor]);
-          }}
-        />
-      )}
-    </Page>
+      <DetailLayout
+        rail={
+          <Rail>
+            <RailSection title={copy("Timing", "时间设置")}>
+              <RailRow label={copy("Next occurrence", "下次触发")}>
+                <DateTime value={row.next_at} />
+              </RailRow>
+              {row.cron && (
+                <RailRow label={copy("Cron", "Cron")}>
+                  <code>{row.cron}</code>
+                </RailRow>
+              )}
+              <RailRow label={copy("Time zone", "时区")}>
+                {row.timezone}
+              </RailRow>
+              <RailRow label={copy("Lateness (seconds)", "允许迟到（秒）")}>
+                {row.lateness_seconds}
+              </RailRow>
+            </RailSection>
+          </Rail>
+        }
+      >
+        {write.isError && <ErrorNotice error={write.error} />}
+        {tab === "task" ? (
+          <pre className={styles.payload}>{row.prompt}</pre>
+        ) : query.isPending ? (
+          <Loading />
+        ) : query.isError ? (
+          <ErrorNotice error={query.error} />
+        ) : query.data.items.length === 0 ? (
+          <Empty
+            title={copy("No occurrences yet", "暂时没有触发记录")}
+            description={copy(
+              "The next due occurrence will appear here.",
+              "下一次到期触发后将在这里显示。 ",
+            )}
+          />
+        ) : (
+          <>
+            <ResourceTable
+              caption={copy("Occurrences", "触发记录")}
+              items={query.data.items}
+              columns={[
+                {
+                  label: copy("Scheduled at", "计划时间"),
+                  render: (item) => <DateTime value={item.scheduled_at} />,
+                },
+                {
+                  label: copy("Outcome", "结果"),
+                  render: (item) => <Status state={item.status} />,
+                },
+                {
+                  label: copy("Delivery", "投递"),
+                  render: (item) =>
+                    item.delivery_id ? (
+                      <ClawLink
+                        id={claw.id}
+                        page="deliveries"
+                        query={{ delivery: item.delivery_id }}
+                      >
+                        {copy("Open delivery", "打开投递")}
+                      </ClawLink>
+                    ) : (
+                      "—"
+                    ),
+                },
+                {
+                  label: copy("Main Run", "主线程运行"),
+                  render: (item) =>
+                    item.run_id ? (
+                      <ThreadLink
+                        thread={claw.main_thread_id}
+                        session={claw.main_session_id}
+                        run={item.run_id}
+                      >
+                        {copy("Open Run", "打开运行")}
+                      </ThreadLink>
+                    ) : (
+                      "—"
+                    ),
+                },
+              ]}
+            />
+            <Pager
+              nextCursor={query.data.next_cursor}
+              pages={pages}
+              setPages={setPages}
+            />
+          </>
+        )}
+      </DetailLayout>
+    </DetailPage>
   );
 }

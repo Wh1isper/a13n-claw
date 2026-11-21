@@ -1,6 +1,6 @@
 """Installed App declaration and bounded organization maintenance."""
 
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from a13n_logging import get_logger
 from a13n_service.app_definitions import AppDefinition, OrganizationSweep
@@ -9,6 +9,7 @@ from a13n_service.infra.db import Storage, short_session
 from a13n_service.infra.errors import ServiceError
 from a13n_service.runs.runtime import Runtime
 from a13n_service.tenancy.tables import WorkspaceRow
+from fastapi import FastAPI
 from sqlalchemy import select
 
 from . import api, connectors, inbox, main_thread, plugin, schedules, workers
@@ -20,21 +21,33 @@ _listeners: dict[Storage, connectors.Listeners] = {}
 
 async def startup(runtime: Runtime, resources: AsyncExitStack) -> None:
     await resources.enter_async_context(plugin.local_runtime(runtime))
+
+
+@asynccontextmanager
+async def control_lifespan(app: FastAPI):
+    # Service only mounts the App router in all/control, after installing its final Runtime.
+    runtime = app.state.runtime
     listeners = connectors.Listeners(runtime)
-    # The all-role host replaces its Runtime wrapper after App startup.
     _listeners[runtime.storage] = listeners
-    resources.callback(_listeners.pop, runtime.storage)
-    resources.push_async_callback(listeners.close)
+    try:
+        yield
+    finally:
+        _listeners.pop(runtime.storage)
+        await listeners.close()
+
+
+api.router.lifespan_context = control_lifespan
 
 
 async def sweep(runtime: Runtime, organization_id: str) -> None:
-    await _listeners[runtime.storage].reconcile(organization_id)
+    if (listeners := _listeners.get(runtime.storage)) is not None:
+        await listeners.reconcile(organization_id)
     after = ""
     while True:
         async with short_session(runtime.storage) as session:
             rows = (
                 await session.execute(
-                    select(Claw.workspace_id, Claw.id)
+                    select(Claw.workspace_id, Claw.id, Claw.archived_at)
                     .join(WorkspaceRow, WorkspaceRow.id == Claw.workspace_id)
                     .where(
                         WorkspaceRow.organization_id == organization_id,
@@ -47,13 +60,15 @@ async def sweep(runtime: Runtime, organization_id: str) -> None:
             ).all()
         if not rows:
             return
-        for workspace_id, claw_id in rows:
+        for workspace_id, claw_id, archived_at in rows:
             try:
+                await inbox.cleanup(runtime.storage, workspace_id, claw_id)
+                if archived_at is not None:
+                    continue
                 await workers.terminal_notices(runtime, workspace_id, claw_id)
                 await schedules.sweep(runtime, workspace_id, claw_id)
                 await schedules.retry_fresh(runtime, workspace_id, claw_id)
                 await main_thread.notify(runtime, workspace_id, claw_id)
-                await inbox.cleanup(runtime.storage, workspace_id, claw_id)
             except (ServiceError, inbox.ClawNotFound) as error:
                 logger.warning(
                     "Claw sweep skipped",

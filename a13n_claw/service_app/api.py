@@ -14,11 +14,13 @@ from a13n_service.resources.environment_instances.tables import EnvironmentRow
 from a13n_service.resources.environment_templates.tables import EnvironmentTemplateRow
 from a13n_service.resources.models.tables import ModelRow
 from a13n_service.runs.browsers.tables import BrowserRow
+from a13n_service.runs.environments.schemas import EnvironmentFailure
 from a13n_service.runs.requests import CurrentRuntime
 from a13n_service.runs.schedules import queries as native_schedules
 from a13n_service.runs.schedules.schemas import Schedule as NativeSchedule
 from a13n_service.runs.schedules.schemas import ScheduleQuery
 from a13n_service.runs.schedules.tables import ScheduleRow as NativeScheduleRow
+from a13n_service.runs.schemas import Failure
 from a13n_service.runs.tables import RunRow, ThreadRow, UsageRecordRow
 from a13n_service.tenancy.access import workspace_scope
 from a13n_service.tenancy.app_plugins import app_router
@@ -31,6 +33,7 @@ from fastapi import Header, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import with_expression
 
 from . import connectors, inbox, main_thread, project, project_cli, schedules
 from .feishu import LarkSettings
@@ -98,11 +101,16 @@ class ThreadActivity(BaseModel):
 class ProjectStatus(BaseModel):
     environment: str
     environment_name: str | None
+    environment_failure: EnvironmentFailure | None
     browser_name: str | None
+    browser_failure: str | None
+    fresh_schedule_count: int
+    unauthorized_reply_connectors: int
     browser: str | None
     automation_account: str
     cli_versions: dict[str, str] | None
     cli_update_state: project_cli.UpdateState | None
+    cli_update_error: str | None
 
 
 class Overview(BaseModel):
@@ -110,6 +118,8 @@ class Overview(BaseModel):
     unread: int
     read: int
     main: ThreadActivity | None
+    last_failure: Failure | None
+    agent_revision_outdated: bool
     project: ProjectStatus
 
 
@@ -117,6 +127,9 @@ class DeliveryView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
     item_id: str | None
+    kind: str | None = None
+    preview: str | None = None
+    read_at: datetime | None = None
     origin: str
     status: str
     thread_id: str | None
@@ -131,11 +144,8 @@ class DeliveryPage(BaseModel):
 
 
 class DeliveryDetail(DeliveryView):
-    kind: str | None
-    preview: str | None
     content: str | None
     source: dict[str, JsonValue] | None
-    read_at: datetime | None
 
 
 class InputMessage(BaseModel):
@@ -145,7 +155,7 @@ class InputMessage(BaseModel):
 
 
 def scope_claw(workspace_id: str, claw_id: str):
-    return Claw.workspace_id == workspace_id, Claw.id == claw_id
+    return Claw.workspace_id == workspace_id, Claw.id == claw_id, Claw.archived_at.is_(None)
 
 
 async def get_claw(session: AsyncSession, workspace_id: str, claw_id: str) -> Claw:
@@ -165,7 +175,7 @@ async def list_claws(
     async with short_session(runtime.storage) as session:
         rows, next_cursor = await keyset_page(
             session,
-            select(Claw).where(Claw.workspace_id == workspace_id),
+            select(Claw).where(Claw.workspace_id == workspace_id, Claw.archived_at.is_(None)),
             (Claw.created_at, Claw.id),
             kind="claw",
             owner=workspace_id,
@@ -309,12 +319,54 @@ async def create_claw(
             id=claw_id,
             workspace_id=workspace_id,
             agent_revision_id=revision_id,
+            source_agent_revision_id=revision.id,
             memory_space_id=space_id,
             environment_id=environment_id,
             **body.model_dump(exclude={"environment_id", "environment_template_id"}),
         )
         session.add(claw)
         await session.flush()
+        return ClawView.model_validate(claw)
+
+
+async def lock_active_claw(session: AsyncSession, workspace_id: str, claw_id: str) -> Claw:
+    try:
+        return await inbox.lock_claw(session, workspace_id, claw_id)
+    except inbox.ClawNotFound:
+        raise not_found("claw", claw_id) from None
+
+
+@router.delete("/claws/{claw_id}", status_code=204, name="claw_archive")
+async def archive_claw(
+    claw_id: ResourceId, workspace_id: WorkspaceId, actor: Actor, runtime: CurrentRuntime
+) -> None:
+    async with transaction(runtime.storage) as session:
+        scope = await workspace_scope(session, actor, workspace_id, "admin")
+        claw = await lock_active_claw(session, workspace_id, claw_id)
+        await schedules.require_no_fresh_work(
+            session, claw, reason="archive_fresh_schedules_before_archiving"
+        )
+        claw.archived_at = await now(session)
+    await connectors.lark_changed(runtime, scope.organization_id)
+
+
+@router.post("/claws/{claw_id}/agent-revision/sync", name="claw_sync_agent_revision")
+async def sync_agent_revision(
+    claw_id: ResourceId, workspace_id: WorkspaceId, actor: Actor, runtime: CurrentRuntime
+) -> ClawView:
+    async with transaction(runtime.storage) as session:
+        scope = await workspace_scope(session, actor, workspace_id, "admin")
+        claw = await lock_active_claw(session, workspace_id, claw_id)
+        agent = await main_thread.current_agent(session, workspace_id, claw.agent_id)
+        assert agent.default_revision_id is not None
+        if claw.agent_revision_id is None or not await main_thread.source_matches(
+            session, claw, agent.default_revision_id
+        ):
+            revision = await session.get_one(AgentRevisionRow, agent.default_revision_id)
+            claw.agent_revision_id = await main_thread.prepare_revision(
+                session, runtime, actor, scope, agent, revision
+            )
+        claw.source_agent_revision_id = agent.default_revision_id
         return ClawView.model_validate(claw)
 
 
@@ -328,10 +380,7 @@ async def update_settings(
 ) -> ClawView:
     async with transaction(runtime.storage) as session:
         await workspace_scope(session, actor, workspace_id, "admin")
-        try:
-            claw = await inbox.lock_claw(session, workspace_id, claw_id)
-        except inbox.ClawNotFound:
-            raise not_found("claw", claw_id) from None
+        claw = await lock_active_claw(session, workspace_id, claw_id)
         for key, value in body:
             setattr(claw, key, value)
         await inbox.prune_read(session, claw, await now(session))
@@ -363,10 +412,7 @@ async def update_project(
 ) -> ClawView:
     async with transaction(runtime.storage) as session:
         scope = await workspace_scope(session, actor, workspace_id, "admin")
-        try:
-            claw = await inbox.lock_claw(session, workspace_id, claw_id)
-        except inbox.ClawNotFound:
-            raise not_found("claw", claw_id) from None
+        claw = await lock_active_claw(session, workspace_id, claw_id)
         account = await main_thread.account(session, runtime, scope, claw.service_account_id)
         environment_id = body.environment_id or claw.environment_id
         browser_id = body.browser_id if "browser_id" in body.model_fields_set else claw.browser_id
@@ -402,6 +448,7 @@ async def overview(
             )
         ).one()
         activity = None
+        last_failure = None
         if claw.main_thread_id is not None:
             result = (
                 (
@@ -410,6 +457,7 @@ async def overview(
                             ThreadRow.current_run_id,
                             ThreadRow.last_run_id,
                             RunRow.status.label("last_status"),
+                            RunRow.failure,
                         )
                         .outerjoin(RunRow, RunRow.id == ThreadRow.last_run_id)
                         .where(
@@ -423,10 +471,13 @@ async def overview(
             )
             if result is not None:
                 activity = ThreadActivity.model_validate(result)
+                last_failure = result["failure"] if result["last_status"] == "failed" else None
         environment = (
             (
                 await session.execute(
-                    select(EnvironmentRow.status, EnvironmentRow.name).where(
+                    select(
+                        EnvironmentRow.status, EnvironmentRow.name, EnvironmentRow.failure
+                    ).where(
                         EnvironmentRow.workspace_id == workspace_id,
                         EnvironmentRow.id == claw.environment_id,
                     )
@@ -438,7 +489,7 @@ async def overview(
         browser = (
             (
                 await session.execute(
-                    select(BrowserRow.status, BrowserRow.name).where(
+                    select(BrowserRow.status, BrowserRow.name, BrowserRow.failure).where(
                         BrowserRow.workspace_id == workspace_id,
                         BrowserRow.id == claw.browser_id,
                     )
@@ -463,21 +514,43 @@ async def overview(
                 pass
             else:
                 account_status = "active"
+        default_revision = await session.scalar(
+            select(AgentRow.default_revision_id).where(
+                AgentRow.id == claw.agent_id,
+                AgentRow.workspace_id == workspace_id,
+                AgentRow.archived_at.is_(None),
+            )
+        )
+        unauthorized = await session.scalar(
+            select(func.count(Connector.id)).where(
+                Connector.claw_id == claw.id,
+                Connector.enabled,
+                Connector.reply_reauthorization_required,
+            )
+        )
         return Overview(
             claw=ClawView.model_validate(claw),
             unread=unread,
             read=read,
             main=activity,
+            last_failure=last_failure,
+            agent_revision_outdated=default_revision is not None
+            and not await main_thread.source_matches(session, claw, default_revision),
             project=ProjectStatus(
                 environment=environment.status
                 if environment
                 else ("not configured" if claw.environment_id is None else "missing"),
                 environment_name=environment.name if environment else None,
+                environment_failure=environment.failure if environment else None,
+                browser_failure=browser.failure if browser else None,
+                fresh_schedule_count=await schedules.fresh_schedule_count(session, claw),
+                unauthorized_reply_connectors=unauthorized or 0,
                 browser_name=browser.name if browser else None,
                 browser=browser.status if browser else ("missing" if claw.browser_id else None),
                 automation_account=account_status,
                 cli_versions=claw.cli_versions,
                 cli_update_state=claw.cli_update_state,
+                cli_update_error=claw.cli_update_error,
             ),
         )
 
@@ -488,15 +561,13 @@ async def update_cli(
 ) -> dict[str, str]:
     async with transaction(runtime.storage) as session:
         await workspace_scope(session, actor, workspace_id, "admin")
-        try:
-            claw = await inbox.lock_claw(session, workspace_id, claw_id)
-        except inbox.ClawNotFound:
-            raise not_found("claw", claw_id) from None
+        claw = await lock_active_claw(session, workspace_id, claw_id)
         if claw.environment_id is None:
             raise conflict("claw", claw.id, "environment_required")
         if claw.cli_update_state != "queued":
             claw.cli_update_id = inbox.new_id("cup")
             claw.cli_update_state = "queued"
+            claw.cli_update_error = None
     return {"state": "queued"}
 
 
@@ -551,10 +622,7 @@ async def receive(
 ) -> inbox.Admission:
     async with transaction(runtime.storage) as session:
         await workspace_scope(session, actor, workspace_id, "run")
-        try:
-            claw = await inbox.lock_claw(session, workspace_id, claw_id)
-        except inbox.ClawNotFound:
-            raise not_found("claw", claw_id) from None
+        claw = await lock_active_claw(session, workspace_id, claw_id)
         result = await inbox.admit(
             session,
             claw,
@@ -581,16 +649,34 @@ async def deliveries(
     claw_id: ResourceId,
     workspace_id: WorkspaceId,
     runtime: CurrentRuntime,
-    status: Literal["accepted", "full", "dropped"] | None = None,
+    status: Literal["accepted", "duplicate", "full", "dropped"] | None = None,
+    inbox_state: Literal["unread", "read", "expired"] | None = None,
     cursor: str | None = None,
     limit: PageSize = 30,
 ) -> DeliveryPage:
     async with short_session(runtime.storage) as session:
         await get_claw(session, workspace_id, claw_id)
-        query = select(Delivery).where(
-            Delivery.claw_id == claw_id,
-            Delivery.created_at >= await now(session) - inbox.HISTORY_AGE,
+        cutoff = await now(session) - inbox.HISTORY_AGE
+        query = (
+            select(Delivery)
+            .outerjoin(InboxItem, retained_item(cutoff))
+            .where(Delivery.claw_id == claw_id, Delivery.created_at >= cutoff)
+            .options(
+                with_expression(Delivery.kind, InboxItem.kind),
+                with_expression(Delivery.preview, InboxItem.preview),
+                with_expression(Delivery.read_at, InboxItem.read_at),
+            )
         )
+        if inbox_state is not None:
+            if inbox_state == "expired":
+                query = query.where(Delivery.item_id.is_not(None), InboxItem.id.is_(None))
+            else:
+                query = query.where(
+                    InboxItem.id.is_not(None),
+                    InboxItem.read_at.is_(None)
+                    if inbox_state == "unread"
+                    else InboxItem.read_at.is_not(None),
+                )
         if status is not None:
             query = query.where(Delivery.status == status)
         rows, next_cursor = await keyset_page(
@@ -598,7 +684,7 @@ async def deliveries(
             query,
             (Delivery.created_at, Delivery.id),
             kind="claw_delivery",
-            owner=f"{claw_id}:{status or 'all'}",
+            owner=f"{claw_id}:{status or 'all'}:{inbox_state or 'all'}",
             cursor=cursor,
             limit=limit,
             newest_first=True,
@@ -606,6 +692,18 @@ async def deliveries(
         return DeliveryPage(
             items=[DeliveryView.model_validate(row) for row in rows], next_cursor=next_cursor
         )
+
+
+def still_retained(cutoff: datetime):
+    return or_(InboxItem.read_at.is_(None), InboxItem.read_at >= cutoff)
+
+
+def retained_item(cutoff: datetime):
+    return and_(
+        InboxItem.claw_id == Delivery.claw_id,
+        InboxItem.id == Delivery.item_id,
+        still_retained(cutoff),
+    )
 
 
 @router.get("/claws/{claw_id}/deliveries/{delivery_id}", name="claw_delivery_detail")
@@ -621,14 +719,7 @@ async def delivery_detail(
             await session.execute(
                 select(Delivery, InboxItem)
                 .join(Claw, Claw.id == Delivery.claw_id)
-                .outerjoin(
-                    InboxItem,
-                    and_(
-                        InboxItem.claw_id == Delivery.claw_id,
-                        InboxItem.id == Delivery.item_id,
-                        or_(InboxItem.read_at.is_(None), InboxItem.read_at >= cutoff),
-                    ),
-                )
+                .outerjoin(InboxItem, retained_item(cutoff))
                 .where(
                     *scope_claw(workspace_id, claw_id),
                     Delivery.id == delivery_id,
@@ -640,7 +731,9 @@ async def delivery_detail(
             raise not_found("delivery", delivery_id)
         delivery, item = result
         return DeliveryDetail(
-            **DeliveryView.model_validate(delivery).model_dump(),
+            **DeliveryView.model_validate(delivery).model_dump(
+                exclude={"kind", "preview", "read_at"}
+            ),
             kind=item.kind if item else None,
             preview=item.preview if item else None,
             content=item.content if item else None,
@@ -728,7 +821,7 @@ async def schedule_detail(
     async with short_session(runtime.storage) as session:
         claw = await get_claw(session, workspace_id, claw_id)
         return schedules.ScheduleView.model_validate(
-            await schedules.find_schedule(session, claw, schedule_id)
+            await schedules.find_schedule(session, claw, schedule_id, include_deleted=True)
         )
 
 
@@ -742,7 +835,7 @@ async def create_schedule(
 ) -> schedules.ScheduleView:
     async with transaction(runtime.storage) as session:
         await workspace_scope(session, actor, workspace_id, "write")
-        claw = await get_claw(session, workspace_id, claw_id)
+        claw = await lock_active_claw(session, workspace_id, claw_id)
         return schedules.ScheduleView.model_validate(await schedules.create(session, claw, body))
 
 
@@ -806,7 +899,12 @@ async def create_fresh_schedule(
     async with short_session(runtime.storage) as session:
         await workspace_scope(session, actor, workspace_id, "write")
         claw = await get_claw(session, workspace_id, claw_id)
-    return await schedules.create_fresh(runtime, claw, body, f"{claw.id}:{actor.id}:{request_key}")
+    try:
+        return await schedules.create_fresh(
+            runtime, claw, body, f"{claw.id}:{actor.id}:{request_key}"
+        )
+    except inbox.ClawNotFound:
+        raise not_found("claw", claw_id) from None
 
 
 class ScheduleState(BaseModel):
@@ -824,10 +922,42 @@ async def set_schedule_state(
 ) -> schedules.ScheduleView:
     async with transaction(runtime.storage) as session:
         await workspace_scope(session, actor, workspace_id, "write")
-        claw = await get_claw(session, workspace_id, claw_id)
-        await inbox.lock_claw(session, workspace_id, claw_id)
+        claw = await lock_active_claw(session, workspace_id, claw_id)
         schedule = await schedules.set_enabled(session, claw, schedule_id, body.enabled)
         return schedules.ScheduleView.model_validate(schedule)
+
+
+@router.put("/claws/{claw_id}/schedules/{schedule_id}", name="claw_edit_schedule")
+async def edit_schedule(
+    claw_id: ResourceId,
+    schedule_id: ResourceId,
+    body: schedules.ScheduleEdit,
+    workspace_id: WorkspaceId,
+    actor: Actor,
+    runtime: CurrentRuntime,
+) -> schedules.ScheduleView:
+    async with transaction(runtime.storage) as session:
+        await workspace_scope(session, actor, workspace_id, "write")
+        claw = await lock_active_claw(session, workspace_id, claw_id)
+        return schedules.ScheduleView.model_validate(
+            await schedules.edit(session, claw, schedule_id, body)
+        )
+
+
+@router.delete(
+    "/claws/{claw_id}/schedules/{schedule_id}", status_code=204, name="claw_delete_schedule"
+)
+async def delete_schedule(
+    claw_id: ResourceId,
+    schedule_id: ResourceId,
+    workspace_id: WorkspaceId,
+    actor: Actor,
+    runtime: CurrentRuntime,
+) -> None:
+    async with transaction(runtime.storage) as session:
+        await workspace_scope(session, actor, workspace_id, "write")
+        claw = await lock_active_claw(session, workspace_id, claw_id)
+        await schedules.remove(session, claw, schedule_id)
 
 
 @router.get("/claws/{claw_id}/schedules/{schedule_id}/occurrences", name="claw_occurrences")
@@ -841,7 +971,7 @@ async def occurrences(
 ) -> dict:
     async with short_session(runtime.storage) as session:
         claw = await get_claw(session, workspace_id, claw_id)
-        await schedules.find_schedule(session, claw, schedule_id)
+        await schedules.find_schedule(session, claw, schedule_id, include_deleted=True)
         rows, next_cursor = await keyset_page(
             session,
             select(Occurrence).where(Occurrence.schedule_id == schedule_id),
@@ -852,8 +982,32 @@ async def occurrences(
             limit=limit,
             newest_first=True,
         )
+        item_ids = {row.item_id for row in rows if row.item_id is not None}
+        links = (
+            dict(
+                (
+                    await session.execute(
+                        select(Delivery.item_id, Delivery.id).where(
+                            Delivery.claw_id == claw.id,
+                            Delivery.item_id.in_(item_ids),
+                            Delivery.status == "accepted",
+                            Delivery.created_at >= await now(session) - inbox.HISTORY_AGE,
+                        )
+                    )
+                )
+                .tuples()
+                .all()
+            )
+            if item_ids
+            else {}
+        )
         return {
-            "items": [schedules.OccurrenceView.model_validate(row) for row in rows],
+            "items": [
+                schedules.OccurrenceView.model_validate(row).model_copy(
+                    update={"delivery_id": links.get(row.item_id)}
+                )
+                for row in rows
+            ],
             "next_cursor": next_cursor,
         }
 
@@ -895,23 +1049,19 @@ class ConnectorView(ConnectorInput):
     id: str
     last_event_at: datetime | None
     created_at: datetime
-    credential_mounted: bool = False
     credential_configured: bool = False
     reply_environment_id: str | None = None
+    reply_reauthorization_required: bool = False
     listener_status: str | None = None
 
 
 async def connector_view(runtime: CurrentRuntime, row: Connector) -> ConnectorView:
     view = ConnectorView.model_validate(row)
-    mounted = connectors.secret_path(row.id)
     return view.model_copy(
         update={
-            "credential_mounted": bool(mounted and mounted.is_file()),
             "credential_configured": row.credential is not None,
             "listener_status": await connectors.listener_status(runtime, row.id)
-            if row.enabled
-            and row.kind == "lark"
-            and (row.credential or (mounted and mounted.is_file()))
+            if row.enabled and row.kind == "lark" and row.credential is not None
             else None,
         }
     )
@@ -974,7 +1124,7 @@ async def create_connector(
         claw = await get_claw(session, workspace_id, claw_id)
         if body.kind != "lark":
             await main_thread.account(session, runtime, scope, str(body.config["principal_id"]))
-        claw = await inbox.lock_claw(session, workspace_id, claw_id)
+        claw = await lock_active_claw(session, workspace_id, claw_id)
         check_reply_environment(claw, body)
         if await session.scalar(
             select(Connector.id).where(Connector.claw_id == claw.id, Connector.name == body.name)
@@ -989,6 +1139,8 @@ async def create_connector(
             )
         session.add(row)
         await session.flush()
+    if row.kind == "lark":
+        await connectors.lark_changed(runtime, scope.organization_id)
     return await connector_view(runtime, row)
 
 
@@ -1003,8 +1155,7 @@ async def update_connector(
 ) -> ConnectorView:
     async with transaction(runtime.storage) as session:
         scope = await workspace_scope(session, actor, workspace_id, "admin")
-        claw = await get_claw(session, workspace_id, claw_id)
-        claw = await inbox.lock_claw(session, workspace_id, claw_id)
+        claw = await lock_active_claw(session, workspace_id, claw_id)
         check_reply_environment(claw, body)
         row = await connectors.find(session, claw.id, connector_id)
         if row.kind != body.kind:
@@ -1021,33 +1172,86 @@ async def update_connector(
         row.name, row.enabled, row.config = body.name, body.enabled, body.config
         if "reply_environment_id" in body.model_fields_set:
             row.reply_environment_id = body.reply_environment_id
-        if body.credential is not None:
-            row.credential = connectors.protect(
-                runtime, scope.organization_id, row.id, body.credential.get_secret_value()
+            row.reply_reauthorization_required = False
+        if "credential" in body.model_fields_set:
+            row.credential = (
+                connectors.protect(
+                    runtime, scope.organization_id, row.id, body.credential.get_secret_value()
+                )
+                if body.credential is not None
+                else None
             )
+    if row.kind == "lark":
+        await connectors.lark_changed(runtime, scope.organization_id)
     return await connector_view(runtime, row)
 
 
-@router.post("/claws/{claw_id}/connectors/{connector_id}/check", name="claw_check_connector")
+@router.delete(
+    "/claws/{claw_id}/connectors/{connector_id}", status_code=204, name="claw_delete_connector"
+)
+async def delete_connector(
+    claw_id: ResourceId,
+    connector_id: ResourceId,
+    workspace_id: WorkspaceId,
+    actor: Actor,
+    runtime: CurrentRuntime,
+) -> None:
+    async with transaction(runtime.storage) as session:
+        scope = await workspace_scope(session, actor, workspace_id, "admin")
+        await lock_active_claw(session, workspace_id, claw_id)
+        row = await connectors.find(session, claw_id, connector_id)
+        await session.delete(row)
+    if row.kind == "lark":
+        await connectors.lark_changed(runtime, scope.organization_id)
+
+
+class ConnectorCheck(BaseModel):
+    state: Literal["not configured", "failed", "verified"]
+    reason: str | None = None
+    http_status: int | None = None
+
+
+@router.post(
+    "/claws/{claw_id}/connectors/{connector_id}/check",
+    name="claw_check_connector",
+    response_model_exclude_none=True,
+)
 async def check_connector(
     claw_id: ResourceId,
     connector_id: ResourceId,
     workspace_id: WorkspaceId,
     actor: Actor,
     runtime: CurrentRuntime,
-) -> dict[str, str]:
+) -> ConnectorCheck:
     async with short_session(runtime.storage) as session:
         scope = await workspace_scope(session, actor, workspace_id, "admin")
         await get_claw(session, workspace_id, claw_id)
         row = await connectors.find(session, claw_id, connector_id)
-        token = connectors.credential(runtime, scope.organization_id, row)
+        try:
+            token = connectors.credential(runtime, scope.organization_id, row)
+        except ServiceError:
+            return ConnectorCheck(state="failed", reason="credential_unavailable")
     if token is None:
-        return {"state": "not configured"}
+        return ConnectorCheck(state="not configured")
     try:
         await connectors.check(row.kind, row.id, row.config, token)
-    except (httpx.HTTPError, ValueError):
-        return {"state": "failed"}
-    return {"state": "verified"}
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if row.kind == "github" and status in (403, 404):
+            reason = "repository_unavailable"
+        elif status in (400, 401, 403):
+            reason = "credentials_rejected"
+        else:
+            reason = "provider_http_error"
+        return ConnectorCheck(state="failed", reason=reason, http_status=status)
+    except httpx.RequestError:
+        return ConnectorCheck(state="failed", reason="provider_unreachable")
+    except ValueError:
+        return ConnectorCheck(
+            state="failed",
+            reason="check_region_and_credentials" if row.kind == "lark" else "invalid_repository",
+        )
+    return ConnectorCheck(state="verified")
 
 
 @router.post(

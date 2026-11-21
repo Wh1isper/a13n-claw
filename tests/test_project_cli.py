@@ -144,9 +144,34 @@ def test_provision_installs_missing_and_updates_only_on_request(monkeypatch):
         assert observed == []
         failed.add("gh")
         outcome = await project_cli.provision(environment, update=True)
+        assert outcome.error == "gh: download, verification or installation failed"
         assert outcome.failed and outcome.versions == {"gh": "2.0.0", "lark-cli": "1.5.0"}
         assert observed == ["gh", "lark-cli"]
         failed.clear()
         assert (await project_cli.provision(environment, update=True)).versions["gh"] == "2.1.0"
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "operation,destination", [("lark_reply", "om_message"), ("lark_send", "ou_sender")]
+)
+@pytest.mark.parametrize(
+    "content_type, flags",
+    [
+        ("text", ("--text=fixture",)),
+        ("markdown", ("--markdown=fixture",)),
+        ("post", ("--msg-type", "post", "--content=fixture")),
+        ("interactive", ("--msg-type", "interactive", "--content=fixture")),
+        ("file", ("--file=fixture",)),
+        ("image", ("--image=fixture",)),
+    ],
+)
+def test_lark_send_and_reply_use_content_specific_flags(
+    operation, destination, content_type, flags
+):
+    config = {"app_id": "app", "bot_open_id": "ou_bot", "senders": ["ou_sender"]}
+    assert (
+        reply_arguments("lark", config, destination, "fixture", operation, content_type)[7:]
+        == flags
+    )

@@ -19,7 +19,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, query_expression
 
 from .project_cli import UpdateState
 
@@ -49,6 +49,7 @@ class Claw(Base):
     name: Mapped[str] = mapped_column(String(200))
     agent_id: Mapped[str] = mapped_column(String(64))
     agent_revision_id: Mapped[str | None] = mapped_column(String(64))
+    source_agent_revision_id: Mapped[str | None] = mapped_column(String(64))
     environment_id: Mapped[str | None] = mapped_column(String(64))
     memory_space_id: Mapped[str] = mapped_column(String(64))
     browser_id: Mapped[str | None] = mapped_column(String(64))
@@ -62,9 +63,11 @@ class Claw(Base):
     cli_versions: Mapped[dict[str, str] | None] = mapped_column(JSON)
     cli_update_id: Mapped[str | None] = mapped_column(String(64))
     cli_update_state: Mapped[UpdateState | None] = mapped_column(String(16))
+    cli_update_error: Mapped[str | None] = mapped_column(String(512))
     heartbeat_seconds: Mapped[int] = mapped_column(server_default=text("300"))
     unread_limit: Mapped[int] = mapped_column(server_default=text("500"))
     read_limit: Mapped[int] = mapped_column(server_default=text("3000"))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -120,6 +123,11 @@ class Delivery(Base):
     run_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # Project retained Inbox fields into the same snapshot as delivery filters.
+    kind: Mapped[str | None] = query_expression()
+    preview: Mapped[str | None] = query_expression()
+    read_at: Mapped[datetime | None] = query_expression()
+
 
 class Worker(Base):
     __tablename__ = database.name("workers")
@@ -166,6 +174,7 @@ class Schedule(Base):
     timezone: Mapped[str] = mapped_column(String(100), default="UTC")
     lateness_seconds: Mapped[int] = mapped_column(default=300)
     next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     enabled: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -231,6 +240,7 @@ class Connector(Base):
     config: Mapped[dict[str, Any]] = mapped_column(JSON)
     credential: Mapped[dict[str, str] | None] = mapped_column(JSON)
     reply_environment_id: Mapped[str | None] = mapped_column(String(64))
+    reply_reauthorization_required: Mapped[bool] = mapped_column(server_default=text("false"))
     enabled: Mapped[bool] = mapped_column(default=True)
     last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

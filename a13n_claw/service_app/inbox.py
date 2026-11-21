@@ -45,7 +45,9 @@ class ClawNotFound(LookupError):
 async def lock_claw(session: AsyncSession, workspace_id: str, claw_id: str) -> Claw:
     # One short row lock orders count + insert, open + prune, and configuration changes.
     claw = await session.scalar(
-        select(Claw).where(Claw.workspace_id == workspace_id, Claw.id == claw_id).with_for_update()
+        select(Claw)
+        .where(Claw.workspace_id == workspace_id, Claw.id == claw_id, Claw.archived_at.is_(None))
+        .with_for_update()
     )
     if claw is None:
         raise ClawNotFound(claw_id)
@@ -191,7 +193,14 @@ async def pop(
 
 async def cleanup(storage: Storage, workspace_id: str, claw_id: str) -> None:
     async with transaction(storage) as session:
-        claw = await lock_claw(session, workspace_id, claw_id)
+        # Retention continues after archiving; this lock grants no admission authority.
+        claw = await session.scalar(
+            select(Claw)
+            .where(Claw.workspace_id == workspace_id, Claw.id == claw_id)
+            .with_for_update()
+        )
+        if claw is None:
+            return
         current = await now(session)
         await prune_read(session, claw, current)
         await _prune_deliveries(session, claw.id, current)
@@ -214,7 +223,12 @@ async def unread_previews(
     query = (
         select(InboxItem.id, InboxItem.kind, InboxItem.preview, InboxItem.created_at)
         .join(Claw, Claw.id == InboxItem.claw_id)
-        .where(Claw.id == claw_id, Claw.workspace_id == workspace_id, InboxItem.read_at.is_(None))
+        .where(
+            Claw.id == claw_id,
+            Claw.workspace_id == workspace_id,
+            Claw.archived_at.is_(None),
+            InboxItem.read_at.is_(None),
+        )
         .order_by(InboxItem.created_at, InboxItem.id)
         .limit(limit)
     )

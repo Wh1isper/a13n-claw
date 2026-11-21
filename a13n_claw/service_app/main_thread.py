@@ -77,16 +77,21 @@ async def check_project(
     environment_id: str | None,
     browser_id: str | None,
 ) -> AgentRow:
+    agent = await current_agent(session, scope.workspace_id, agent_id)
+    await check_resources(session, scope, actor, environment_id, browser_id)
+    return agent
+
+
+async def current_agent(session: AsyncSession, workspace_id: str, agent_id: str) -> AgentRow:
     agent = await session.scalar(
         select(AgentRow)
-        .where(AgentRow.workspace_id == scope.workspace_id, AgentRow.id == agent_id)
+        .where(AgentRow.workspace_id == workspace_id, AgentRow.id == agent_id)
         .with_for_update()
     )
     if agent is None:
         raise not_found("agent", agent_id)
     if agent.archived_at is not None or agent.default_revision_id is None:
         raise conflict("agent", agent_id, "agent_unavailable")
-    await check_resources(session, scope, actor, environment_id, browser_id)
     return agent
 
 
@@ -136,6 +141,22 @@ async def prepare_revision(
         plugins=runtime.plugins,
     )
     return published.id
+
+
+async def source_matches(session: AsyncSession, claw: Claw, default_id: str) -> bool:
+    if claw.source_agent_revision_id is not None:
+        return claw.source_agent_revision_id == default_id
+    if claw.agent_revision_id is None or claw.agent_revision_id == default_id:
+        return True
+    # Existing rows predate the source pointer. A generated summary revision
+    # still represents the current default if composition gives the same config.
+    pinned = await session.get(AgentRevisionRow, claw.agent_revision_id)
+    if pinned is None or pinned.note != "Claw Project context summary":
+        return False
+    default = await session.get_one(AgentRevisionRow, default_id)
+    return AgentConfig.model_validate(pinned.config) == AgentConfig.model_validate(
+        {**default.config, "summarize": True}
+    )
 
 
 def selected_revision(claw: Claw, agent: AgentRow) -> str:

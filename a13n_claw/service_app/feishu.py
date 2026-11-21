@@ -55,6 +55,7 @@ class InboundMessage(BaseModel):
 
 
 type MessageHandler = Callable[[InboundMessage], Awaitable[None]]
+type StatusHandler = Callable[[str], Awaitable[None]]
 
 
 def normalize_message(
@@ -155,6 +156,7 @@ class LarkAdapter:
         secret: str,
         *,
         client: httpx.AsyncClient | None = None,
+        on_status: StatusHandler | None = None,
     ):
         self.connection_id = connection_id
         self.settings = settings
@@ -170,6 +172,13 @@ class LarkAdapter:
         self._retry_seconds = 30.0
         self._fragments: dict[str, tuple[float, list[bytes | None]]] = {}
         self.status = "disconnected"
+        self._on_status = on_status
+
+    async def _transition(self, status: str) -> None:
+        if self.status != status:
+            self.status = status
+            if self._on_status is not None:
+                await self._on_status(status)
 
     async def access_token(self) -> str:
         async with self._token_lock:
@@ -223,7 +232,7 @@ class LarkAdapter:
                 service = int(parse_qs(urlparse(url).query)["service_id"][0])
                 async with connect(url, max_size=20 * 1024 * 1024, proxy=None) as socket:
                     self._socket = socket
-                    self.status = "connected"
+                    await self._transition("connected")
                     ping = asyncio.create_task(self._ping(socket, service))
                     try:
                         async for raw in socket:
@@ -243,7 +252,7 @@ class LarkAdapter:
                 )
             finally:
                 self._socket = None
-                self.status = "disconnected"
+                await self._transition("disconnected")
                 self._fragments.clear()
             if not self._closed.is_set():
                 with suppress(TimeoutError):

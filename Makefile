@@ -33,6 +33,7 @@ console-sdk:
 
 console-check: console-sdk
 	$(PNPM) --dir frontend typecheck
+	$(PNPM) --dir frontend test
 
 console-build: frontend-install console-check
 	$(PNPM) --dir frontend build

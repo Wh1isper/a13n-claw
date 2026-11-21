@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from contextlib import suppress
 from dataclasses import dataclass, field
 from hashlib import sha256
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import quote
+from uuid import uuid4
 
 import httpx
 from a13n_logging import get_logger
@@ -32,6 +31,14 @@ if TYPE_CHECKING:
     from a13n_service.runs.runtime import Runtime
 
 logger = get_logger(__name__)
+LARK_CHANGES = "claw:lark:changes"
+STATUS_TTL = 30
+# A replaced listener must neither update nor erase the new holder's status.
+WRITE_STATUS = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return end
+if ARGV[2] == '' then return redis.call('DEL', KEYS[2]) end
+return redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
+"""
 
 
 class ExternalSettings(BaseModel):
@@ -79,7 +86,7 @@ def credential(runtime: Runtime, organization_id: str, row: Connector) -> str | 
         return runtime.keys.reveal(
             Envelope.model_validate(row.credential), location(organization_id, row.id)
         ).decode()
-    return secret(row.id)
+    return None
 
 
 async def command_environment(
@@ -104,6 +111,19 @@ async def command_environment(
     }
 
 
+async def reply_credentials(
+    kind: str, connector_id: str, config: dict, token: str
+) -> dict[str, str]:
+    # Service 0.3.3 injects the credential only into this invocation. When the
+    # runtime supports broker grants, substitute the allowed-host placeholder here.
+    return {
+        **await command_environment(kind, connector_id, config, token),
+        "GH_DEBUG": "",
+        "DEBUG": "",
+        "LARKSUITE_CLI_DEBUG": "",
+    }
+
+
 def listener_key(connector_id: str) -> str:
     return f"claw:lark:status:{connector_id}"
 
@@ -111,11 +131,17 @@ def listener_key(connector_id: str) -> str:
 async def listener_status(runtime: Runtime, connector_id: str) -> str:
     with suppress(RedisError):
         status = await runtime.redis.get(listener_key(connector_id))
-        if status in (b"connected", "connected"):
-            return "connected"
-        if status in (b"disconnected", "disconnected"):
-            return "disconnected"
+        if status in ("connected", "disconnected", "conflict"):
+            return status
     return "not observed"
+
+
+async def lark_changed(runtime: Runtime, organization_id: str) -> None:
+    try:
+        await runtime.redis.publish(LARK_CHANGES, organization_id)
+    except RedisError:
+        # Configuration is already committed. The sweep will reconcile it.
+        logger.warning("Lark reconcile signal unavailable")
 
 
 async def check(kind: str, connector_id: str, config: dict, token: str) -> None:
@@ -134,19 +160,6 @@ async def check(kind: str, connector_id: str, config: dict, token: str) -> None:
             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
         )
         response.raise_for_status()
-
-
-def secret_path(connector_id: str) -> Path | None:
-    root = os.environ.get("CLAW_SECRET_DIR")
-    return Path(root) / connector_id if root else None
-
-
-def secret(connector_id: str) -> str | None:
-    path = secret_path(connector_id)
-    if path is not None:
-        with suppress(OSError):
-            return path.read_text().strip() or None
-    return None
 
 
 def event_key(connector_id: str, event_id: str) -> str:
@@ -268,15 +281,31 @@ async def intake_enabled(session: AsyncSession, workspace_id: str, *, lock: bool
 
 
 async def offer_lark(
-    runtime: Runtime, workspace_id: str, claw_id: str, message: InboundMessage
+    runtime: Runtime, intake: Intake, message: InboundMessage
 ) -> inbox.Admission | None:
+    workspace_id, claw_id = intake.workspace_id, intake.claw_id
     async with transaction(runtime.storage) as session:
         if not await intake_enabled(session, workspace_id, lock=True):
             return None
-        claw = await inbox.lock_claw(session, workspace_id, claw_id)
-        connector = await find(session, claw.id, message.connection)
-        if not connector.enabled or not allows_lark(
-            LarkSettings.model_validate(connector.config), message
+        try:
+            claw = await inbox.lock_claw(session, workspace_id, claw_id)
+        except inbox.ClawNotFound:
+            return None
+        connector = await session.get(Connector, intake.connector_id)
+        if (
+            connector is None
+            or connector.claw_id != claw.id
+            or not connector.enabled
+            or connector.kind != "lark"
+            or message.connection != connector.id
+        ):
+            return None
+        settings = LarkSettings.model_validate(connector.config)
+        if (
+            (settings.app_id, settings.bot_open_id, settings.domain)
+            != (intake.settings.app_id, intake.settings.bot_open_id, intake.settings.domain)
+            or credential(runtime, intake.organization_id, connector) != intake.token
+            or not allows_lark(settings, message)
         ):
             return None
         connector.last_event_at = await now(session)
@@ -344,28 +373,66 @@ class Listeners:
     def __init__(self, runtime: Runtime) -> None:
         self.runtime = runtime
         self.tasks: dict[str, tuple[Intake, asyncio.Task[None]]] = {}
+        self._reconcile_lock = asyncio.Lock()
+        self._subscription = asyncio.create_task(self._subscribe())
+        self._write_status = runtime.redis.register_script(WRITE_STATUS)
+        self._closing = False
+
+    async def _subscribe(self) -> None:
+        while True:
+            try:
+                async with self.runtime.redis.pubsub() as pubsub:
+                    await pubsub.subscribe(LARK_CHANGES)
+                    async for message in pubsub.listen():
+                        organization_id = message["data"]
+                        if message["type"] != "message" or not isinstance(organization_id, str):
+                            continue
+                        try:
+                            await self.reconcile(organization_id)
+                        except Exception:
+                            logger.warning("Lark configuration reconciliation failed")
+            except RedisError:
+                logger.warning("Lark reconcile subscription unavailable")
+                await asyncio.sleep(1)
 
     async def close(self) -> None:
-        owned = [task for _, task in self.tasks.values()]
-        for task in owned:
-            task.cancel()
-        await asyncio.gather(*owned, return_exceptions=True)
+        self._closing = True
+        self._subscription.cancel()
+        await asyncio.gather(self._subscription, return_exceptions=True)
+        async with self._reconcile_lock:
+            owned = [task for _, task in self.tasks.values() if not task.cancelling()]
+            for task in owned:
+                task.cancel()
+            await asyncio.gather(*(task for _, task in self.tasks.values()), return_exceptions=True)
 
     async def reconcile(self, organization_id: str) -> None:
+        async with self._reconcile_lock:
+            if not self._closing:
+                await self._reconcile(organization_id)
+
+    async def _reconcile(self, organization_id: str) -> None:
         async with short_session(self.runtime.storage) as session:
+            settings = await session.scalar(
+                select(OrganizationRow.settings).where(OrganizationRow.id == organization_id)
+            )
             rows = (
-                await session.execute(
-                    select(Connector, Claw.id, Claw.workspace_id)
-                    .join(Claw, Claw.id == Connector.claw_id)
-                    .join(WorkspaceRow, WorkspaceRow.id == Claw.workspace_id)
-                    .where(
-                        WorkspaceRow.organization_id == organization_id,
-                        WorkspaceRow.archived_at.is_(None),
-                        Connector.kind == "lark",
-                        Connector.enabled,
+                (
+                    await session.execute(
+                        select(Connector, Claw.id, Claw.workspace_id)
+                        .join(Claw, Claw.id == Connector.claw_id)
+                        .join(WorkspaceRow, WorkspaceRow.id == Claw.workspace_id)
+                        .where(
+                            WorkspaceRow.organization_id == organization_id,
+                            WorkspaceRow.archived_at.is_(None),
+                            Claw.archived_at.is_(None),
+                            Connector.kind == "lark",
+                            Connector.enabled,
+                        )
                     )
-                )
-            ).all()
+                ).all()
+                if settings is not None and APP_ID in policy(settings).enabled
+                else ()
+            )
         needed = {}
         for row, claw, workspace in rows:
             try:
@@ -386,25 +453,45 @@ class Listeners:
             if current.organization_id == organization_id and (
                 task.done() or current != needed.get(key)
             ):
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+                if not task.done():
+                    if not task.cancelling():
+                        task.cancel()
+                    await asyncio.wait((task,))
+                if not task.cancelled() and task.exception() is not None:
+                    logger.warning("Lark listener stopped", extra={"connector_id": key})
                 del self.tasks[key]
         for key, intake in needed.items():
             if key not in self.tasks:
                 self.tasks[key] = (intake, asyncio.create_task(self.listen(intake, intake.token)))
 
     async def listen(self, intake: Intake, token: str) -> None:
-        lock = self.runtime.redis.lock(
-            f"claw:lark:{intake.settings.app_id}", timeout=45, blocking=False, thread_local=False
-        )
-        if not await lock.acquire():
+        redis = self.runtime.redis
+        lease_key = f"claw:lark:{intake.settings.app_id}"
+        status_key = listener_key(intake.connector_id)
+        prefix = f"{intake.connector_id}:"
+        owner = f"{prefix}{uuid4().hex}"
+        lock = redis.lock(lease_key, timeout=45, blocking=False, thread_local=False)
+        if not await lock.acquire(token=owner):
+            # A replica of this connector is normal; another connector with this App ID is not.
+            holder = await redis.get(lease_key)
+            if isinstance(holder, str) and not holder.startswith(prefix):
+                await self._write_status(
+                    keys=[lease_key, status_key], args=[holder, "conflict", STATUS_TTL]
+                )
             return
-        adapter = LarkAdapter(intake.connector_id, intake.settings, token)
+
+        async def status_changed(status: str) -> None:
+            with suppress(RedisError):
+                await self._write_status(
+                    keys=[lease_key, status_key], args=[owner, status, STATUS_TTL]
+                )
+
+        adapter = LarkAdapter(intake.connector_id, intake.settings, token, on_status=status_changed)
 
         async def receive(event: InboundMessage) -> None:
             if not await lock.owned():
                 raise LockError("Feishu listener has moved")
-            result = await offer_lark(self.runtime, intake.workspace_id, intake.claw_id, event)
+            result = await offer_lark(self.runtime, intake, event)
             if result is not None and result.status == "full":
                 try:
                     await adapter.react(event.message_id, "ERROR")
@@ -416,6 +503,7 @@ class Listeners:
 
         run = asyncio.create_task(adapter.run(receive))
         try:
+            await status_changed(adapter.status)
             while not run.done():
                 done, _ = await asyncio.wait((run,), timeout=15)
                 if not done:
@@ -423,10 +511,7 @@ class Listeners:
                         if not await intake_enabled(session, intake.workspace_id):
                             return
                     await lock.extend(45, replace_ttl=True)
-                    with suppress(RedisError):
-                        await self.runtime.redis.set(
-                            listener_key(intake.connector_id), adapter.status, ex=30
-                        )
+                    await status_changed(adapter.status)
             await run
         except LockError:
             logger.warning(
@@ -438,5 +523,6 @@ class Listeners:
             try:
                 await adapter.close()
             finally:
-                with suppress(LockError):
+                await status_changed("")
+                with suppress(LockError, RedisError):
                     await lock.release()

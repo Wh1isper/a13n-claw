@@ -9,7 +9,7 @@ Use the Claw image with your normal PostgreSQL, Redis, and object storage config
 
 ## Set up a Project
 
-In a workspace, open **Apps → Claw settings**. Choose a Service Agent with an available model and a workspace service account with execution access. Select an Environment now or finish setup later under **Settings → Project**. Choose an existing instance or reserve one from a template. Main and its managed workers can also share an optional Browser created or attached in the native Browsers page. Claw creates a native Memory Space when you save the Claw.
+In a workspace, open **Workspace Settings → Claw settings**. Choose a Service Agent with an available model and a workspace service account with execution access. Select an Environment now or finish setup later under **Claw settings → Project**. Choose an existing instance or reserve one from a template. Main and its managed workers can also share an optional Browser created or attached in the native Browsers page. Claw creates a native Memory Space when you save the Claw.
 
 The Project Environment needs working shell execution. Claw installs the official `gh` and `lark-cli` binaries on supported Linux Project Environments. Configure platform credentials on the connector and authorize replies from the trusted Project Environment. See [Configuration](./configuration.md#reply-accounts).
 

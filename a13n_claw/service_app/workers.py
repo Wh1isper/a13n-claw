@@ -24,6 +24,7 @@ from a13n_service.tenancy.authorize import (
     WorkspaceScope,
     execution_authority,
 )
+from pydantic import BaseModel
 from sqlalchemy import delete, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +57,7 @@ async def bind(session: AsyncSession, run_id: str, attempt_id: str) -> Binding |
                 RunRow.status == "running",
                 Claw.workspace_id == RunRow.workspace_id,
                 Claw.service_account_id == RunRow.principal_id,
+                Claw.archived_at.is_(None),
             )
         )
     ).one_or_none()
@@ -77,6 +79,7 @@ async def bind(session: AsyncSession, run_id: str, attempt_id: str) -> Binding |
     )
     if (
         claw is None
+        or claw.archived_at is not None
         or claw.workspace_id != run.workspace_id
         or run.principal_id != claw.service_account_id
         or schedule.principal_id != claw.service_account_id
@@ -131,6 +134,12 @@ def assignment(thread_id: str, session_id: str, entry: InboxEntryRow) -> dict:
     }
 
 
+class AssignmentInput(BaseModel):
+    task: str
+    name: str | None
+    model: str | None
+
+
 async def assign(
     runtime: Runtime,
     binding: Binding,
@@ -149,6 +158,17 @@ async def assign(
         allowed = execution_authority(actor, scope)
         frozen = ExecutionAuthority.model_validate(caller.authority)
         authority = allowed.model_copy(update={"verbs": allowed.verbs & frozen.verbs})
+        request = Request.of(
+            call_key,
+            "thread" if worker_id is None else "message",
+            worker_id or claw.workspace_id,
+            AssignmentInput(task=task, name=name, model=model),
+        )
+        existing = await find_request(session, claw.workspace_id, actor.id, request.key)
+        if existing is not None and existing.request_digest == request.digest:
+            check_replay(existing, request)
+            owner = await worker_in(session, claw, existing.thread_id)
+            return assignment(owner.thread_id, owner.session_id, existing)
         agent = await session.get_one(AgentRow, claw.agent_id)
         worker = await worker_in(session, claw, worker_id) if worker_id else None
         run_options = await main_thread.options(
@@ -170,13 +190,11 @@ async def assign(
                 environments=main_thread.project_mounts(claw),
                 browser_binding=main_thread.project_browser(claw),
             )
-            request = Request.of(call_key, "thread", claw.workspace_id, body)
-        else:
-            request = Request.of(call_key, "message", worker.thread_id, message)
-        existing = await find_request(session, claw.workspace_id, actor.id, request.key)
         if existing is not None:
-            # Replays never resubmit the native tool call.
-            check_replay(existing, request)
+            # Accept receipts written before Claw fingerprinted the tool input itself.
+            check_replay(
+                existing, Request.of(call_key, request.kind, request.target, body or message)
+            )
             owner = await worker_in(session, claw, existing.thread_id)
             return assignment(owner.thread_id, owner.session_id, existing)
         if body is not None:

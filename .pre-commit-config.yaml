@@ -36,4 +36,4 @@ repos:
         name: Console format
         entry: docs/node_modules/.bin/prettier --write
         language: system
-        files: ^frontend/(src/.*\.(css|ts|tsx)|package\.json|tsconfig\.json|vite\.config\.mjs)$
+        files: ^frontend/(src/.*\.(css|ts|tsx)|tests/.*\.jsx|package\.json|tsconfig\.json|vite(st)?\.config\.mjs)$

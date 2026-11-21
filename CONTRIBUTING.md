@@ -6,7 +6,7 @@ Use Python 3.13, uv, Node.js 24, pnpm 10.30.3, Git, and Make. Run `make install`
 
 | Command                           | Purpose                                                                                        |
 | --------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `make check`                      | Ruff, Pyright, dependencies, and Console bridge types                                          |
+| `make check`                      | Ruff, Pyright, dependencies, Console bridge types, and component tests                         |
 | `make test`                       | Offline tests and optional PostgreSQL integration tests                                        |
 | `make db-check`                   | Apply Service and App migrations and check metadata parity in a disposable PostgreSQL database |
 | `make build artifact-check`       | Verify the Console bundle, installed wheel, and wheel rebuilt from sdist                       |

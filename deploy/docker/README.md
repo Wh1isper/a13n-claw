@@ -7,4 +7,4 @@ make build
 make image-check
 ```
 
-Project working context runs in the configured Service Environment. Mount connector secrets into the Service process and keep them out of the image. See [Operations](../../docs/content/operations.md).
+Project working context runs in the configured Service Environment. Save connector credentials through Claw in Console and keep them out of the image. See [Operations](../../docs/content/operations.md).

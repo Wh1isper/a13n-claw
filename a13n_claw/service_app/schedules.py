@@ -37,7 +37,7 @@ from a13n_service.tenancy.authorize import (
 from a13n_service.tenancy.tables import WorkspaceRow
 from pydantic import BaseModel, ConfigDict, Field
 from redis.exceptions import LockError
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -101,31 +101,37 @@ async def fresh_account(session: AsyncSession, runtime: Runtime, claw: Claw) -> 
     return await main_thread.account(session, runtime, scope, claw.service_account_id)
 
 
-async def require_no_fresh_work(session: AsyncSession, claw: Claw) -> None:
-    pending = (
-        select(ScheduleRequest.id)
-        .where(ScheduleRequest.claw_id == claw.id, ScheduleRequest.completed_at.is_(None))
-        .exists()
-    )
-    native = (
-        select(NativeScheduleRow.id)
-        .where(
-            NativeScheduleRow.workspace_id == claw.workspace_id,
-            NativeScheduleRow.principal_id == claw.service_account_id,
-            or_(
-                NativeScheduleRow.session_id == claw.schedule_session_id,
-                NativeScheduleRow.labels["claw"].astext == claw.id,
-            ),
-            NativeScheduleRow.thread_id.is_(None),
-            or_(
-                NativeScheduleRow.state.in_(("enabled", "paused")),
-                NativeScheduleRow.pending_occurrence_id.is_not(None),
-            ),
+async def fresh_schedule_count(session: AsyncSession, claw: Claw) -> int:
+    return (
+        await session.scalar(
+            select(func.count(NativeScheduleRow.id)).where(
+                NativeScheduleRow.workspace_id == claw.workspace_id,
+                NativeScheduleRow.principal_id == claw.service_account_id,
+                or_(
+                    NativeScheduleRow.session_id == claw.schedule_session_id,
+                    NativeScheduleRow.labels["claw"].astext == claw.id,
+                ),
+                NativeScheduleRow.thread_id.is_(None),
+                or_(
+                    NativeScheduleRow.state.in_(("enabled", "paused")),
+                    NativeScheduleRow.pending_occurrence_id.is_not(None),
+                ),
+            )
         )
-        .exists()
+        or 0
     )
-    if await session.scalar(select(or_(pending, native))):
-        raise conflict("claw", claw.id, "archive_fresh_schedules_before_rebinding")
+
+
+async def require_no_fresh_work(session: AsyncSession, claw: Claw, *, reason: str) -> None:
+    pending = await session.scalar(
+        select(
+            select(ScheduleRequest.id)
+            .where(ScheduleRequest.claw_id == claw.id, ScheduleRequest.completed_at.is_(None))
+            .exists()
+        )
+    )
+    if pending or await fresh_schedule_count(session, claw):
+        raise conflict("claw", claw.id, reason)
 
 
 async def create_fresh(runtime: Runtime, claw: Claw, body: ScheduleInput, request_key: str):
@@ -288,7 +294,9 @@ async def _submit_fresh(
 async def retry_fresh(runtime: Runtime, workspace_id: str, claw_id: str) -> None:
     async with short_session(runtime.storage) as session:
         claw = await session.scalar(
-            select(Claw).where(Claw.workspace_id == workspace_id, Claw.id == claw_id)
+            select(Claw).where(
+                Claw.workspace_id == workspace_id, Claw.id == claw_id, Claw.archived_at.is_(None)
+            )
         )
         if claw is None:
             return
@@ -317,6 +325,7 @@ class ScheduleView(BaseModel):
     lateness_seconds: int
     next_at: datetime | None
     enabled: bool
+    deleted_at: datetime | None
     created_at: datetime
 
 
@@ -328,6 +337,7 @@ class OccurrenceView(BaseModel):
     status: str
     item_id: str | None
     run_id: str | None
+    delivery_id: str | None = None
 
 
 async def create(
@@ -338,15 +348,7 @@ async def create(
         and (existing := await session.get(Schedule, schedule_id)) is not None
     ):
         return existing
-    current = await now(session)
-    rule = body.rule
-    if isinstance(rule, CronSchedule):
-        next_at = Calendar.parse(rule.expression, rule.timezone).next(current)
-        cron, timezone = rule.expression, rule.timezone
-    else:
-        if rule.run_at <= current:
-            raise invalid("rule.run_at", "must_be_in_the_future")
-        next_at, cron, timezone = rule.run_at, None, "UTC"
+    cron, timezone, next_at = schedule_rule(body.rule, await now(session))
     row = Schedule(
         id=schedule_id or inbox.new_id("sch"),
         claw_id=claw.id,
@@ -363,10 +365,59 @@ async def create(
     return row
 
 
+def schedule_rule(
+    rule: CronSchedule | OnceSchedule, current: datetime
+) -> tuple[str | None, str, datetime]:
+    if isinstance(rule, CronSchedule):
+        return (
+            rule.expression,
+            rule.timezone,
+            Calendar.parse(rule.expression, rule.timezone).next(current),
+        )
+    if rule.run_at <= current:
+        raise invalid("rule.run_at", "must_be_in_the_future")
+    return None, "UTC", rule.run_at
+
+
+class ScheduleEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=128)
+    prompt: str = Field(min_length=1, max_length=32000)
+    rule: CronSchedule | OnceSchedule | None = Field(default=None, discriminator="type")
+    lateness_seconds: int = Field(ge=60, le=86400)
+
+
+async def edit(session: AsyncSession, claw: Claw, schedule_id: str, body: ScheduleEdit) -> Schedule:
+    row = await find_schedule(session, claw, schedule_id)
+    if body.rule is not None:
+        cron, timezone, next_at = schedule_rule(body.rule, await now(session))
+        if cron is None and await occurred(session, row.id, next_at):
+            raise conflict("schedule", row.id, "occurrence_already_recorded")
+        row.cron, row.timezone, row.next_at = cron, timezone, next_at
+    row.name, row.prompt, row.lateness_seconds = body.name, body.prompt, body.lateness_seconds
+    return row
+
+
+async def occurred(session: AsyncSession, schedule_id: str, at: datetime) -> bool:
+    return (
+        await session.scalar(
+            select(Occurrence.id).where(
+                Occurrence.schedule_id == schedule_id, Occurrence.scheduled_at == at
+            )
+        )
+    ) is not None
+
+
+async def remove(session: AsyncSession, claw: Claw, schedule_id: str) -> None:
+    row = await find_schedule(session, claw, schedule_id, include_deleted=True)
+    if row.deleted_at is None:
+        row.enabled, row.next_at, row.deleted_at = False, None, await now(session)
+
+
 async def list_schedules(session: AsyncSession, claw: Claw, cursor: str | None, limit: int):
     return await keyset_page(
         session,
-        select(Schedule).where(Schedule.claw_id == claw.id),
+        select(Schedule).where(Schedule.claw_id == claw.id, Schedule.deleted_at.is_(None)),
         (Schedule.created_at, Schedule.id),
         kind="claw_schedule",
         owner=claw.id,
@@ -376,10 +427,13 @@ async def list_schedules(session: AsyncSession, claw: Claw, cursor: str | None, 
     )
 
 
-async def find_schedule(session: AsyncSession, claw: Claw, schedule_id: str) -> Schedule:
-    row = await session.scalar(
-        select(Schedule).where(Schedule.claw_id == claw.id, Schedule.id == schedule_id)
-    )
+async def find_schedule(
+    session: AsyncSession, claw: Claw, schedule_id: str, *, include_deleted: bool = False
+) -> Schedule:
+    query = select(Schedule).where(Schedule.claw_id == claw.id, Schedule.id == schedule_id)
+    if not include_deleted:
+        query = query.where(Schedule.deleted_at.is_(None))
+    row = await session.scalar(query)
     if row is None:
         raise not_found("schedule", schedule_id)
     return row
@@ -471,7 +525,7 @@ async def sweep(runtime: Runtime, workspace_id: str, claw_id: str) -> None:
     for schedule_id in schedule_ids:
         async with transaction(runtime.storage) as session:
             claw = await inbox.lock_claw(session, workspace_id, claw_id)
-            row = await find_schedule(session, claw, schedule_id)
+            row = await find_schedule(session, claw, schedule_id, include_deleted=True)
             outstanding = await settle(session, row.id)
             current = await now(session)
             if not row.enabled or row.next_at is None or row.next_at > current:
@@ -484,6 +538,8 @@ async def sweep(runtime: Runtime, workspace_id: str, claw_id: str) -> None:
                 calendar = Calendar.parse(row.cron, row.timezone)
                 scheduled_at = calendar.previous(current + timedelta(microseconds=1))
                 row.next_at = calendar.next(current)
+            if await occurred(session, row.id, scheduled_at):
+                continue
             occurrence = Occurrence(
                 id=inbox.new_id("occ"),
                 schedule_id=row.id,

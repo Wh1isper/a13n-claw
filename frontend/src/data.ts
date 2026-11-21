@@ -12,6 +12,7 @@ export interface Claw {
   name: string;
   workspace_id: string;
   agent_id: string;
+  agent_revision_id: string | null;
   environment_id: string | null;
   browser_id: string | null;
   service_account_id: string;
@@ -44,14 +45,25 @@ export interface Overview {
   unread: number;
   read: number;
   main: Activity | null;
+  last_failure: { code: string; message: string } | null;
+  agent_revision_outdated: boolean;
   project: {
     environment: string;
     environment_name: string | null;
+    environment_failure: {
+      code: string;
+      message: string;
+      permanent: boolean;
+    } | null;
+    browser_failure: string | null;
+    fresh_schedule_count: number;
+    unauthorized_reply_connectors: number;
     browser_name: string | null;
     browser: string | null;
     automation_account: string;
     cli_versions: Record<string, string> | null;
     cli_update_state: "queued" | "succeeded" | "failed" | null;
+    cli_update_error: string | null;
   };
 }
 export interface Worker {
@@ -64,6 +76,9 @@ export interface Worker {
 export interface Delivery {
   id: string;
   item_id: string | null;
+  kind: string | null;
+  preview: string | null;
+  read_at: string | null;
   origin: string;
   status: string;
   thread_id: string | null;
@@ -72,11 +87,8 @@ export interface Delivery {
   created_at: string;
 }
 export interface DeliveryDetail extends Delivery {
-  kind: string | null;
-  preview: string | null;
   content: string | null;
   source: Record<string, unknown> | null;
-  read_at: string | null;
 }
 export interface Connector {
   id: string;
@@ -84,10 +96,10 @@ export interface Connector {
   kind: "github" | "lark";
   enabled: boolean;
   last_event_at: string | null;
-  credential_mounted: boolean;
   credential_configured: boolean;
   listener_status: string | null;
   reply_environment_id: string | null;
+  reply_reauthorization_required: boolean;
   config: Record<string, unknown>;
 }
 export interface Schedule {
@@ -95,6 +107,8 @@ export interface Schedule {
   name: string;
   prompt: string;
   cron: string | null;
+  deleted_at: string | null;
+  lateness_seconds: number;
   timezone: string;
   enabled: boolean;
   next_at: string | null;
@@ -108,6 +122,7 @@ export interface FreshSchedule {
 export interface Occurrence {
   id: string;
   scheduled_at: string;
+  delivery_id: string | null;
   status: string;
   item_id: string | null;
   run_id: string | null;
@@ -128,7 +143,9 @@ export function url(
 }
 export const clawPath = (id: string) => `/claws/${encodeURIComponent(id)}`;
 export const appPath = (workspace: string, page: string) =>
-  `/workspace/${workspace}/apps/a13n.claw/${page}`;
+  page === "settings"
+    ? `/workspace/${workspace}/settings/app.a13n.claw.settings`
+    : `/workspace/${workspace}/apps/a13n.claw/${page}`;
 export const threadPath = (
   workspace: string,
   session: string,
@@ -144,7 +161,9 @@ export async function json<T>(response: Response): Promise<T> {
       body?.error?.message ?? `Request failed (${response.status})`,
     );
   }
-  return response.json() as Promise<T>;
+  return response.status === 204
+    ? (undefined as T)
+    : (response.json() as Promise<T>);
 }
 export function useRead<T>(path: string | null, interval?: number) {
   const app = useApp();
