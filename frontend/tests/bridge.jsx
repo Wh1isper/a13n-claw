@@ -1,7 +1,7 @@
 // The Service supplies this virtual module in production. Keep its data and
 // routing hooks real; substitute only the Console host and visual primitives.
 import React, { createContext, useContext } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 export {
   useMutation,
   useQuery,
@@ -9,7 +9,7 @@ export {
   useQueryClient,
 } from "@tanstack/react-query";
 export { useTranslation } from "react-i18next";
-export { React, Link, useSearchParams };
+export { React, Link, useNavigate, useSearchParams };
 
 export const AppContext = createContext(null);
 export const useApp = () => useContext(AppContext);
@@ -19,8 +19,39 @@ export const bridgeVersion = 1;
 
 const Container = ({ children }) => <div>{children}</div>;
 export const Sections = Container;
-export const Toolbar = Container;
-export const FormSection = Container;
+export const Toolbar = ({ filters, children }) => (
+  <div>
+    {filters}
+    {children}
+  </div>
+);
+export const FormSection = ({ title, children }) => (
+  <section>
+    <h3>{title}</h3>
+    {children}
+  </section>
+);
+export const ListRows = Container;
+export const ListRow = ({ name, secondary, control, actions }) => (
+  <div>
+    {name}
+    {secondary}
+    {control}
+    {actions}
+  </div>
+);
+export const ReadOnlyField = ({ label, children }) => (
+  <div>
+    {label}
+    {children}
+  </div>
+);
+export const CollectionFooter = ({ count, children }) => (
+  <footer>
+    {count}
+    {children}
+  </footer>
+);
 export const Rail = Container;
 export const RailSection = Container;
 export const RailRow = ({ label, children }) => (
@@ -41,11 +72,12 @@ export const DetailPage = ({ header, children }) => (
   </main>
 );
 export const DetailHeader = ({ name }) => <h1>{name}</h1>;
-export const Page = ({ title, titleAction, actions, children }) => (
+export const Page = ({ title, titleAction, actions, toolbar, children }) => (
   <main>
     <h1>{title}</h1>
     {titleAction}
     {actions}
+    {toolbar}
     {children}
   </main>
 );
@@ -68,11 +100,11 @@ export const Empty = ({ title, action }) => (
 export const Badge = ({ children }) => <span>{children}</span>;
 export const Timestamp = () => null;
 export const Pagination = () => null;
-export const ResourceTable = ({ columns, items, itemKey }) => (
+export const ResourceTable = ({ columns, items, itemKey, onRowActivate }) => (
   <table>
     <tbody>
       {items.map((row) => (
-        <tr key={itemKey?.(row) ?? row.id}>
+        <tr key={itemKey?.(row) ?? row.id} onClick={() => onRowActivate?.(row)}>
           {columns.map((column) => (
             <td key={column.label}>{column.render(row)}</td>
           ))}
@@ -81,13 +113,22 @@ export const ResourceTable = ({ columns, items, itemKey }) => (
     </tbody>
   </table>
 );
-export const Button = ({ children, type = "button", onClick, disabled }) => (
-  <button {...{ type, onClick, disabled }}>{children}</button>
-);
+export const Button = ({
+  children,
+  type = "button",
+  onClick,
+  disabled,
+  render,
+}) =>
+  render ? (
+    React.cloneElement(render, {}, children)
+  ) : (
+    <button {...{ type, onClick, disabled }}>{children}</button>
+  );
 export const Input = (props) => <input {...props} />;
 export const Textarea = (props) => <textarea {...props} />;
-export const FormField = ({ label, children }) => (
-  <label>
+export const FormField = ({ label, children, ...props }) => (
+  <label data-slot="field" {...props}>
     {label}
     {children}
   </label>
@@ -126,4 +167,12 @@ export const ChoiceField = ({ label, value, options, onValueChange }) => (
   </select>
 );
 export const SegmentedControl = ChoiceField;
-export const SearchPicker = ChoiceField;
+export const SearchPicker = ({ groups, footer, ...props }) => (
+  <>
+    <ChoiceField
+      {...props}
+      options={groups.flatMap((group) => group.options)}
+    />
+    {footer}
+  </>
+);

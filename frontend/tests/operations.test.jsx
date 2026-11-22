@@ -82,6 +82,13 @@ async function mount(entry, request = defaultReply, language = "en") {
               </Link>
             </nav>
             <Routes>
+              {contribution.settings.map(({ id, component: Page }) => (
+                <Route
+                  key={id}
+                  path="/workspace/test/settings/app.a13n.claw.settings"
+                  element={<Page />}
+                />
+              ))}
               {contribution.pages.map(({ id, component: Page }) => (
                 <Route
                   key={id}
@@ -193,8 +200,10 @@ test("Fresh Schedule retry preserves the key until the payload changes", async (
 
 test("Dashboard presents compact usage before deliveries and has no composer", async () => {
   const { container } = await mount(pagePath("overview"));
-  expect((await screen.findByTitle("1,200,000")).textContent).toBe("1.2M");
-  expect(screen.getByTitle("2,400,000,000").textContent).toBe("2.4B");
+  expect((await screen.findAllByTitle("1,200,000"))[0].textContent).toBe(
+    "1.2M",
+  );
+  expect(screen.getAllByTitle("2,400,000,000")[0].textContent).toBe("2.4B");
   expect(screen.getByText("Partial pricing")).toBeTruthy();
   const headings = screen
     .getAllByRole("heading", { level: 2 })
@@ -218,7 +227,7 @@ test.each([
   [
     "missing",
     "Open Project settings",
-    "/workspace/test/settings/app.a13n.claw.settings?claw=alpha",
+    "/workspace/test/settings/app.a13n.claw.settings?claw=alpha&section=project",
     /Select a usable Environment/,
   ],
 ])(
@@ -263,4 +272,142 @@ test("Workspace Settings is admin-only and the Dashboard follows Console languag
   await mount(pagePath("overview"), defaultReply, "zh-CN");
   expect(await screen.findByRole("heading", { name: "用量" })).toBeTruthy();
   expect(screen.getByRole("link", { name: "查看未读" })).toBeTruthy();
+});
+
+test("delivery detail links the exact worker thread, worker run, and source connector", async () => {
+  const delivery = {
+    id: "d1",
+    origin: "worker",
+    status: "accepted",
+    kind: "worker_terminal",
+    item_id: "i1",
+    content: "done",
+    created_at: "2026-01-01T00:00:00Z",
+    read_at: null,
+    thread_id: "main-thread",
+    session_id: "main-session",
+    run_id: "main-run",
+    source: {
+      thread_id: "worker-thread",
+      session_id: "worker-session",
+      run_id: "worker-run",
+      connector_id: "connector-one",
+    },
+  };
+  await mount(`${pagePath("deliveries")}?claw=alpha&delivery=d1`, (path) =>
+    path === "/claws/alpha/deliveries/d1"
+      ? response(delivery)
+      : defaultReply(path),
+  );
+  await screen.findByText("Source Worker Run");
+  const hrefs = screen
+    .getAllByRole("link")
+    .map((link) => link.getAttribute("href"));
+  expect(hrefs).toContain(
+    "/workspace/test/sessions/worker-session/threads/worker-thread",
+  );
+  expect(hrefs).toContain(
+    "/workspace/test/sessions/worker-session/threads/worker-thread/runs/worker-run",
+  );
+  expect(hrefs).toContain(
+    "/workspace/test/sessions/main-session/threads/main-thread/runs/main-run",
+  );
+  expect(hrefs).toContain(
+    "/workspace/test/apps/a13n.claw/connectors?claw=alpha&connector=connector-one",
+  );
+});
+
+test("origin filter scans later pages and retains matching rows", async () => {
+  const paths = [];
+  const row = (id, origin) => ({
+    id,
+    origin,
+    status: "accepted",
+    preview: id,
+    item_id: null,
+    kind: null,
+    read_at: null,
+    thread_id: null,
+    run_id: null,
+    session_id: null,
+    created_at: "2026-01-01T00:00:00Z",
+  });
+  const request = (path) => {
+    paths.push(path);
+    if (path.startsWith("/claws/alpha/deliveries?limit=100"))
+      return response({ items: [row("first", "lark")], next_cursor: "next" });
+    if (path.startsWith("/claws/alpha/deliveries?cursor=next"))
+      return response({ items: [row("later", "github")], next_cursor: null });
+    return defaultReply(path);
+  };
+  await mount(`${pagePath("deliveries")}?claw=alpha`, request);
+  fireEvent.change(await screen.findByRole("combobox", { name: "Origin" }), {
+    target: { value: "github" },
+  });
+  expect(await screen.findByText("later")).toBeTruthy();
+  expect(screen.queryByText("first")).toBeNull();
+  expect(
+    paths.some(
+      (path) => path.includes("cursor=next") && path.includes("limit=100"),
+    ),
+  ).toBe(true);
+});
+
+test("settings keeps draft and immediate project operations in separate sections", async () => {
+  const { container } = await mount(
+    "/workspace/test/settings/app.a13n.claw.settings?claw=alpha",
+  );
+  const name = await screen.findByRole("textbox", { name: "Name" });
+  fireEvent.change(name, { target: { value: "Draft" } });
+  fireEvent.change(
+    screen.getByRole("combobox", { name: "Claw settings sections" }),
+    { target: { value: "project" } },
+  );
+  expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
+  expect(await screen.findByText("Agent revision")).toBeTruthy();
+  fireEvent.change(
+    screen.getByRole("combobox", { name: "Claw settings sections" }),
+    { target: { value: "general" } },
+  );
+  expect(screen.getByRole("textbox", { name: "Name" }).value).toBe("Draft");
+  expect(
+    container.querySelector('form [data-field-layout="setting"]'),
+  ).toBeTruthy();
+});
+
+test("resource picker belongs to a labeled form field", async () => {
+  const { container } = await mount(
+    "/workspace/test/settings/app.a13n.claw.settings?new=1",
+  );
+  const picker = await screen.findByRole("combobox", { name: "Agent" });
+  expect(picker.closest('[data-slot="field"]')).toBeTruthy();
+  expect(
+    container.querySelector('form [data-field-layout="setting"]'),
+  ).toBeTruthy();
+});
+
+test("headless origin filter matches the API input origin", async () => {
+  const entry = {
+    id: "headless",
+    origin: "input",
+    status: "accepted",
+    preview: "API input",
+    item_id: null,
+    kind: null,
+    read_at: null,
+    thread_id: null,
+    run_id: null,
+    session_id: null,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+  await mount(`${pagePath("deliveries")}?claw=alpha`, (path) =>
+    path.startsWith("/claws/alpha/deliveries?limit=100")
+      ? response(collection([entry]))
+      : defaultReply(path),
+  );
+  fireEvent.change(await screen.findByRole("combobox", { name: "Origin" }), {
+    target: { value: "input" },
+  });
+  expect(await screen.findByText("API input")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Refresh results" })).toBeTruthy();
 });
