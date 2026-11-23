@@ -1,24 +1,17 @@
 """Join the native Project reservations to Claw's creation transaction."""
 
-from a13n_service.infra.db import now
-from a13n_service.infra.ids import new_object_id
-from a13n_service.resources.memories.schemas import MemoryCreate, OrganizationPolicy
-from a13n_service.resources.memories.service import insert_memory
-from a13n_service.resources.memories.tables import MemorySpaceRow
-from a13n_service.resources.rows import audit_row
-from a13n_service.runs.environments.access import audit
-from a13n_service.runs.environments.desktop.delivery import suppress as suppress_desktop
-from a13n_service.runs.environments.lifecycle import begin, reserve
-from a13n_service.runs.environments.mounts import mount_environments
-from a13n_service.runs.environments.tables import ThreadEnvironmentRow
+from typing import TypedDict
+
+from a13n_service.app_sdk import projects as app_projects
+from a13n_service.app_sdk import threads as app_threads
+from a13n_service.infra.errors import ServiceError
 from a13n_service.runs.runtime import Runtime
-from a13n_service.runs.tables import ThreadRow
-from a13n_service.tenancy.authorize import Principal, WorkspaceScope, execution_authority
-from sqlalchemy import or_, select, update
+from a13n_service.tenancy.authorize import Principal, WorkspaceScope
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import main_thread, schedules
-from .models import Claw, Connector, Worker
+from . import egress, schedules
+from .models import APP_ID, Claw, Connector
 
 
 async def reserve_environment(
@@ -29,19 +22,15 @@ async def reserve_environment(
     template_id: str,
     name: str,
 ) -> str:
-    row = await reserve(
+    return await app_projects.reserve_environment(
         session,
-        account,
-        scope,
-        template_id,
-        limit=runtime.settings.environments.managed_count,
+        runtime,
+        scope.workspace_id,
+        app_id=APP_ID,
+        principal_id=account.id,
+        template_id=template_id,
         name=name[:128],
     )
-    # Native maintenance dispatches the operation after this transaction commits.
-    await begin(session, row, "creating")
-    await session.flush()
-    audit(session, account, row, "create")
-    return row.id
 
 
 async def create_space(
@@ -52,28 +41,22 @@ async def create_space(
     claw_id: str,
     name: str,
 ) -> str:
-    memory = await insert_memory(
+    return await app_projects.create_memory_space(
         session,
-        actor,
-        scope,
-        MemoryCreate(name=claw_id),
-        settings=runtime.settings.memory,
-    )
-    space = MemorySpaceRow(
-        id=new_object_id("mspace"),
-        organization_id=scope.organization_id,
-        workspace_id=scope.workspace_id,
-        memory_id=memory.id,
+        runtime,
+        scope.workspace_id,
+        app_id=APP_ID,
+        actor_id=actor.id,
         name=claw_id,
         description=f"Project memory for {name}",
-        labels={},
-        organization=OrganizationPolicy().model_dump(mode="json", exclude_none=True),
-        created_by_id=actor.id,
-        updated_by_id=actor.id,
     )
-    session.add(space)
-    audit_row(session, actor, space, "create")
-    return space.id
+
+
+class _ResourceChanges(TypedDict, total=False):
+    environment_id: str | None
+    environment_template_id: str | None
+    browser_id: str | None
+    template_name: str | None
 
 
 async def rebind(
@@ -87,35 +70,70 @@ async def rebind(
     *,
     environment_template_id: str | None = None,
 ) -> None:
-    """Update desired resources before any later native admission locks the Thread."""
+    """Update the native shared tree atomically with the Claw Project."""
     environment_changed = (
         environment_template_id is not None or environment_id != claw.environment_id
     )
     browser_changed = browser_id != claw.browser_id
     if not (environment_changed or browser_changed):
         return
-    await main_thread.check_resources(
+    await app_projects.check_resources(
         session,
-        scope,
-        account,
-        environment_id if environment_changed and environment_template_id is None else None,
-        browser_id if browser_changed else None,
+        runtime,
+        scope.workspace_id,
+        principal_id=account.id,
+        environment_id=environment_id
+        if environment_changed and environment_template_id is None
+        else None,
+        browser_id=browser_id if browser_changed else None,
     )
     await schedules.require_no_fresh_work(
         session, claw, reason="archive_fresh_schedules_before_rebinding"
     )
-    owned_worker = select(Worker.thread_id).where(Worker.claw_id == claw.id)
-    threads = await session.scalars(
-        select(ThreadRow)
-        .where(
-            ThreadRow.workspace_id == scope.workspace_id,
-            ThreadRow.archived_at.is_(None),
-            or_(ThreadRow.id == claw.main_thread_id, ThreadRow.id.in_(owned_worker)),
+    if environment_changed:
+        await egress.revoke_for_rebind(session, runtime, claw)
+        await session.execute(
+            update(Connector)
+            .where(Connector.claw_id == claw.id, Connector.egress_primary.is_(True))
+            .values(egress_primary=False, reply_reauthorization_required=True)
         )
-        .order_by(ThreadRow.id)
-        .with_for_update()
-    )
-    claw.browser_id = browser_id
+    if claw.main_thread_id is not None:
+        kwargs: _ResourceChanges = {}
+        if environment_template_id is not None:
+            kwargs["environment_template_id"] = environment_template_id
+            kwargs["template_name"] = claw.name[:128]
+        elif environment_changed:
+            kwargs["environment_id"] = environment_id
+        if browser_changed:
+            kwargs["browser_id"] = browser_id
+        try:
+            result = await app_threads.update_thread_resources(
+                session,
+                runtime,
+                scope.workspace_id,
+                app_id=APP_ID,
+                principal_id=account.id,
+                root_thread_id=claw.main_thread_id,
+                **kwargs,
+            )
+        except ServiceError as error:
+            if error.details and error.details.get("reason") == "thread_resources_busy":
+                raise ServiceError(
+                    "conflict",
+                    "Finish or cancel active Main and shared Worker Runs, clear pending native "
+                    "messages, then retry the Environment change.",
+                    {
+                        "kind": "project",
+                        "id": claw.id,
+                        "reason": "environment_rebind_requires_idle_threads",
+                    },
+                ) from error
+            raise
+        environment_id, browser_id = result.environment_id, result.browser_id
+    elif environment_template_id is not None:
+        environment_id = await reserve_environment(
+            session, runtime, account, scope, environment_template_id, claw.name
+        )
     if environment_changed:
         claw.cli_versions = None
         claw.cli_update_id = None
@@ -126,26 +144,6 @@ async def rebind(
             .where(Connector.claw_id == claw.id, Connector.reply_environment_id.is_not(None))
             .values(reply_environment_id=None, reply_reauthorization_required=True)
         )
-    authority = execution_authority(account, scope)
-    threads = threads.all()
-    if browser_changed:
-        for thread in threads:
-            await main_thread.bind_project_browser(session, claw, thread, account, scope, authority)
-    if environment_template_id is not None:
-        # Native fresh admission locks its Thread before reserving Workspace capacity.
-        environment_id = await reserve_environment(
-            session, runtime, account, scope, environment_template_id, claw.name
-        )
     claw.environment_id = environment_id
-    for thread in threads:
-        if environment_changed:
-            old = await session.get(ThreadEnvironmentRow, (thread.id, "workspace"))
-            if old is not None:
-                await suppress_desktop(session, thread.id, mount_name="workspace")
-                await session.delete(old)
-                await session.flush()
-            await mount_environments(
-                session, thread, main_thread.project_mounts(claw), principal=account
-            )
-        thread.updated_at = await now(session)
+    claw.browser_id = browser_id
     await session.flush()

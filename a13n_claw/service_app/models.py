@@ -60,6 +60,13 @@ class Claw(Base):
     worker_models: Mapped[list[dict[str, str]]] = mapped_column(
         JSON, server_default=text("'[]'::json")
     )
+    worker_agents: Mapped[list[dict[str, str | None]]] = mapped_column(
+        JSON, server_default=text("'[]'::json")
+    )
+    worker_agent_revisions: Mapped[dict[str, str]] = mapped_column(
+        JSON, server_default=text("'{}'::json")
+    )
+    shell_review: Mapped[dict[str, Any]] = mapped_column(JSON, server_default=text("'{}'::json"))
     cli_versions: Mapped[dict[str, str] | None] = mapped_column(JSON)
     cli_update_id: Mapped[str | None] = mapped_column(String(64))
     cli_update_state: Mapped[UpdateState | None] = mapped_column(String(16))
@@ -129,37 +136,6 @@ class Delivery(Base):
     read_at: Mapped[datetime | None] = query_expression()
 
 
-class Worker(Base):
-    __tablename__ = database.name("workers")
-    __table_args__ = (
-        Index(database.name("worker_feed_idx"), "claw_id", "created_at", "thread_id"),
-    )
-
-    thread_id: Mapped[str] = mapped_column(String(72), primary_key=True)
-    claw_id: Mapped[str] = mapped_column(
-        ForeignKey(f"{database.name('claws')}.id", ondelete="CASCADE")
-    )
-    session_id: Mapped[str] = mapped_column(String(72))
-    name: Mapped[str] = mapped_column(String(200))
-    model: Mapped[str | None] = mapped_column(String(200))
-    last_notice_run_id: Mapped[str | None] = mapped_column(String(72))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class Steer(Base):
-    __tablename__ = database.name("steers")
-    __table_args__ = (Index(database.name("steer_run_idx"), "run_id", "created_at", "id"),)
-
-    id: Mapped[str] = mapped_column(String(72), primary_key=True)
-    thread_id: Mapped[str] = mapped_column(
-        ForeignKey(f"{database.name('workers')}.thread_id", ondelete="CASCADE"), index=True
-    )
-    run_id: Mapped[str] = mapped_column(String(72))
-    content: Mapped[str] = mapped_column(Text)
-    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
 class Schedule(Base):
     __tablename__ = database.name("schedules")
     __table_args__ = (Index(database.name("schedule_due_idx"), "claw_id", "next_at", "id"),)
@@ -227,6 +203,97 @@ class Occurrence(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class GitHubPollState(Base):
+    """A completed provider scan checkpoint, independent of listener ownership."""
+
+    __tablename__ = database.name("github_poll_state")
+
+    connector_id: Mapped[str] = mapped_column(
+        ForeignKey(f"{database.name('connectors')}.id", ondelete="CASCADE"), primary_key=True
+    )
+    cursor: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_modified: Mapped[str | None] = mapped_column(String(200))
+    server_poll_interval: Mapped[int] = mapped_column(server_default=text("0"))
+    next_poll_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class GitHubReceipt(Base):
+    """Retained admission identity and retryable provider feedback for a source version."""
+
+    __tablename__ = database.name("github_receipts")
+    __table_args__ = (
+        Index(database.name("github_receipt_pending_idx"), "connector_id", "reaction_state"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    connector_id: Mapped[str] = mapped_column(
+        ForeignKey(f"{database.name('connectors')}.id", ondelete="CASCADE"), index=True
+    )
+    source_key: Mapped[str] = mapped_column(String(200))
+    reaction_url: Mapped[str] = mapped_column(Text)
+    reaction_state: Mapped[str] = mapped_column(String(16), server_default=text("'pending'"))
+    thread_id: Mapped[str] = mapped_column(String(200))
+    mark_read_state: Mapped[str] = mapped_column(String(16), server_default=text("'disabled'"))
+    feedback_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class LarkRetryCard(Base):
+    """A durable card delivery and one retry admission for a failed Main Run."""
+
+    __tablename__ = database.name("lark_retry_cards")
+    __table_args__ = (
+        UniqueConstraint(
+            "claw_id", "run_id", "connector_id", "chat_id", name=database.name("lark_retry_card_uq")
+        ),
+        Index(database.name("lark_retry_card_pending_idx"), "claw_id", "state"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    claw_id: Mapped[str] = mapped_column(
+        ForeignKey(f"{database.name('claws')}.id", ondelete="CASCADE")
+    )
+    connector_id: Mapped[str] = mapped_column(String(72))
+    run_id: Mapped[str] = mapped_column(String(72))
+    chat_id: Mapped[str] = mapped_column(String(200))
+    source_message_id: Mapped[str] = mapped_column(String(200))
+    is_group: Mapped[bool] = mapped_column(server_default=text("false"))
+    reply_in_thread: Mapped[bool] = mapped_column(server_default=text("false"))
+    token: Mapped[dict[str, str]] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(String(24), server_default=text("'pending'"))
+    card_message_id: Mapped[str | None] = mapped_column(String(200))
+    send_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    admitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    patch_pending: Mapped[bool] = mapped_column(server_default=text("false"))
+    delivery_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ConnectorEgress(Base):
+    """Durable credential generation, including revocation after connector deletion."""
+
+    __tablename__ = database.name("connector_egress")
+    __table_args__ = (
+        Index(database.name("egress_claw_state_idx"), "claw_id", "state", "created_at"),
+        Index(database.name("egress_connector_idx"), "connector_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(72), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64))
+    claw_id: Mapped[str] = mapped_column(String(64))
+    connector_id: Mapped[str] = mapped_column(String(72))
+    kind: Mapped[str] = mapped_column(String(16))
+    domain: Mapped[str | None] = mapped_column(String(200))
+    state: Mapped[str] = mapped_column(String(24))
+    credential_id: Mapped[str | None] = mapped_column(String(64))
+    actor_id: Mapped[str] = mapped_column(String(64))
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    refresh_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempt_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Connector(Base):
     __tablename__ = database.name("connectors")
     __table_args__ = (UniqueConstraint("claw_id", "name", name=database.name("connector_name_uq")),)
@@ -241,6 +308,7 @@ class Connector(Base):
     credential: Mapped[dict[str, str] | None] = mapped_column(JSON)
     reply_environment_id: Mapped[str | None] = mapped_column(String(64))
     reply_reauthorization_required: Mapped[bool] = mapped_column(server_default=text("false"))
+    egress_primary: Mapped[bool] = mapped_column(server_default=text("false"))
     enabled: Mapped[bool] = mapped_column(default=True)
     last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -144,11 +144,20 @@ test("saving a connector invalidates an otherwise fresh connector list", async (
   };
   await mount(pagePath("connectors"), request);
   fireEvent.click(await screen.findByRole("button", { name: "New connector" }));
+  expect(
+    screen.getByText(
+      "Main can use authorized platform CLIs to reply; Fresh Scheduled Threads report to Main.",
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.queryByText("Authorize replies in the current Environment"),
+  ).toBeNull();
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
     target: { value: "New intake" },
   });
   fireEvent.submit(screen.getByRole("textbox", { name: "Name" }).form);
   expect(await screen.findByRole("link", { name: "New intake" })).toBeTruthy();
+  expect(saved).not.toHaveProperty("reply_environment_id");
 });
 
 test("Fresh Schedule retry preserves the key until the payload changes", async () => {
@@ -410,4 +419,123 @@ test("headless origin filter matches the API input origin", async () => {
   });
   expect(await screen.findByText("API input")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Refresh results" })).toBeTruthy();
+});
+
+test("Worker model guidance saves edited alternatives and can discard a new row", async () => {
+  const configured = {
+    ...claw,
+    worker_models: [{ model: "model-a", description: "Original guidance" }],
+  };
+  let saved;
+  await mount(
+    "/workspace/test/settings/app.a13n.claw.settings?claw=alpha",
+    (path, init) => {
+      if (path.startsWith("/claws?"))
+        return response(collection([configured, other]));
+      if (path === "/claws/alpha/settings" && init?.method === "PUT") {
+        saved = JSON.parse(init.body);
+        return response(configured);
+      }
+      if (path === "/claws/alpha")
+        return response({
+          claw: configured,
+          unread: 0,
+          read: 0,
+          main: null,
+          project,
+        });
+      return defaultReply(path);
+    },
+  );
+  expect(
+    await screen.findByText(/Main's own model, which is always allowed/),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Add model guidance" }));
+  expect(
+    screen.getAllByRole("textbox", { name: "When to use this model" }),
+  ).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+  expect(
+    screen.getAllByRole("textbox", { name: "When to use this model" }),
+  ).toHaveLength(1);
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "When to use this model" }),
+    {
+      target: { value: "  For complex reasoning  " },
+    },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+  await waitFor(() =>
+    expect(saved?.worker_models).toEqual([
+      { model: "model-a", description: "For complex reasoning" },
+    ]),
+  );
+});
+
+test("GitHub polling form submits polling configuration without reply authorization", async () => {
+  let saved;
+  await mount(pagePath("connectors"), (path, init) => {
+    if (path === "/claws/alpha/connectors" && init?.method === "POST") {
+      saved = JSON.parse(init.body);
+      return response({ ...saved, id: "polling" }, 201);
+    }
+    return defaultReply(path);
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "New connector" }));
+  fireEvent.change(
+    screen.getByRole("combobox", { name: "GitHub intake mode" }),
+    {
+      target: { value: "polling" },
+    },
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: "Notifications" },
+  });
+  fireEvent.change(
+    screen.getByRole("spinbutton", { name: "Poll interval (seconds)" }),
+    { target: { value: "120" } },
+  );
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Allowed repositories (owner/repo)" }),
+    { target: { value: "org/one\norg/two" } },
+  );
+  fireEvent.submit(screen.getByRole("textbox", { name: "Name" }).form);
+  await waitFor(() =>
+    expect(saved?.config).toMatchObject({
+      mode: "polling",
+      poll_interval_seconds: 120,
+      channels: ["org/one", "org/two"],
+    }),
+  );
+  expect(saved).not.toHaveProperty("reply_environment_id");
+});
+
+test("egress authorization uses the Environment captured when the editor opened", async () => {
+  let saved;
+  const { cache } = await mount(pagePath("connectors"), (path, init) => {
+    if (path === "/claws/alpha/connectors" && init?.method === "POST") {
+      saved = JSON.parse(init.body);
+      return response({ ...saved, id: "connector" }, 201);
+    }
+    return defaultReply(path);
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "New connector" }));
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Use for Project egress" }),
+  );
+  cache.setQueryData(["claw", "test", "/claws", "switcher"], (value) => ({
+    ...value,
+    pages: value.pages.map((page) => ({
+      ...page,
+      items: page.items.map((item) =>
+        item.id === "alpha" ? { ...item, environment_id: "new-env" } : item,
+      ),
+    })),
+  }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: "Stale authorization" },
+  });
+  fireEvent.submit(screen.getByRole("textbox", { name: "Name" }).form);
+  await waitFor(() => expect(saved?.egress_primary).toBe(true));
+  expect(saved.egress_environment_id).toBe("env");
 });

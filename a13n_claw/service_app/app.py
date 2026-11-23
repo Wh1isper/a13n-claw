@@ -13,7 +13,7 @@ from a13n_service.tenancy.tables import WorkspaceRow
 from fastapi import FastAPI
 from sqlalchemy import select
 
-from . import api, connectors, inbox, main_thread, plugin, schedules, workers
+from . import api, connectors, inbox, lark_retry, main_thread, plugin, schedules
 from .models import APP_ID, Claw, database
 
 logger = get_logger(__name__)
@@ -64,11 +64,14 @@ async def sweep(runtime: Runtime, organization_id: str) -> None:
         for workspace_id, claw_id, archived_at in rows:
             try:
                 await inbox.cleanup(runtime.storage, workspace_id, claw_id)
+                if listeners is not None:
+                    listeners.queue_egress(workspace_id, claw_id)
                 if archived_at is not None:
                     continue
-                await workers.terminal_notices(runtime, workspace_id, claw_id)
                 await schedules.sweep(runtime, workspace_id, claw_id)
                 await schedules.retry_fresh(runtime, workspace_id, claw_id)
+                if listeners is not None:
+                    listeners.queue_cards(workspace_id, claw_id)
                 await main_thread.notify(runtime, workspace_id, claw_id)
             except (ServiceError, inbox.ClawNotFound) as error:
                 logger.warning(
@@ -83,8 +86,8 @@ async def on_run_seal(runtime: Runtime, event: RunSealEvent) -> None:
         return
     role = event.labels.get("claw_role")
     try:
-        if role == "worker":
-            await workers.terminal_notice(runtime, claw_id, event)
+        if role == "main" and event.status == "failed":
+            await lark_retry.discover(runtime, event.workspace_id, claw_id)
         elif role == "main" and event.status == "completed":
             await main_thread.notify(
                 runtime,

@@ -20,6 +20,7 @@ VERSION = r"[0-9]+\.[0-9]+\.[0-9]+"
 NOTIFIERS = {"LARKSUITE_CLI_NO_UPDATE_NOTIFIER": "1", "LARKSUITE_CLI_NO_SKILLS_NOTIFIER": "1"}
 RESOLVE = 'binary=$1; shift; export PATH="$HOME/.local/bin:$PATH"'
 RUN_CLI = RESOLVE + '\nexec "$binary" "$@"'
+PROBE_CLI = RESOLVE + '\ncommand -v "$binary" >/dev/null'
 CLI_MISSING = b"claw: platform CLI not found"
 REPLY_CLI = (
     RESOLVE
@@ -121,8 +122,10 @@ async def provision(environment: BoundEnvironment, *, update: bool = False) -> M
         result = await command(environment, RUN_CLI, (name, "--version"))
         if result.status.exit_code == 0:
             text = (result.output.stdout.inline or b"").decode(errors="replace")
-            if match := re.match(rf"{re.escape(name)} version ({VERSION})(?=\s|$)", text):
-                versions[name] = match[1]
+            match = re.match(rf"{re.escape(name)} version ({VERSION})(?=\s|$)", text)
+            versions[name] = match[1] if match else "installed"
+        elif (await command(environment, PROBE_CLI, (name,))).status.exit_code == 0:
+            versions[name] = "installed"
     if len(versions) == len(CLIS) and not update:
         return Maintenance(versions, False)
     platform = await command(environment, 'printf "%s:%s" "$(uname -s)" "$(uname -m)"')

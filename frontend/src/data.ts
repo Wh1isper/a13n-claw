@@ -23,6 +23,17 @@ export interface Claw {
   unread_limit: number;
   read_limit: number;
   worker_models: { model: string; description: string }[];
+  worker_agents: {
+    agent_id: string;
+    alias: string;
+    description: string | null;
+  }[];
+  shell_review: {
+    enabled: boolean;
+    model: string | null;
+    risk_threshold: "low" | "medium" | "high" | "extra_high";
+    instruction: string | null;
+  };
 }
 export interface Admission {
   status: "accepted" | "duplicate";
@@ -91,6 +102,7 @@ export interface DeliveryDetail extends Delivery {
   source: Record<string, unknown> | null;
 }
 export interface Connector {
+  egress_primary: boolean;
   id: string;
   name: string;
   kind: "github" | "lark";
@@ -98,6 +110,8 @@ export interface Connector {
   last_event_at: string | null;
   credential_configured: boolean;
   listener_status: string | null;
+  egress_status: string | null;
+  egress_failure: string | null;
   reply_environment_id: string | null;
   reply_reauthorization_required: boolean;
   config: Record<string, unknown>;

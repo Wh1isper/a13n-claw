@@ -6,22 +6,21 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from a13n_logging import get_logger
+from a13n_service.app_sdk import agents as app_agents
+from a13n_service.app_sdk import projects as app_projects
+from a13n_service.app_sdk import threads as app_threads
 from a13n_service.infra.db import now, transaction
 from a13n_service.infra.errors import ServiceError, conflict, not_found
-from a13n_service.infra.http import etag
-from a13n_service.resources.agents import service as agents
 from a13n_service.resources.agents.schemas import (
     AgentConfig,
     AgentOverride,
-    AgentRevisionCreate,
     PluginSelection,
 )
 from a13n_service.resources.agents.tables import AgentRevisionRow, AgentRow
-from a13n_service.resources.environment_instances.access import require_usable
+from a13n_service.resources.agents.toolsets import catalog
 from a13n_service.resources.environment_instances.tables import EnvironmentRow
 from a13n_service.resources.memories.schemas import SessionMemorySettings, SpaceBinding
-from a13n_service.runs import submit
-from a13n_service.runs.accept import accept, eligible, paused
+from a13n_service.runs.accept import eligible, paused
 from a13n_service.runs.browsers import lifecycle as browser_lifecycle
 from a13n_service.runs.browsers.schemas import BrowserBinding
 from a13n_service.runs.browsers.tables import BrowserBlockedRow, ThreadBrowserRow
@@ -38,7 +37,7 @@ from a13n_service.runs.schemas import (
 )
 from a13n_service.runs.tables import AttemptRow, InboxEntryRow, RunRow, ThreadRow
 from a13n_service.runs.threads import get_thread
-from a13n_service.tenancy.access import principal_for, workspace_scope
+from a13n_service.tenancy.access import principal_for
 from a13n_service.tenancy.authorize import (
     ExecutionAuthority,
     Principal,
@@ -50,6 +49,7 @@ from a13n_service.tenancy.tables import WorkspaceRow
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from . import egress
 from .inbox import ClawNotFound, lock_claw
 from .models import APP_ID, Claw, Delivery, InboxItem
 
@@ -70,8 +70,18 @@ async def account(
     return actor
 
 
+async def automation_account(
+    session: AsyncSession, runtime: Runtime, scope: WorkspaceScope, account_id: str
+) -> Principal:
+    actor = await account(session, runtime, scope, account_id)
+    if execution_authority(actor, scope).verbs != {"read", "run", "write"}:
+        raise conflict("service account", account_id, "claw_builder_required")
+    return actor
+
+
 async def check_project(
     session: AsyncSession,
+    runtime: Runtime,
     scope: WorkspaceScope,
     actor: Principal,
     agent_id: str,
@@ -79,7 +89,14 @@ async def check_project(
     browser_id: str | None,
 ) -> AgentRow:
     agent = await current_agent(session, scope.workspace_id, agent_id)
-    await check_resources(session, scope, actor, environment_id, browser_id)
+    await app_projects.check_resources(
+        session,
+        runtime,
+        scope.workspace_id,
+        principal_id=actor.id,
+        environment_id=environment_id,
+        browser_id=browser_id,
+    )
     return agent
 
 
@@ -96,27 +113,69 @@ async def current_agent(session: AsyncSession, workspace_id: str, agent_id: str)
     return agent
 
 
-async def check_resources(
-    session: AsyncSession,
-    scope: WorkspaceScope,
-    actor: Principal,
-    environment_id: str | None,
-    browser_id: str | None,
-) -> None:
-    if environment_id is not None:
-        environment = await session.scalar(
-            select(EnvironmentRow).where(
-                EnvironmentRow.workspace_id == scope.workspace_id,
-                EnvironmentRow.id == environment_id,
-            )
+def safe_revision_config(
+    source: dict, *, summarize: bool, shell_review: dict | None = None, guard: bool = False
+) -> AgentConfig:
+    """Compile a revision that cannot request an interactive tool decision."""
+    original = AgentConfig.model_validate(source)
+    data = original.model_dump(mode="json")
+    data["user_questions"] = False
+    if summarize:
+        data["summarize"] = True
+    defaults = {
+        (group.key, tool.key): tool.default_permission
+        for group in catalog(frozenset()).items
+        for tool in group.tools
+    }
+    for group_name, group in data["toolsets"].items():
+        for tool_name, tool in group["tools"].items():
+            permission = tool["permission"]
+            if permission == "ask" or (
+                permission == "inherit" and defaults.get((group_name, tool_name)) == "ask"
+            ):
+                tool["permission"] = "deny"
+    for connection in data["connection_tools"]:
+        if connection["permission"] == "ask":
+            connection["permission"] = "deny"
+        for name, permission in connection["permissions"].items():
+            if permission == "ask":
+                connection["permissions"][name] = "deny"
+    if shell_review and shell_review.get("enabled"):
+        if not shell_review.get("model"):
+            raise ValueError("Shell review requires a model")
+        reviewer = data.get("reviewer") or {}
+        reviewer.update(
+            model=shell_review["model"],
+            risk_threshold=shell_review.get("risk_threshold", "high"),
+            shell_instruction=shell_review.get("instruction"),
         )
-        if environment is None:
-            raise not_found("environment", environment_id)
-        require_usable(environment, actor.id)
-    if browser_id is not None:
-        browser = await browser_lifecycle.find(session, scope.workspace_id, browser_id)
-        browser_lifecycle.usable(browser)
-        await browser_lifecycle.authorize_use(session, actor, browser, scope)
+        reviewer.setdefault("rules", {}).setdefault("environment.shell_exec", {})[
+            "risk_threshold"
+        ] = shell_review.get("risk_threshold", "high")
+        data["reviewer"] = reviewer
+        shell_exec = data["toolsets"]["shell"]["tools"]["exec"]
+        if shell_exec["permission"] != "deny":
+            shell_exec["permission"] = "review"
+    if reviewer := data.get("reviewer"):
+        reviewer["on_flagged"] = "deny"
+        reviewer["on_error"] = "deny"
+        for rule in reviewer.get("rules", {}).values():
+            if rule.get("on_flagged") == "approval_required":
+                rule["on_flagged"] = "deny"
+    if any(p["instance_name"] == "claw" and p["plugin_key"] != PLUGIN_KEY for p in data["plugins"]):
+        raise ValueError("Agent has an unrelated plugin occupying the Claw instance name")
+    if guard:
+        data["plugins"] = [p for p in data["plugins"] if p["plugin_key"] != PLUGIN_KEY]
+        data["plugins"].append(
+            {"instance_name": "claw", "plugin_key": PLUGIN_KEY, "config": {"role": "guard"}}
+        )
+    return AgentConfig.model_validate(data)
+
+
+def revision_is_safe(revision: AgentRevisionRow, shell_review: dict) -> bool:
+    return AgentConfig.model_validate(revision.config) == safe_revision_config(
+        revision.config, summarize=True, shell_review=shell_review
+    )
 
 
 async def prepare_revision(
@@ -126,21 +185,84 @@ async def prepare_revision(
     scope: WorkspaceScope,
     agent: AgentRow,
     revision: AgentRevisionRow,
+    *,
+    shell_review: dict | None = None,
 ) -> str:
-    if revision.config.get("summarize") is True:
+    config = safe_revision_config(revision.config, summarize=True, shell_review=shell_review)
+    if config == AgentConfig.model_validate(revision.config):
         return revision.id
-    config = AgentConfig.model_validate({**revision.config, "summarize": True})
     if agent.builtin:
-        raise conflict("agent", agent.id, "managed_revision_requires_summary")
-    published = await agents.publish_revision(
+        raise conflict("agent", agent.id, "managed_revision_requires_safe_configuration")
+    # Preserve the selected immutable source configuration, not the current
+    # default: the SDK publishes and validates the supplied transformation.
+    published = await app_agents.publish_derived_revision(
         session,
-        actor,
+        runtime,
         scope.workspace_id,
-        agent.id,
-        AgentRevisionCreate(config=config, make_default=False, note="Claw Project context summary"),
-        if_match=etag(agent.id, agent.version),
-        registry=runtime.registry,
-        plugins=runtime.plugins,
+        app_id=APP_ID,
+        actor_id=actor.id,
+        agent_id=agent.id,
+        mutate_config=lambda _default: config,
+        note="Claw Project context summary",
+    )
+    return published.id
+
+
+async def prepare_worker_revision(
+    session: AsyncSession,
+    runtime: Runtime,
+    actor: Principal,
+    scope: WorkspaceScope,
+    agent: AgentRow,
+    revision: AgentRevisionRow,
+    shell_review: dict,
+    *,
+    path: frozenset[str] = frozenset(),
+) -> str:
+    """Pin every reachable named child to a non-interactive revision."""
+    if revision.id in path:
+        raise conflict("agent", agent.id, "cyclic_worker_graph")
+    original = AgentConfig.model_validate(revision.config)
+    config = safe_revision_config(
+        revision.config, summarize=False, shell_review=shell_review, guard=not agent.builtin
+    )
+    named = {}
+    for alias, edge in sorted(config.subagents.named.items()):
+        child = await current_agent(session, scope.workspace_id, edge.agent_id)
+        child_revision = await session.get(
+            AgentRevisionRow, edge.revision_id or child.default_revision_id
+        )
+        if child_revision is None or child_revision.agent_id != child.id:
+            raise not_found("agent revision", edge.revision_id or child.id)
+        child_id = await prepare_worker_revision(
+            session,
+            runtime,
+            actor,
+            scope,
+            child,
+            child_revision,
+            shell_review,
+            path=path | {revision.id},
+        )
+        named[alias] = edge.model_copy(update={"revision_id": child_id})
+    config = config.model_copy(
+        update={"subagents": config.subagents.model_copy(update={"named": named})}
+    )
+    if agent.builtin:
+        if config != original or original.client_tools or original.plugins:
+            raise conflict("agent", agent.id, "builtin_worker_requires_safe_configuration")
+        return revision.id
+    if config == original:
+        return revision.id
+    published = await app_agents.publish_derived_revision(
+        session,
+        runtime,
+        scope.workspace_id,
+        app_id=APP_ID,
+        actor_id=actor.id,
+        agent_id=agent.id,
+        mutate_config=lambda _default: config,
+        note="Claw safe Worker revision",
     )
     return published.id
 
@@ -156,8 +278,8 @@ async def source_matches(session: AsyncSession, claw: Claw, default_id: str) -> 
     if pinned is None or pinned.note != "Claw Project context summary":
         return False
     default = await session.get_one(AgentRevisionRow, default_id)
-    return AgentConfig.model_validate(pinned.config) == AgentConfig.model_validate(
-        {**default.config, "summarize": True}
+    return AgentConfig.model_validate(pinned.config) == safe_revision_config(
+        default.config, summarize=True
     )
 
 
@@ -183,10 +305,18 @@ def project_session(claw: Claw, title: str) -> SessionCreate:
     )
 
 
-def project_mounts(claw: Claw) -> tuple[MountCreate, ...]:
+def project_mounts(
+    claw: Claw, configuration: app_threads.SessionConfiguration | None = None
+) -> tuple[MountCreate, ...]:
     if claw.environment_id is None:
         raise conflict("claw", claw.id, "project_environment_required")
-    return (MountCreate(name="workspace", environment_id=claw.environment_id),)
+    return (
+        MountCreate(
+            name="workspace",
+            environment_id=claw.environment_id,
+            session_configuration=configuration,
+        ),
+    )
 
 
 def project_browser(claw: Claw) -> BrowserBinding | None:
@@ -243,6 +373,8 @@ async def options(
     session: AsyncSession, claw: Claw, agent: AgentRow, *, role: str, model: str | None = None
 ) -> RunOptions:
     revision = await session.get_one(AgentRevisionRow, selected_revision(claw, agent))
+    if not revision_is_safe(revision, claw.shell_review):
+        raise conflict("claw", claw.id, "safe_revision_sync_required")
     plugins = tuple(
         PluginSelection.model_validate(item)
         for item in revision.config.get("plugins", ())
@@ -259,6 +391,29 @@ async def options(
         overrides["toolsets"] = {"browser": {**browser, "enabled": True}}
     if role == "main":
         overrides["output_spec"] = {"alternatives": ["text", "builtin.finish_silently"]}
+        named = {}
+        for entry in claw.worker_agents:
+            agent_id = entry["agent_id"]
+            alias = entry["alias"]
+            if not isinstance(agent_id, str) or not isinstance(alias, str):
+                raise conflict("claw", claw.id, "invalid_worker_agent")
+            revision_id = claw.worker_agent_revisions.get(agent_id)
+            if revision_id is None:
+                raise conflict("claw", claw.id, "worker_revision_unavailable")
+            named[alias] = {
+                "agent_id": agent_id,
+                "revision_id": revision_id,
+                "description": entry.get("description"),
+                "environment": {"mode": "shared"},
+            }
+        overrides["subagents"] = {
+            "mode": "async",
+            "named": named,
+            "dynamic": {
+                "enabled": bool(claw.worker_models),
+                "allowed_models": [item["model"] for item in claw.worker_models],
+            },
+        }
     else:
         overrides["client_tools"] = ()
         # The parent policy cannot govern an independently started child Run.
@@ -298,10 +453,17 @@ async def notify(
             )
             if account_id is None:
                 return
-            admission = await submit.prepare_app_submission(
-                session, runtime, workspace_id, account_id
+            admission = await app_threads.prepare_admission(
+                session, runtime, workspace_id, account_id, app_id=APP_ID
             )
             claw = await lock_claw(session, workspace_id, claw_id)
+            workspace = await session.get_one(WorkspaceRow, workspace_id)
+            await automation_account(
+                session,
+                runtime,
+                WorkspaceScope(workspace.organization_id, workspace_id),
+                account_id,
+            )
             await _wake(
                 session,
                 runtime,
@@ -325,7 +487,7 @@ async def _wake(
     session: AsyncSession,
     runtime: Runtime,
     claw: Claw,
-    admission: submit.AppSubmission,
+    admission: app_threads.Admission,
     delivery_id: str | None,
     *,
     completed_run_id: str | None,
@@ -425,7 +587,6 @@ async def _wake(
     ):
         return
     workspace = await session.get_one(WorkspaceRow, claw.workspace_id)
-    scope = WorkspaceScope(workspace.organization_id, workspace.id)
     agent = await session.scalar(
         select(AgentRow).where(AgentRow.id == claw.agent_id, AgentRow.workspace_id == workspace.id)
     )
@@ -454,7 +615,7 @@ async def _wake(
         wake = "seal" if completed_run_id is not None else "wake"
         anchor = delivery_id or unread or "heartbeat"
         key = f"claw:{wake}:{last.id if last else thread.id}:{anchor}:{digest}"
-        receipt, _ = await submit.submit_message_in_transaction(
+        receipt, _ = await app_threads.submit_message_in_transaction(
             session, runtime, admission, claw.workspace_id, thread.id, message, request_key=key
         )
         if receipt.entry.status == "failed":
@@ -473,30 +634,17 @@ async def _wake(
         await link_delivery(session, claw, delivery_id, run_id)
         return
 
-    # Service 0.4.1's public caller-owned operation appends to an EXISTING Thread.
-    # First-run creation still shares the transaction with the Claw binding.
-    actor = await account(session, runtime, scope, claw.service_account_id)
-    await workspace_scope(session, actor, workspace.id, "run")
     body = NewThread(
         **message.model_dump(),
         session=project_session(claw, f"{claw.name} · Main"),
-        environments=project_mounts(claw),
+        environments=project_mounts(claw, await egress.initial_configuration(session, claw)),
         browser_binding=project_browser(claw),
     )
-    thread, source = await submit.prepare_thread(
-        session,
-        runtime,
-        actor,
-        scope,
-        body,
-        request=Request.of(f"claw:first:{claw.id}", "thread", workspace.id, body),
-        authority=execution_authority(actor, scope),
+    created_thread, receipt = await app_threads.create_thread_in_transaction(
+        session, runtime, admission, workspace.id, body, request_key=f"claw:first:{claw.id}"
     )
-    claw.main_thread_id, claw.main_session_id = thread.id, thread.session_id
-    await accept(session, runtime, thread, explicit=source)
-    await link_delivery(
-        session, claw, delivery_id, source.entry.assigned_run_id if source.entry else None
-    )
+    claw.main_thread_id, claw.main_session_id = created_thread.id, created_thread.session_id
+    await link_delivery(session, claw, delivery_id, receipt.entry.assigned_run_id)
 
 
 async def steer_unread(

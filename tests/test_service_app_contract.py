@@ -56,6 +56,8 @@ def test_worker_filters_decisions_and_denies_late_approval():
         assert isinstance(results.approvals["approval"], ToolDenied)
         assert requests.remaining(results) is None
         main = ClawCapability("main")
-        assert await main.handle_deferred_tool_calls(ctx, requests=requests) is None
+        main_results = await main.handle_deferred_tool_calls(ctx, requests=requests)
+        assert main_results is not None
+        assert requests.remaining(main_results) is None
 
     asyncio.run(exercise())

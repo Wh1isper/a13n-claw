@@ -10,7 +10,15 @@ from a13n_harness.environment.commands import ShellCommand
 from pydantic_ai import ModelRetry
 
 from a13n_claw.service_app import connectors, project_cli
+from a13n_claw.service_app.feishu import reply_key
 from a13n_claw.service_app.plugin import reply_arguments
+
+
+def test_lark_reply_key_is_stable_and_within_provider_limit():
+    assert reply_key("event") == "claw-lark-event"
+    first = reply_key("a" * 100)
+    assert len(first) == 50 and first == reply_key("a" * 100)
+    assert first != reply_key("b" * 100)
 
 
 def result(code=0, stdout=b""):
@@ -117,6 +125,8 @@ def test_provision_installs_missing_and_updates_only_on_request(monkeypatch):
                 if name in installed
                 else result(127)
             )
+        if script == project_cli.PROBE_CLI:
+            return result(0 if arguments[0] in installed else 127)
         if script == project_cli.INSTALL:
             name, _, _, _, version = arguments
             if name in failed:
@@ -151,6 +161,23 @@ def test_provision_installs_missing_and_updates_only_on_request(monkeypatch):
         assert (await project_cli.provision(environment, update=True)).versions["gh"] == "2.1.0"
 
     asyncio.run(run())
+
+
+def test_provision_reuses_installed_binaries_even_if_version_is_unrecognized(monkeypatch):
+    async def command(_environment, script, arguments=(), **_kwargs):
+        if script == project_cli.RUN_CLI:
+            return result(1) if arguments[0] == "gh" else result(0, b"unexpected version output")
+        assert script == project_cli.PROBE_CLI
+        return result(0)
+
+    async def latest(*_args):
+        pytest.fail("installed binaries must not trigger a release lookup")
+
+    monkeypatch.setattr(project_cli, "command", command)
+    monkeypatch.setattr(project_cli, "latest", latest)
+    outcome = asyncio.run(project_cli.provision(SimpleNamespace()))
+    assert not outcome.failed
+    assert outcome.versions == {"gh": "installed", "lark-cli": "installed"}
 
 
 @pytest.mark.parametrize(

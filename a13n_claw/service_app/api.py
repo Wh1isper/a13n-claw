@@ -6,6 +6,8 @@ from typing import Annotated, Literal
 
 import httpx
 import pydantic
+from a13n_service.app_sdk import threads as app_threads
+from a13n_service.app_sdk.usage import AppModelUsageQuery, app_models
 from a13n_service.infra.cursors import keyset_page
 from a13n_service.infra.db import now, short_session, transaction
 from a13n_service.infra.errors import ServiceError, conflict, not_found
@@ -16,28 +18,36 @@ from a13n_service.resources.models.tables import ModelRow
 from a13n_service.runs.browsers.tables import BrowserRow
 from a13n_service.runs.environments.schemas import EnvironmentFailure
 from a13n_service.runs.requests import CurrentRuntime
+from a13n_service.runs.runtime import Runtime
 from a13n_service.runs.schedules import queries as native_schedules
 from a13n_service.runs.schedules.schemas import Schedule as NativeSchedule
 from a13n_service.runs.schedules.schemas import ScheduleQuery
 from a13n_service.runs.schedules.tables import ScheduleRow as NativeScheduleRow
 from a13n_service.runs.schemas import Failure
-from a13n_service.runs.tables import RunRow, ThreadRow
 from a13n_service.tenancy.access import workspace_scope
 from a13n_service.tenancy.app_plugins import app_router
 from a13n_service.tenancy.authorize import WorkspaceScope
 from a13n_service.tenancy.requests import Actor, WorkspaceId
 from a13n_service.tenancy.tables import GrantRow, PrincipalRow, WorkspaceRow
-from a13n_service.usage import service as native_usage
-from a13n_service.usage.schemas import AppModelUsageQuery, ModelMetrics
+from a13n_service.usage.schemas import ModelMetrics
 from fastapi import Header, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import with_expression
 
-from . import connectors, inbox, main_thread, project, project_cli, schedules
+from . import connectors, egress, github_intake, inbox, main_thread, project, project_cli, schedules
 from .feishu import LarkSettings
-from .models import APP_ID, Claw, Connector, Delivery, InboxItem, Occurrence, Worker
+from .github_poll import GitHubSettings
+from .models import (
+    APP_ID,
+    Claw,
+    Connector,
+    ConnectorEgress,
+    Delivery,
+    InboxItem,
+    Occurrence,
+)
 
 router = app_router(APP_ID)
 
@@ -54,6 +64,27 @@ class WorkerModel(BaseModel):
     ]
 
 
+class WorkerAgent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    agent_id: ResourceId
+    alias: Annotated[str, StringConstraints(pattern=r"^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$")]
+    description: Annotated[str, StringConstraints(max_length=4096)] | None = None
+
+
+class ShellReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = False
+    model: Annotated[str, StringConstraints(min_length=1, max_length=128)] | None = None
+    risk_threshold: Literal["low", "medium", "high", "extra_high"] = "high"
+    instruction: Annotated[str, StringConstraints(max_length=32768)] | None = None
+
+    @pydantic.model_validator(mode="after")
+    def require_model(self):
+        if self.enabled and self.model is None:
+            raise ValueError("A Workspace Model is required when Shell review is enabled")
+        return self
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: Name
@@ -61,6 +92,18 @@ class Settings(BaseModel):
     unread_limit: int = Field(default=500, ge=1, le=10000)
     read_limit: int = Field(default=3000, ge=1, le=10000)
     worker_models: list[WorkerModel] = Field(default_factory=list, max_length=20)
+    worker_agents: list[WorkerAgent] = Field(default_factory=list, max_length=20)
+    shell_review: ShellReview = Field(default_factory=ShellReview)
+
+    @pydantic.model_validator(mode="after")
+    def distinct_delegates(self):
+        aliases = [item.alias for item in self.worker_agents]
+        if len(aliases) != len(set(aliases)):
+            raise ValueError("Worker Agent aliases must be distinct")
+        models = [item.model for item in self.worker_models]
+        if len(models) != len(set(models)):
+            raise ValueError("Worker Models must be distinct")
+        return self
 
 
 class CreateClaw(Settings):
@@ -290,6 +333,43 @@ async def project_resources(
         )
 
 
+async def prepare_worker_selections(
+    session: AsyncSession,
+    runtime: CurrentRuntime,
+    actor: Actor,
+    scope: WorkspaceScope,
+    body: Settings,
+) -> dict[str, str]:
+    selected = {item.agent_id for item in body.worker_agents}
+    revisions: dict[str, str] = {}
+    for agent_id in sorted(selected):
+        agent = await main_thread.current_agent(session, scope.workspace_id, agent_id)
+        assert agent.default_revision_id is not None
+        revision = await session.get_one(AgentRevisionRow, agent.default_revision_id)
+        revisions[agent_id] = await main_thread.prepare_worker_revision(
+            session, runtime, actor, scope, agent, revision, body.shell_review.model_dump()
+        )
+    keys = {item.model for item in body.worker_models}
+    if body.shell_review.enabled:
+        assert body.shell_review.model is not None
+        keys.add(body.shell_review.model)
+    if keys:
+        existing = set(
+            (
+                await session.scalars(
+                    select(ModelRow.key).where(
+                        ModelRow.workspace_id == scope.workspace_id,
+                        ModelRow.enabled,
+                        ModelRow.key.in_(keys),
+                    )
+                )
+            ).all()
+        )
+        if missing := keys - existing:
+            raise not_found("model", sorted(missing)[0])
+    return revisions
+
+
 @router.post("/claws", status_code=201, name="claw_create_claw")
 async def create_claw(
     body: CreateClaw,
@@ -300,9 +380,14 @@ async def create_claw(
     claw_id = inbox.new_id("clw")
     async with transaction(runtime.storage) as session:
         scope = await workspace_scope(session, actor, workspace_id, "admin")
-        account = await main_thread.account(session, runtime, scope, body.service_account_id)
+        await app_threads.prepare_admission(
+            session, runtime, workspace_id, body.service_account_id, app_id=APP_ID
+        )
+        account = await main_thread.automation_account(
+            session, runtime, scope, body.service_account_id
+        )
         agent = await main_thread.check_project(
-            session, scope, account, body.agent_id, body.environment_id, body.browser_id
+            session, runtime, scope, account, body.agent_id, body.environment_id, body.browser_id
         )
         assert agent.default_revision_id is not None
         revision = await session.get_one(AgentRevisionRow, agent.default_revision_id)
@@ -311,8 +396,15 @@ async def create_claw(
             environment_id = await project.reserve_environment(
                 session, runtime, account, scope, body.environment_template_id, body.name
             )
+        worker_revisions = await prepare_worker_selections(session, runtime, actor, scope, body)
         revision_id = await main_thread.prepare_revision(
-            session, runtime, actor, scope, agent, revision
+            session,
+            runtime,
+            actor,
+            scope,
+            agent,
+            revision,
+            shell_review=body.shell_review.model_dump(),
         )
         space_id = await project.create_space(session, runtime, actor, scope, claw_id, body.name)
         claw = Claw(
@@ -320,6 +412,7 @@ async def create_claw(
             workspace_id=workspace_id,
             agent_revision_id=revision_id,
             source_agent_revision_id=revision.id,
+            worker_agent_revisions=worker_revisions,
             memory_space_id=space_id,
             environment_id=environment_id,
             **body.model_dump(exclude={"environment_id", "environment_template_id"}),
@@ -336,6 +429,20 @@ async def lock_active_claw(session: AsyncSession, workspace_id: str, claw_id: st
         raise not_found("claw", claw_id) from None
 
 
+async def prepare_claw_admission(
+    session: AsyncSession, runtime: Runtime, workspace_id: str, claw_id: str
+) -> None:
+    # Service App locks precede Claw locks for every SDK write.
+    account_id = await session.scalar(
+        select(Claw.service_account_id).where(
+            Claw.workspace_id == workspace_id, Claw.id == claw_id, Claw.archived_at.is_(None)
+        )
+    )
+    if account_id is None:
+        raise not_found("claw", claw_id)
+    await app_threads.prepare_admission(session, runtime, workspace_id, account_id, app_id=APP_ID)
+
+
 @router.delete("/claws/{claw_id}", status_code=204, name="claw_archive")
 async def archive_claw(
     claw_id: ResourceId, workspace_id: WorkspaceId, actor: Actor, runtime: CurrentRuntime
@@ -346,6 +453,7 @@ async def archive_claw(
         await schedules.require_no_fresh_work(
             session, claw, reason="archive_fresh_schedules_before_archiving"
         )
+        await egress.invalidate_claw(session, claw.id)
         claw.archived_at = await now(session)
     await connectors.lark_changed(runtime, scope.organization_id)
 
@@ -356,18 +464,35 @@ async def sync_agent_revision(
 ) -> ClawView:
     async with transaction(runtime.storage) as session:
         scope = await workspace_scope(session, actor, workspace_id, "admin")
+        await prepare_claw_admission(session, runtime, workspace_id, claw_id)
         claw = await lock_active_claw(session, workspace_id, claw_id)
         agent = await main_thread.current_agent(session, workspace_id, claw.agent_id)
         assert agent.default_revision_id is not None
-        if claw.agent_revision_id is None or not await main_thread.source_matches(
-            session, claw, agent.default_revision_id
+        pinned = (
+            await session.get(AgentRevisionRow, claw.agent_revision_id)
+            if claw.agent_revision_id
+            else None
+        )
+        if (
+            pinned is None
+            or not main_thread.revision_is_safe(pinned, claw.shell_review)
+            or not await main_thread.source_matches(session, claw, agent.default_revision_id)
         ):
             revision = await session.get_one(AgentRevisionRow, agent.default_revision_id)
             claw.agent_revision_id = await main_thread.prepare_revision(
-                session, runtime, actor, scope, agent, revision
+                session, runtime, actor, scope, agent, revision, shell_review=claw.shell_review
             )
         claw.source_agent_revision_id = agent.default_revision_id
         return ClawView.model_validate(claw)
+
+
+def effective_settings(body: Settings, claw: Claw) -> Settings:
+    preserved = {
+        field: getattr(claw, field)
+        for field in ("worker_agents", "shell_review")
+        if field not in body.model_fields_set
+    }
+    return Settings.model_validate({**body.model_dump(), **preserved})
 
 
 @router.put("/claws/{claw_id}/settings", name="claw_update_settings")
@@ -379,9 +504,27 @@ async def update_settings(
     runtime: CurrentRuntime,
 ) -> ClawView:
     async with transaction(runtime.storage) as session:
-        await workspace_scope(session, actor, workspace_id, "admin")
+        scope = await workspace_scope(session, actor, workspace_id, "admin")
+        await prepare_claw_admission(session, runtime, workspace_id, claw_id)
         claw = await lock_active_claw(session, workspace_id, claw_id)
-        for key, value in body:
+        body = effective_settings(body, claw)
+        worker_revisions = await prepare_worker_selections(session, runtime, actor, scope, body)
+        if claw.shell_review != body.shell_review.model_dump():
+            agent = await main_thread.current_agent(session, workspace_id, claw.agent_id)
+            revision_id = claw.source_agent_revision_id or agent.default_revision_id
+            assert revision_id is not None
+            revision = await session.get_one(AgentRevisionRow, revision_id)
+            claw.agent_revision_id = await main_thread.prepare_revision(
+                session,
+                runtime,
+                actor,
+                scope,
+                agent,
+                revision,
+                shell_review=body.shell_review.model_dump(),
+            )
+        claw.worker_agent_revisions = worker_revisions
+        for key, value in body.model_dump().items():
             setattr(claw, key, value)
         await inbox.prune_read(session, claw, await now(session))
         return ClawView.model_validate(claw)
@@ -412,8 +555,11 @@ async def update_project(
 ) -> ClawView:
     async with transaction(runtime.storage) as session:
         scope = await workspace_scope(session, actor, workspace_id, "admin")
+        await prepare_claw_admission(session, runtime, workspace_id, claw_id)
         claw = await lock_active_claw(session, workspace_id, claw_id)
-        account = await main_thread.account(session, runtime, scope, claw.service_account_id)
+        account = await main_thread.automation_account(
+            session, runtime, scope, claw.service_account_id
+        )
         environment_id = body.environment_id or claw.environment_id
         browser_id = body.browser_id if "browser_id" in body.model_fields_set else claw.browser_id
         await project.rebind(
@@ -450,28 +596,20 @@ async def overview(
         activity = None
         last_failure = None
         if claw.main_thread_id is not None:
-            result = (
-                (
-                    await session.execute(
-                        select(
-                            ThreadRow.current_run_id,
-                            ThreadRow.last_run_id,
-                            RunRow.status.label("last_status"),
-                            RunRow.failure,
-                        )
-                        .outerjoin(RunRow, RunRow.id == ThreadRow.last_run_id)
-                        .where(
-                            ThreadRow.workspace_id == workspace_id,
-                            ThreadRow.id == claw.main_thread_id,
-                        )
-                    )
+            try:
+                result = await app_threads.get_thread_activity(
+                    session, workspace_id, claw.main_thread_id
                 )
-                .mappings()
-                .one_or_none()
-            )
-            if result is not None:
-                activity = ThreadActivity.model_validate(result)
-                last_failure = result["failure"] if result["last_status"] == "failed" else None
+            except ServiceError as error:
+                if error.code != "not_found":
+                    raise
+            else:
+                activity = ThreadActivity(
+                    current_run_id=result.current_run_id,
+                    last_run_id=result.last_run_id,
+                    last_status=result.last_status,
+                )
+                last_failure = result.last_failure if result.last_status == "failed" else None
         environment = (
             (
                 await session.execute(
@@ -504,7 +642,7 @@ async def overview(
         account_status = "unavailable"
         if organization_id is not None:
             try:
-                await main_thread.account(
+                await main_thread.automation_account(
                     session,
                     runtime,
                     WorkspaceScope(organization_id, workspace_id),
@@ -521,6 +659,11 @@ async def overview(
                 AgentRow.archived_at.is_(None),
             )
         )
+        pinned_revision = (
+            await session.get(AgentRevisionRow, claw.agent_revision_id)
+            if claw.agent_revision_id
+            else None
+        )
         unauthorized = await session.scalar(
             select(func.count(Connector.id)).where(
                 Connector.claw_id == claw.id,
@@ -535,7 +678,11 @@ async def overview(
             main=activity,
             last_failure=last_failure,
             agent_revision_outdated=default_revision is not None
-            and not await main_thread.source_matches(session, claw, default_revision),
+            and (
+                pinned_revision is None
+                or not main_thread.revision_is_safe(pinned_revision, claw.shell_review)
+                or not await main_thread.source_matches(session, claw, default_revision)
+            ),
             project=ProjectStatus(
                 environment=environment.status
                 if environment
@@ -597,7 +744,7 @@ async def usage(
         )
     groups = []
     while True:
-        page = await native_usage.app_models(runtime.storage, actor, workspace_id, query)
+        page = await app_models(runtime.storage, actor, workspace_id, query)
         groups.extend(page.items)
         if page.next_cursor is None:
             break
@@ -771,49 +918,29 @@ async def list_workers(
     limit: PageSize = 50,
 ) -> dict:
     async with short_session(runtime.storage) as session:
-        await get_claw(session, workspace_id, claw_id)
-        rows, next_cursor = await keyset_page(
-            session,
-            select(Worker).where(Worker.claw_id == claw_id),
-            (Worker.created_at, Worker.thread_id),
-            kind="claw_worker",
-            owner=claw_id,
-            cursor=cursor,
-            limit=limit,
-            newest_first=True,
+        claw = await get_claw(session, workspace_id, claw_id)
+        if claw.main_session_id is None:
+            return {"items": [], "next_cursor": None}
+        page = await app_threads.list_child_threads(
+            session, workspace_id, session_id=claw.main_session_id, cursor=cursor, limit=limit
         )
-        thread_activity = (
-            (
-                await session.execute(
-                    select(
-                        ThreadRow.id,
-                        ThreadRow.current_run_id,
-                        ThreadRow.last_run_id,
-                        RunRow.status.label("last_status"),
-                    )
-                    .outerjoin(RunRow, RunRow.id == ThreadRow.last_run_id)
-                    .where(
-                        ThreadRow.workspace_id == workspace_id,
-                        ThreadRow.id.in_([row.thread_id for row in rows]),
-                    )
-                )
-            ).all()
-            if rows
-            else []
-        )
-        by_id = {row.id: dict(row._mapping) for row in thread_activity}
         return {
             "items": [
                 {
-                    "thread_id": row.thread_id,
-                    "session_id": row.session_id,
-                    "name": row.name,
-                    "model": row.model,
-                    "activity": by_id.get(row.thread_id),
+                    "thread_id": row.id,
+                    "session_id": claw.main_session_id,
+                    "name": row.subagent or "Worker",
+                    "model": None,
+                    "activity": {
+                        "id": row.id,
+                        "current_run_id": row.current_run_id,
+                        "last_run_id": row.last_run_id,
+                        "last_status": row.last_status,
+                    },
                 }
-                for row in rows
+                for row in page.items
             ],
-            "next_cursor": next_cursor,
+            "next_cursor": page.next_cursor,
         }
 
 
@@ -921,7 +1048,7 @@ async def create_fresh_schedule(
         claw = await get_claw(session, workspace_id, claw_id)
     try:
         return await schedules.create_fresh(
-            runtime, claw, body, f"{claw.id}:{actor.id}:{request_key}"
+            runtime, claw, body, f"{claw.id}:{actor.id}:{request_key}", actor
         )
     except inbox.ClawNotFound:
         raise not_found("claw", claw_id) from None
@@ -1038,10 +1165,11 @@ class ConnectorInput(BaseModel):
     kind: Literal["lark", "github"]
     config: dict[str, JsonValue]
     enabled: bool = True
+    egress_primary: bool = False
 
     @pydantic.model_validator(mode="after")
     def validate_config(self):
-        schema = LarkSettings if self.kind == "lark" else connectors.ExternalSettings
+        schema = LarkSettings if self.kind == "lark" else GitHubSettings
         self.config = schema.model_validate(self.config).model_dump(mode="json")
         return self
 
@@ -1049,6 +1177,7 @@ class ConnectorInput(BaseModel):
 class ConnectorWrite(ConnectorInput):
     credential: pydantic.SecretStr | None = None
     reply_environment_id: ResourceId | None = None
+    egress_environment_id: ResourceId | None = None
 
     @pydantic.field_validator("credential")
     @classmethod
@@ -1073,13 +1202,28 @@ class ConnectorView(ConnectorInput):
     reply_environment_id: str | None = None
     reply_reauthorization_required: bool = False
     listener_status: str | None = None
+    egress_status: str | None = None
+    egress_failure: str | None = None
 
 
 async def connector_view(runtime: CurrentRuntime, row: Connector) -> ConnectorView:
     view = ConnectorView.model_validate(row)
+    async with short_session(runtime.storage) as session:
+        generation = await session.scalar(
+            select(ConnectorEgress)
+            .where(ConnectorEgress.connector_id == row.id, ConnectorEgress.state != "revoked")
+            .order_by(
+                ConnectorEgress.failure.is_not(None).desc(),
+                ConnectorEgress.created_at.desc(),
+                ConnectorEgress.id.desc(),
+            )
+            .limit(1)
+        )
     return view.model_copy(
         update={
             "credential_configured": row.credential is not None,
+            "egress_status": generation.state if generation else None,
+            "egress_failure": generation.failure if generation else None,
             "listener_status": await connectors.listener_status(runtime, row.id)
             if row.enabled and row.kind == "lark" and row.credential is not None
             else None,
@@ -1126,9 +1270,29 @@ async def connector_detail(
     return await connector_view(runtime, row)
 
 
+async def check_egress_primary(
+    session: AsyncSession, claw: Claw, body: ConnectorWrite, exclude: str | None = None
+) -> None:
+    if body.egress_primary:
+        existing = await session.scalar(
+            select(Connector.id).where(
+                Connector.claw_id == claw.id,
+                Connector.kind == body.kind,
+                Connector.egress_primary.is_(True),
+                Connector.id != exclude if exclude else Connector.id.is_not(None),
+            )
+        )
+        if existing:
+            raise conflict("connector", existing, "egress_primary_already_selected")
+
+
 def check_reply_environment(claw: Claw, body: ConnectorWrite) -> None:
     if body.reply_environment_id is not None and body.reply_environment_id != claw.environment_id:
         raise conflict("claw", claw.id, "reply_environment_changed")
+    if body.egress_primary and (
+        body.egress_environment_id is None or body.egress_environment_id != claw.environment_id
+    ):
+        raise conflict("claw", claw.id, "egress_environment_changed")
 
 
 @router.post("/claws/{claw_id}/connectors", status_code=201, name="claw_create_connector")
@@ -1142,16 +1306,19 @@ async def create_connector(
     async with transaction(runtime.storage) as session:
         scope = await workspace_scope(session, actor, workspace_id, "admin")
         claw = await get_claw(session, workspace_id, claw_id)
-        if body.kind != "lark":
+        if body.kind == "github" and body.config.get("principal_id"):
             await main_thread.account(session, runtime, scope, str(body.config["principal_id"]))
         claw = await lock_active_claw(session, workspace_id, claw_id)
         check_reply_environment(claw, body)
+        await check_egress_primary(session, claw, body)
         if await session.scalar(
             select(Connector.id).where(Connector.claw_id == claw.id, Connector.name == body.name)
         ):
             raise conflict("connector", body.name, "name_in_use")
         row = Connector(
-            id=inbox.new_id("con"), claw_id=claw.id, **body.model_dump(exclude={"credential"})
+            id=inbox.new_id("con"),
+            claw_id=claw.id,
+            **body.model_dump(exclude={"credential", "egress_environment_id"}),
         )
         if body.credential is not None:
             row.credential = connectors.protect(
@@ -1159,8 +1326,8 @@ async def create_connector(
             )
         session.add(row)
         await session.flush()
-    if row.kind == "lark":
-        await connectors.lark_changed(runtime, scope.organization_id)
+        await egress.enqueue_generation(session, claw, row)
+    await connectors.lark_changed(runtime, scope.organization_id)
     return await connector_view(runtime, row)
 
 
@@ -1178,9 +1345,10 @@ async def update_connector(
         claw = await lock_active_claw(session, workspace_id, claw_id)
         check_reply_environment(claw, body)
         row = await connectors.find(session, claw.id, connector_id)
+        await check_egress_primary(session, claw, body, row.id)
         if row.kind != body.kind:
             raise conflict("connector", connector_id, "connector_kind_is_immutable")
-        if body.kind != "lark":
+        if body.kind == "github" and body.config.get("principal_id"):
             await main_thread.account(session, runtime, scope, str(body.config["principal_id"]))
         if row.name != body.name and await session.scalar(
             select(Connector.id).where(
@@ -1189,7 +1357,26 @@ async def update_connector(
             )
         ):
             raise conflict("connector", body.name, "name_in_use")
+        poll_changed = row.kind == "github" and (
+            row.config != body.config or "credential" in body.model_fields_set
+        )
+        if poll_changed:
+            await github_intake.reconfigure(
+                session,
+                row.id,
+                GitHubSettings.model_validate(row.config),
+                GitHubSettings.model_validate(body.config),
+            )
+        egress_changed = (
+            row.egress_primary != body.egress_primary
+            or row.enabled != body.enabled
+            or row.config != body.config
+            or "credential" in body.model_fields_set
+        )
+        if egress_changed:
+            await egress.invalidate_generations(session, row.id)
         row.name, row.enabled, row.config = body.name, body.enabled, body.config
+        row.egress_primary = body.egress_primary
         if "reply_environment_id" in body.model_fields_set:
             row.reply_environment_id = body.reply_environment_id
             row.reply_reauthorization_required = False
@@ -1201,8 +1388,9 @@ async def update_connector(
                 if body.credential is not None
                 else None
             )
-    if row.kind == "lark":
-        await connectors.lark_changed(runtime, scope.organization_id)
+        if egress_changed:
+            await egress.enqueue_generation(session, claw, row)
+    await connectors.lark_changed(runtime, scope.organization_id)
     return await connector_view(runtime, row)
 
 
@@ -1220,9 +1408,9 @@ async def delete_connector(
         scope = await workspace_scope(session, actor, workspace_id, "admin")
         await lock_active_claw(session, workspace_id, claw_id)
         row = await connectors.find(session, claw_id, connector_id)
+        await egress.invalidate_generations(session, row.id)
         await session.delete(row)
-    if row.kind == "lark":
-        await connectors.lark_changed(runtime, scope.organization_id)
+    await connectors.lark_changed(runtime, scope.organization_id)
 
 
 class ConnectorCheck(BaseModel):

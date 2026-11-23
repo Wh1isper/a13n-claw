@@ -119,15 +119,6 @@ export function ConnectorsPage() {
   );
 }
 
-function replyState(row: Connector, claw: Claw) {
-  return row.reply_reauthorization_required ||
-    (row.reply_environment_id &&
-      row.reply_environment_id !== claw.environment_id)
-    ? "reauthorize needed"
-    : row.reply_environment_id
-      ? "authorized"
-      : "off";
-}
 function credentialState(row: Connector) {
   return row.credential_configured ? "saved" : "not configured";
 }
@@ -156,8 +147,8 @@ function ConnectorList({
     <Page
       title={copy("Connectors", "连接器")}
       description={copy(
-        "Control platform intake, credentials, and authorization for replies.",
-        "管理平台接收、凭据和回复授权。",
+        "Control platform intake and credentials.",
+        "管理平台接收和凭据。",
       )}
       actions={
         <div className={`${styles.actions} ${styles.headerActions}`}>
@@ -216,10 +207,6 @@ function ConnectorList({
               {
                 label: copy("Credential", "凭据"),
                 render: (row) => <Status state={credentialState(row)} />,
-              },
-              {
-                label: copy("Replies", "回复"),
-                render: (row) => <Status state={replyState(row, claw)} />,
               },
               {
                 label: copy("Listener", "监听状态"),
@@ -296,6 +283,10 @@ function ConnectorEditor({
   const path = `${clawPath(claw.id)}/connectors${row ? `/${row.id}` : ""}`;
   const config = row?.config;
   const [kind, setKind] = React.useState(row?.kind ?? "github");
+  const [githubMode, setGithubMode] = React.useState(
+    String(config?.mode ?? "external"),
+  );
+  const [markRead, setMarkRead] = React.useState(config?.mark_read === true);
   const [account, setAccount] = React.useState(
     String(config?.principal_id ?? ""),
   );
@@ -304,24 +295,22 @@ function ConnectorEditor({
   );
   const [direct, setDirect] = React.useState(config?.direct_messages !== false);
   const [enabled, setEnabled] = React.useState(row?.enabled ?? true);
-  const [reply, setReply] = React.useState(
-    !!claw.environment_id && row?.reply_environment_id === claw.environment_id,
+  const [egressPrimary, setEgressPrimary] = React.useState(
+    row?.egress_primary ?? false,
   );
-  const [replyChanged, setReplyChanged] = React.useState(false);
+  const [egressEnvironmentId] = React.useState(claw.environment_id);
   const [dirty, setDirty] = React.useState(false);
   const formRef = React.useRef<HTMLFormElement>(null);
   const discard = () => {
     formRef.current?.reset();
     setKind(row?.kind ?? "github");
+    setGithubMode(String(config?.mode ?? "external"));
+    setMarkRead(config?.mark_read === true);
     setAccount(String(config?.principal_id ?? ""));
     setDomain(String(config?.domain ?? "https://open.feishu.cn"));
     setDirect(config?.direct_messages !== false);
     setEnabled(row?.enabled ?? true);
-    setReply(
-      !!claw.environment_id &&
-        row?.reply_environment_id === claw.environment_id,
-    );
-    setReplyChanged(false);
+    setEgressPrimary(row?.egress_primary ?? false);
     setDirty(false);
     write.reset();
   };
@@ -362,13 +351,23 @@ function ConnectorEditor({
         <RailRow label={copy("Credential", "凭据")}>
           <Status state={credentialState(row)} />
         </RailRow>
-        <RailRow label={copy("Replies", "回复")}>
-          <Status state={replyState(row, claw)} />
-        </RailRow>
         {row.listener_status && (
           <RailRow label={copy("Listener", "监听状态")}>
             <Status state={row.listener_status} />
           </RailRow>
+        )}
+        {row.egress_status && (
+          <RailRow label={copy("Session credential", "会话凭据")}>
+            <Status state={row.egress_status} />
+          </RailRow>
+        )}
+        {row.egress_failure && (
+          <p role="alert">
+            {copy(
+              "Session credential synchronization failed. Claw will retry; rotate or revoke the credential at the provider if access must end immediately.",
+              "会话凭据同步失败，Claw 将重试。如需立即终止访问，请在平台侧轮换或撤销凭据。",
+            )}
+          </p>
         )}
         <RailRow label={copy("Last received", "最近接收")}>
           <DateTime value={row.last_event_at} />
@@ -411,8 +410,8 @@ function ConnectorEditor({
                 danger
                 triggerVariant="outline"
                 description={copy(
-                  "Claw stops using this credential for platform calls. Rotate or revoke it at the provider if needed.",
-                  "Claw 将停止使用该凭据调用平台。需要时，请在平台侧轮换或撤销它。",
+                  "Claw queues removal of the Session credential. Rotate or revoke the credential at the provider if access must end immediately.",
+                  "Claw 将排队移除会话凭据。如需立即终止访问，请在平台侧轮换或撤销凭据。",
                 )}
                 trigger={copy("Remove credential", "移除凭据")}
                 action={() =>
@@ -423,6 +422,10 @@ function ConnectorEditor({
                       name: row.name,
                       kind: row.kind,
                       enabled: row.enabled,
+                      egress_primary: row.egress_primary,
+                      egress_environment_id: row.egress_primary
+                        ? egressEnvironmentId
+                        : undefined,
                       config: row.config,
                       credential: null,
                     },
@@ -442,8 +445,8 @@ function ConnectorEditor({
               danger
               triggerVariant="outline"
               description={copy(
-                "Intake and replies stop. Existing deliveries remain available.",
-                "停止接收和回复，已有投递记录保留。",
+                "Intake stops and Session credential removal is queued. Existing deliveries remain available. Rotate or revoke the credential at the provider if access must end immediately.",
+                "停止接收并排队移除会话凭据，已有投递记录保留。如需立即终止访问，请在平台侧轮换或撤销凭据。",
               )}
               trigger={copy("Delete connector", "删除连接器")}
               action={() =>
@@ -484,12 +487,29 @@ function ConnectorEditor({
               name: field(form, "name"),
               kind,
               enabled,
+              egress_primary: egressPrimary,
+              egress_environment_id: egressPrimary
+                ? egressEnvironmentId
+                : undefined,
               config:
                 kind === "github"
                   ? {
-                      principal_id: account,
+                      mode: githubMode,
+                      principal_id: account || null,
                       channels: items(form, "channels"),
                       senders: items(form, "senders"),
+                      api_url:
+                        field(form, "api_url") || "https://api.github.com",
+                      poll_interval_seconds: Number(
+                        field(form, "poll_interval") || 60,
+                      ),
+                      initial_lookback_seconds: Number(
+                        field(form, "lookback") || 3600,
+                      ),
+                      max_source_notification_delay_seconds: Number(
+                        field(form, "max_delay") || 86400,
+                      ),
+                      mark_read: markRead,
                     }
                   : {
                       app_id: field(form, "app"),
@@ -499,11 +519,9 @@ function ConnectorEditor({
                       unmentioned_groups: items(form, "unmentioned"),
                       direct_messages: direct,
                       senders: items(form, "senders"),
+                      event_types: items(form, "event_types"),
                     },
               credential: field(form, "credential") || undefined,
-              ...(replyChanged || !row
-                ? { reply_environment_id: reply ? claw.environment_id : null }
-                : {}),
             };
             write.mutate(
               { path, method: row ? "PUT" : "POST", body },
@@ -560,10 +578,15 @@ function ConnectorEditor({
             title={copy("Intake", "消息接收")}
             description={
               kind === "github"
-                ? copy(
-                    "Forward GitHub events through your integration or GitHub Actions. Authenticate with the selected Service account and send the workspace ID in X-Workspace-ID.",
-                    "通过自有集成或 GitHub Actions 转发事件。使用所选服务账号认证，并在 X-Workspace-ID 中发送工作区 ID。",
-                  )
+                ? githubMode === "polling"
+                  ? copy(
+                      "Poll GitHub Notifications with a classic token that has notifications and repo access. An empty repository list includes all visible repositories.",
+                      "使用具有 notifications 和 repo 权限的经典令牌轮询 GitHub 通知。仓库列表留空时包含所有可见仓库。",
+                    )
+                  : copy(
+                      "Forward GitHub events through your integration or GitHub Actions. Authenticate with the selected Service account and send the workspace ID in X-Workspace-ID.",
+                      "通过自有集成或 GitHub Actions 转发事件。使用所选服务账号认证，并在 X-Workspace-ID 中发送工作区 ID。",
+                    )
                 : copy(
                     "Enable long-connection event delivery for im.message.receive_v1 in the Lark / Feishu developer console. Approve the required bot permissions and publish the app.",
                     "在飞书 / Lark 开发者控制台启用长连接并订阅 im.message.receive_v1，批准机器人所需权限后发布应用。",
@@ -572,17 +595,38 @@ function ConnectorEditor({
           >
             {kind === "github" ? (
               <>
-                <ResourcePicker
-                  label={copy("Integration service account", "集成服务账号")}
-                  kind="account"
-                  value={account}
-                  onChange={(value) => {
-                    setAccount(value);
+                <ChoiceField
+                  label={copy("GitHub intake mode", "GitHub 接收模式")}
+                  disabled={!allowed}
+                  value={githubMode}
+                  onValueChange={(value) => {
+                    setGithubMode(value);
                     setDirty(true);
                   }}
-                  disabled={!allowed}
+                  options={[
+                    {
+                      value: "external",
+                      label: copy("External events", "外部事件"),
+                    },
+                    {
+                      value: "polling",
+                      label: copy("Notifications polling", "通知轮询"),
+                    },
+                  ]}
                 />
-                {row && (
+                {githubMode === "external" && (
+                  <ResourcePicker
+                    label={copy("Integration service account", "集成服务账号")}
+                    kind="account"
+                    value={account}
+                    onChange={(value) => {
+                      setAccount(value);
+                      setDirty(true);
+                    }}
+                    disabled={!allowed}
+                  />
+                )}
+                {row && githubMode === "external" && (
                   <FormField
                     data-field-layout="stacked"
                     label={copy("Intake endpoint", "接收端点")}
@@ -599,11 +643,95 @@ function ConnectorEditor({
                   <Textarea
                     name="channels"
                     rows={3}
-                    required
+                    required={githubMode === "external"}
                     readOnly={!allowed}
                     defaultValue={list(config, "channels")}
                   />
                 </FormField>
+                {githubMode === "polling" && (
+                  <>
+                    <FormField
+                      label={copy("GitHub API URL", "GitHub API 地址")}
+                    >
+                      <Input
+                        name="api_url"
+                        type="url"
+                        defaultValue={String(
+                          config?.api_url ?? "https://api.github.com",
+                        )}
+                        readOnly={!allowed}
+                        required
+                      />
+                    </FormField>
+                    <FormField
+                      label={copy("Poll interval (seconds)", "轮询间隔（秒）")}
+                    >
+                      <Input
+                        name="poll_interval"
+                        type="number"
+                        min={15}
+                        max={86400}
+                        defaultValue={String(
+                          config?.poll_interval_seconds ?? 60,
+                        )}
+                        readOnly={!allowed}
+                        required
+                      />
+                    </FormField>
+                    <FormField
+                      label={copy(
+                        "Initial lookback (seconds)",
+                        "首次回溯（秒）",
+                      )}
+                    >
+                      <Input
+                        name="lookback"
+                        type="number"
+                        min={0}
+                        max={2592000}
+                        defaultValue={String(
+                          config?.initial_lookback_seconds ?? 3600,
+                        )}
+                        readOnly={!allowed}
+                        required
+                      />
+                    </FormField>
+                    <FormField
+                      label={copy(
+                        "Maximum new-subject delay (seconds)",
+                        "新主题最长延迟（秒）",
+                      )}
+                    >
+                      <Input
+                        name="max_delay"
+                        type="number"
+                        min={0}
+                        max={2592000}
+                        defaultValue={String(
+                          config?.max_source_notification_delay_seconds ??
+                            86400,
+                        )}
+                        readOnly={!allowed}
+                        required
+                      />
+                    </FormField>
+                    <FormField
+                      label={copy(
+                        "Mark accepted notifications read",
+                        "将已接收通知标记为已读",
+                      )}
+                    >
+                      <Checkbox
+                        checked={markRead}
+                        disabled={!allowed}
+                        onCheckedChange={(value) => {
+                          setMarkRead(value);
+                          setDirty(true);
+                        }}
+                      />
+                    </FormField>
+                  </>
+                )}
               </>
             ) : (
               <>
@@ -665,6 +793,29 @@ function ConnectorEditor({
                   />
                 </FormField>
                 <FormField
+                  label={copy("Event types", "事件类型")}
+                  description={copy(
+                    "Subscribe to these events in the Lark developer console as well. Separate entries with spaces or new lines.",
+                    "同时在飞书开发者控制台订阅这些事件。用空格或换行分隔。",
+                  )}
+                >
+                  <Textarea
+                    name="event_types"
+                    rows={4}
+                    readOnly={!allowed}
+                    defaultValue={
+                      config?.event_types
+                        ? list(config, "event_types")
+                        : [
+                            "im.message.receive_v1",
+                            "im.chat.member.bot.added_v1",
+                            "im.chat.member.user.added_v1",
+                            "drive.notice.comment_add_v1",
+                          ].join("\n")
+                    }
+                  />
+                </FormField>
+                <FormField
                   label={copy(
                     "Groups that do not require mentioning the bot (optional)",
                     "无需提及机器人的群组（可选）",
@@ -685,10 +836,17 @@ function ConnectorEditor({
                   ? copy("Allowed GitHub usernames", "允许的 GitHub 用户名")
                   : copy("Allowed sender open IDs", "允许的发送人 Open ID")
               }
-              description={copy(
-                "Separate entries with spaces or new lines.",
-                "用空格或换行分隔多个条目。",
-              )}
+              description={
+                kind === "github" && githubMode === "polling"
+                  ? copy(
+                      "Separate usernames with spaces or new lines; * allows any sender except the bot itself.",
+                      "用空格或换行分隔用户名；* 允许机器人自身以外的所有发送人。",
+                    )
+                  : copy(
+                      "Separate entries with spaces or new lines.",
+                      "用空格或换行分隔多个条目。",
+                    )
+              }
             >
               <Textarea
                 name="senders"
@@ -699,7 +857,24 @@ function ConnectorEditor({
               />
             </FormField>
           </FormSection>
-          <FormSection title={copy("Credentials and replies", "凭据与回复")}>
+          <FormSection title={copy("Credentials", "凭据")}>
+            <FormField
+              data-field-layout="setting"
+              label={copy("Use for Project egress", "用于项目网络凭据")}
+              description={copy(
+                "Select one connector per platform. Unconfigured Threads use controlled public egress; explicit policies are preserved.",
+                "每个平台选择一个连接器。未配置的线程使用受控公共网络策略；已有策略保持不变。",
+              )}
+            >
+              <Switch
+                checked={egressPrimary}
+                onCheckedChange={(value) => {
+                  setEgressPrimary(value);
+                  setDirty(true);
+                }}
+                disabled={!allowed || !egressEnvironmentId}
+              />
+            </FormField>
             {allowed && (
               <FormField
                 label={
@@ -720,31 +895,12 @@ function ConnectorEditor({
                 />
               </FormField>
             )}
-            <FormField
-              data-field-layout="setting"
-              label={copy(
-                "Authorize replies in the current Environment",
-                "授权在当前环境中回复",
+            <p>
+              {copy(
+                "Main can use authorized platform CLIs to reply; Fresh Scheduled Threads report to Main.",
+                "Main 可使用已授权的平台 CLI 回复；新的计划线程向 Main 报告结果。",
               )}
-              description={
-                !claw.environment_id
-                  ? copy(
-                      "Bind a Project Environment first.",
-                      "请先绑定项目环境。",
-                    )
-                  : undefined
-              }
-            >
-              <Switch
-                disabled={!allowed || !claw.environment_id}
-                checked={reply}
-                onCheckedChange={(value) => {
-                  setDirty(true);
-                  setReply(value);
-                  setReplyChanged(true);
-                }}
-              />
-            </FormField>
+            </p>
           </FormSection>
           {write.isError && <ErrorNotice error={write.error} />}
           {allowed &&
@@ -759,14 +915,18 @@ function ConnectorEditor({
                   saveLabel={copy("Save connector", "保存连接器")}
                   discardLabel={copy("Discard", "放弃更改")}
                   pending={write.isPending}
-                  disabled={kind === "github" && !account}
+                  disabled={
+                    kind === "github" && githubMode === "external" && !account
+                  }
                   onDiscard={discard}
                 />
               )
             ) : (
               <FormActions
                 pending={write.isPending}
-                disabled={kind === "github" && !account}
+                disabled={
+                  kind === "github" && githubMode === "external" && !account
+                }
                 onCancel={close}
                 label={copy("Save connector", "保存连接器")}
               />

@@ -481,34 +481,6 @@ function DashboardBody({
               )}
             </Attention>
           )}
-          {project.unauthorized_reply_connectors > 0 && (
-            <Attention
-              title={copy(
-                "Connector replies need reauthorization",
-                "连接器回复需要重新授权",
-              )}
-              action={
-                <Button
-                  variant="outline"
-                  size="sm"
-                  render={
-                    <Link
-                      to={url(appPath(workspaceId!, "connectors"), {
-                        claw: claw.id,
-                      })}
-                    />
-                  }
-                >
-                  {copy("Open Connectors", "打开连接器")}
-                </Button>
-              }
-            >
-              {copy(
-                "Authorize replies for the current Project Environment.",
-                "为当前项目环境重新授权回复。",
-              )}
-            </Attention>
-          )}
           {agent_revision_outdated && can("admin") && (
             <Attention
               severity="info"
@@ -619,8 +591,7 @@ function DashboardBody({
                   },
                   {
                     label: copy("Model", "模型"),
-                    render: (row) =>
-                      row.model ?? copy("Agent default", "智能体默认"),
+                    render: (row) => row.model ?? copy("See Run", "查看运行"),
                   },
                   {
                     label: copy("Activity", "活动"),

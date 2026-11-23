@@ -13,7 +13,7 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 1
-    # Service 0.4.1's SQLAlchemy typing and Harness 0.40.2's runtime require these ranges.
+    # Service 0.5.0's SQLAlchemy typing and Harness 0.41.0's runtime require these ranges.
     ignore:
       - dependency-name: sqlalchemy
         versions: [">=2.1"]

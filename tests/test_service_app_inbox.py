@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 from a13n_service.infra.db import Storage, short_session, transaction
+from a13n_service.infra.errors import ServiceError
 from a13n_service.tenancy.tables import OrganizationRow, WorkspaceRow
 from sqlalchemy import delete, func, select
 
@@ -57,6 +58,27 @@ async def exercise_inbox(url: str) -> None:
         assert sorted((first.status, second.status)) == ["accepted", "full"]
         accepted, key = (first, "first") if first.status == "accepted" else (second, "second")
         assert (await deliver(key)).status == "duplicate"
+        enriched = inbox.Offer(
+            "user",
+            "test",
+            key,
+            {"previous_messages_snapshot": [{"content": "history"}]},
+            f"full {key}",
+            f"preview {key}",
+            ("previous_messages_snapshot",),
+        )
+        assert (await inbox.deliver(storage, workspace_id, claw_id, enriched)).status == "duplicate"
+        changed = inbox.Offer(
+            "user",
+            "test",
+            key,
+            {"sender": "different", "previous_messages_snapshot": []},
+            f"full {key}",
+            f"preview {key}",
+            ("previous_messages_snapshot",),
+        )
+        with pytest.raises(ServiceError, match="different message"):
+            await inbox.deliver(storage, workspace_id, claw_id, changed)
         with pytest.raises(inbox.ClawNotFound):
             await inbox.pop(storage, "another_workspace", claw_id, accepted.item_id)
         assert await inbox.unread_previews(storage, "another_workspace", claw_id) == []

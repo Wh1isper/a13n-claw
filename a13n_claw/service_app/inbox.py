@@ -29,6 +29,8 @@ class Offer:
     source: dict[str, Any]
     content: str
     preview: str
+    volatile_source_fields: tuple[str, ...] = ()
+    legacy_optional_source_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +64,15 @@ async def admit(session: AsyncSession, claw: Claw, offer: Offer) -> Admission:
         )
     )
     if existing is not None:
-        if existing.content != offer.content or existing.source != offer.source:
+        ignored = set(offer.volatile_source_fields)
+        ignored.update(
+            key
+            for key in offer.legacy_optional_source_fields
+            if key not in existing.source or key not in offer.source
+        )
+        existing_source = {k: v for k, v in existing.source.items() if k not in ignored}
+        offered_source = {k: v for k, v in offer.source.items() if k not in ignored}
+        if existing.content != offer.content or existing_source != offered_source:
             raise ServiceError("conflict", "The delivery key identifies a different message")
         delivery_id = await session.scalar(
             select(Delivery.id).where(Delivery.claw_id == claw.id, Delivery.item_id == existing.id)

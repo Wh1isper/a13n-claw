@@ -7,8 +7,8 @@ description: Native resource references and Claw's Inbox settings.
 | ------------------------- | ---------------------------------------------------------------------- |
 | Agent                     | Service Agent and pinned revision used to run Main and delegate work   |
 | Environment               | A persistent Service instance; select one or create it from a template |
-| Browser                   | Optional native Browser for Main and managed workers                   |
-| Workspace service account | Principal for Claw-owned execution                                     |
+| Browser                   | Optional native Browser for Main; native Workers do not inherit it     |
+| Workspace service account | Dedicated `builder` principal shared by Claw Control and execution     |
 | Heartbeat interval        | Wait before waking idle Main; zero disables it                         |
 | Unread limit              | Maximum outstanding Inbox capacity                                     |
 | Read history limit        | Maximum number of read items retained, also bounded by age             |

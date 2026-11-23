@@ -19,28 +19,26 @@ from a13n_harness.environment.models import (
 )
 from a13n_harness.environment.operations import EnvironmentOperations
 from a13n_service.app import build_app
+from a13n_service.infra.audit import AuditEventRow
 from a13n_service.infra.db import short_session, transaction
 from a13n_service.infra.errors import ServiceError
 from a13n_service.migrations.scratch import scratch_database
 from a13n_service.providers import envd
 from a13n_service.runs.environments import external
-from a13n_service.runs.inbox import find_request
-from a13n_service.runs.seal_events import RunSealEvent
-from a13n_service.runs.tables import InboxEntryRow, RunRow, ThreadRow
+from a13n_service.runs.tables import RunRow, ThreadRow
 from a13n_service.settings import Database, Settings
+from a13n_service.tenancy.tables import PrincipalRow
 from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 
 from a13n_claw.service_app import (
-    app,
     connectors,
     inbox,
     main_thread,
     project_cli,
     schedules,
-    workers,
 )
-from a13n_claw.service_app.models import Claw, InboxItem, Schedule, ScheduleRequest, Worker
+from a13n_claw.service_app.models import InboxItem, Schedule, ScheduleRequest
 
 
 @pytest.fixture
@@ -65,11 +63,7 @@ def model_server():
                 for message in body["messages"]
                 for call in message.get("tool_calls", [])
             }
-            if reply and "claw_connector_reply" in tools:
-                tool, args = "claw_connector_reply", reply.pop(0)
-            elif "claw_assign" in tools - used:
-                tool, args = "claw_assign", {"task": "Collect a result", "name": "Test Worker"}
-            elif "claw_schedule" in tools - used:
+            if "claw_schedule" in tools - used:
                 tool, args = (
                     "claw_schedule",
                     {
@@ -84,8 +78,6 @@ def model_server():
                         },
                     },
                 )
-            elif "claw_report" in tools - used:
-                tool, args = "claw_report", {"message": "Worker result"}
             else:
                 tool, args = None, None
             delta = {"role": "assistant", "content": "Done"}
@@ -261,7 +253,8 @@ def test_first_setup_and_native_runs(monkeypatch, tmp_path, model_server):
                 unbound_tools,
                 monkeypatch,
             )
-        assert maintenance == [False, True]
+        assert maintenance[0] is False and maintenance[-1] is True
+        assert maintenance.count(True) == 1
 
 
 def exercise_lifecycle(
@@ -332,6 +325,10 @@ def exercise_lifecycle(
         "heartbeat_seconds": 0,
     }
     post(f"{base}/claws", {**config, "environment_id": private["id"]}, 403)
+    for role in ("runner", "admin"):
+        wrong_account = post(accounts, {"name": f"Wrong {role}", "role": role})
+        refused = post(f"{base}/claws", {**config, "service_account_id": wrong_account["id"]}, 409)
+        assert refused["error"]["details"]["reason"] == "claw_builder_required"
     claw = post(f"{base}/claws", config)
     assert claw["environment_id"] is None
     path = f"{base}/claws/{claw['id']}"
@@ -414,72 +411,6 @@ def exercise_lifecycle(
     assert client.get(f"/api/v1/threads/{rejected_threads[0]}").status_code == 404
     assert read(f"{path}/deliveries/{received['delivery_id']}")["run_id"] is None
 
-    original_assign = workers.assign
-    replayed_assignments = []
-
-    async def replay_assign(run_runtime, binding, task, call_key, **kwargs):
-        original_accept = workers.accept
-        rolled_back = []
-
-        async def fail_worker_writeback(session, service, thread, *, explicit):
-            await original_accept(session, service, thread, explicit=explicit)
-            assert explicit.entry is not None and explicit.entry.assigned_run_id is not None
-            assert await session.get(Worker, thread.id) is not None
-            rolled_back.append(thread.id)
-            raise WritebackFailed
-
-        with monkeypatch.context() as patch:
-            patch.setattr(workers, "accept", fail_worker_writeback)
-            with pytest.raises(WritebackFailed):
-                await original_assign(run_runtime, binding, task, call_key, **kwargs)
-        async with short_session(run_runtime.storage) as session:
-            (rejected_worker,) = rolled_back
-            assert await session.get(Worker, rejected_worker) is None
-            assert await session.get(ThreadRow, rejected_worker) is None
-            assert await find_request(session, ws, account["id"], call_key) is None
-        first = await original_assign(run_runtime, binding, task, call_key, **kwargs)
-        async with transaction(run_runtime.storage) as session:
-            row = await session.get_one(Claw, binding.claw.id)
-            pinned = row.agent_revision_id
-            row.agent_revision_id = agent["default_revision_id"]
-        try:
-            replay = await original_assign(run_runtime, binding, task, call_key, **kwargs)
-            assert replay["entry_id"] == first["entry_id"]
-            assert replay["thread_id"] == first["thread_id"]
-            async with short_session(run_runtime.storage) as session:
-                entry = await find_request(session, ws, account["id"], call_key)
-                assert entry is not None and entry.id == replay["entry_id"]
-            replayed_assignments.append(replay["entry_id"])
-        finally:
-            async with transaction(run_runtime.storage) as session:
-                row = await session.get_one(Claw, binding.claw.id)
-                row.agent_revision_id = pinned
-        return replay
-
-    monkeypatch.setattr(workers, "assign", replay_assign)
-    recorded = workers._record_notices
-    notify = main_thread.notify
-    worker_seals = []
-
-    async def notify_from_seal(runtime, workspace_id, claw_id, **kwargs):
-        if claw_id == claw["id"] and not (
-            kwargs.get("delivery_id") == received["delivery_id"] or kwargs.get("completed_run_id")
-        ):
-            # Worker reports, terminal notices, and the sweep can win the idle slot first.
-            return
-        await notify(runtime, workspace_id, claw_id, **kwargs)
-
-    monkeypatch.setattr(main_thread, "notify", notify_from_seal)
-
-    async def record_from_seal(runtime, workspace_id, claw_id, thread_id, *, event=None):
-        if claw_id == claw["id"] and event is None:
-            return False  # The real Redis callback, not reconciliation, must record this fixture.
-        admitted = await recorded(runtime, workspace_id, claw_id, thread_id, event=event)
-        if claw_id == claw["id"] and event is not None and admitted:
-            worker_seals.append(event)
-        return admitted
-
-    monkeypatch.setattr(workers, "_record_notices", record_from_seal)
     client.portal.call(
         lambda: main_thread.notify(runtime, ws, claw["id"], delivery_id=received["delivery_id"])
     )
@@ -494,7 +425,6 @@ def exercise_lifecycle(
     assert main["session_id"] == overview["claw"]["main_session_id"]
     assert main["status"] == "completed", main.get("failure")
     assert main["agent_revision_id"] == claw["agent_revision_id"]
-    assert len(replayed_assignments) == 1
     (schedule,) = read(f"{path}/fresh-schedules")["items"]
     assert schedule["name"] == "Fresh follow-up" and schedule["next_at"]
     schedule_path = f"/schedules/{schedule['id']}"
@@ -517,71 +447,31 @@ def exercise_lifecycle(
     )
     assert scheduled["execution_outcome"] == "succeeded", scheduled
     assert scheduled["completion_run_id"] != main["id"]
+
+    async def captured_execution():
+        async with short_session(runtime.storage) as session:
+            main_run = await session.get_one(RunRow, main["id"])
+            fresh_run = await session.get_one(RunRow, scheduled["completion_run_id"])
+            definition = await session.get_one(schedules.NativeScheduleRow, schedule["id"])
+            return [
+                (main_run.principal_id, main_run.authority),
+                (fresh_run.principal_id, fresh_run.authority),
+                (definition.principal_id, definition.authority),
+            ]
+
+    for principal_id, authority in client.portal.call(captured_execution):
+        assert principal_id == account["id"]
+        assert authority["principal_id"] == account["id"]
+        assert set(authority["verbs"]) == {"read", "run", "write"}
     observed = read(path)["project"]
     assert observed["environment"] == "ready"
     assert observed["automation_account"] == "active"
     assert observed["cli_versions"] == {"gh": "2.105.0", "lark-cli": "1.0.100"}
     assert observed["cli_update_state"] is None
-    worker_rows = eventually(
-        lambda: read(f"{path}/workers")["items"],
-        lambda items: items and items[0]["activity"]["last_status"] in {"completed", "failed"},
-    )
-    (worker,) = worker_rows
-    assert worker["thread_id"] != main["thread_id"]
-    assert worker["activity"]["last_status"] == "completed"
-    worker_run = read(f"/runs/{worker['activity']['last_run_id']}")
-    assert worker_run["agent_revision_id"] == claw["agent_revision_id"]
-    worker_seal = eventually(lambda: list(worker_seals), bool)[0]
-    assert worker_seal.run_id == worker_run["id"]
-    main_seal = RunSealEvent(
-        organization_id=worker_seal.organization_id,
-        workspace_id=ws,
-        session_id=main["session_id"],
-        thread_id=main["thread_id"],
-        run_id=main_id,
-        principal_id=account["id"],
-        status="completed",
-        labels={"claw": claw["id"], "claw_role": "main"},
-    )
-
-    async def followups():
-        async with short_session(runtime.storage) as session:
-            return list(
-                await session.scalars(
-                    select(InboxEntryRow.request_key).where(
-                        InboxEntryRow.thread_id == main["thread_id"],
-                        InboxEntryRow.request_key.startswith(f"claw:seal:{main_id}:"),
-                    )
-                )
-            )
-
-    # Both subscriptions came through the real Redis consumer. Replaying older
-    # or duplicate events cannot start an additional Run or duplicate a notice.
-    assert len(eventually(lambda: client.portal.call(followups), bool)) == 1
-    client.portal.call(app.on_run_seal, runtime, main_seal)
-    client.portal.call(app.on_run_seal, runtime, worker_seal)
-    assert len(client.portal.call(followups)) == 1
-
-    async def terminal_notices():
-        async with short_session(runtime.storage) as session:
-            return list(
-                await session.scalars(
-                    select(InboxItem.id).where(
-                        InboxItem.source_key == f"terminal:{worker_seal.run_id}"
-                    )
-                )
-            )
-
-    assert len(client.portal.call(terminal_notices)) == 1
-    monkeypatch.setattr(workers, "_record_notices", recorded)
-    monkeypatch.setattr(main_thread, "notify", notify)
-    reports = [item for item in read(f"{path}/deliveries")["items"] if item["origin"] == "worker"]
-    assert any(
-        read(f"{path}/deliveries/{item['id']}")["content"] == "Worker result" for item in reports
-    )
     assert read(f"{path}/usage")[0]["usage"]["requests"] > 0
-    assert any("ask_user_question" in tools for tools in requests if "claw_assign" in tools)
-    assert all("ask_user_question" not in tools for tools in requests if "claw_report" in tools)
+    assert all(
+        "claw_assign" not in tools and "claw_connector_reply" not in tools for tools in requests
+    )
 
     replacement = post(
         "/environments",
@@ -596,19 +486,19 @@ def exercise_lifecycle(
     }
     fresh_headers = {"Idempotency-Key": uuid4().hex}
     fresh_path = f"{path}/fresh-schedules"
-    # Fail after native creation commits, then force the recovery by exact native_key.
-    original_create = schedules.native_service.create
-    committed = []
+    # A failed App writeback rolls back the native Schedule in the same transaction.
+    original_create = schedules.app_schedules.create_fresh_schedule
+    rolled_back = []
 
-    async def lose_receipt(*args, **kwargs):
-        if not committed:
-            native, _ = await original_create(*args, **kwargs)
-            committed.append(native.id)
-            raise ServiceError("unavailable", "Fixture lost the creation response")
-        raise ServiceError("conflict", "Fixture refuses native replay; reconcile the receipt")
+    async def fail_after_create(*args, **kwargs):
+        native, created = await original_create(*args, **kwargs)
+        if not rolled_back:
+            rolled_back.append(native.id)
+            raise ServiceError("unavailable", "Fixture failed before the receipt")
+        return native, created
 
     with monkeypatch.context() as patch:
-        patch.setattr(schedules.native_service, "create", lose_receipt)
+        patch.setattr(schedules.app_schedules, "create_fresh_schedule", fail_after_create)
         post(fresh_path, fresh_body, 503, headers=fresh_headers)
 
         async def pending_receipt():
@@ -619,12 +509,33 @@ def exercise_lifecycle(
                         ScheduleRequest.completed_at.is_(None),
                     )
                 )
-                return row and row.schedule_id is None
+                native = await session.get(schedules.NativeScheduleRow, rolled_back[0])
+                return row and row.schedule_id is None and native is None
 
         assert client.portal.call(pending_receipt)
         operator_schedule = post(fresh_path, fresh_body, headers=fresh_headers)
-        assert operator_schedule["id"] == committed[0]
+        assert operator_schedule["id"] != rolled_back[0]
     assert post(fresh_path, fresh_body, headers=fresh_headers)["id"] == operator_schedule["id"]
+
+    async def audit_fresh_request():
+        async with short_session(runtime.storage) as session:
+            events = (
+                await session.scalars(
+                    select(AuditEventRow).where(
+                        AuditEventRow.action == "claw.fresh_schedule.request",
+                        AuditEventRow.workspace_id == ws,
+                    )
+                )
+            ).all()
+            actors = [await session.get_one(PrincipalRow, event.actor_id) for event in events]
+            return [
+                (event.details, actor.kind, actor.email)
+                for event, actor in zip(events, actors, strict=True)
+            ]
+
+    assert client.portal.call(audit_fresh_request) == [
+        ({"claw_id": claw["id"]}, "user", "admin@example.com")
+    ]
     post(fresh_path, {**fresh_body, "prompt": "Different work"}, 409, headers=fresh_headers)
     service_headers = {"Authorization": f"Bearer {key['secret']}"}
     operator_path = f"/api/v1/schedules/{operator_schedule['id']}"
@@ -671,13 +582,28 @@ def exercise_lifecycle(
     )
     assert enabled.status_code == 200 and enabled.json()["credential_configured"], enabled.text
     assert enabled.json()["reply_environment_id"] == replacement["id"]
+    egress_body = {
+        **{key: value for key, value in connector_body.items() if key != "credential"},
+        "egress_primary": True,
+    }
+    for stale_environment in (None, shared["id"]):
+        rejected = client.put(
+            f"/api/v1{connector_path}",
+            json={**egress_body, "egress_environment_id": stale_environment},
+        )
+        assert rejected.status_code == 409, rejected.text
+        assert rejected.json()["error"]["details"]["reason"] == "egress_environment_changed"
+    authorized = client.put(
+        f"/api/v1{connector_path}",
+        json={**egress_body, "egress_environment_id": replacement["id"]},
+    )
+    assert authorized.status_code == 200 and authorized.json()["egress_primary"], authorized.text
+    disabled = client.put(f"/api/v1{connector_path}", json={**egress_body, "egress_primary": False})
+    assert disabled.status_code == 200, disabled.text
     assert post(f"{path}/project/cli-update", {}, 202) == {"state": "queued"}
     assert read(path)["project"]["cli_update_state"] == "queued"
 
-    for thread_id, run_id in (
-        (main["thread_id"], main["id"]),
-        (worker["thread_id"], worker_run["id"]),
-    ):
+    for thread_id, run_id in ((main["thread_id"], main["id"]),):
         mounts = read(f"/threads/{thread_id}/environments")["items"]
         assert (
             next(m["environment_id"] for m in mounts if m["name"] == "workspace")
@@ -737,7 +663,7 @@ def exercise_lifecycle(
         headers={**service_headers, "If-Match": native_browser_schedule.headers["ETag"]},
     )
     assert archived.status_code == 204, archived.text
-    for thread_id in (main["thread_id"], worker["thread_id"]):
+    for thread_id in (main["thread_id"],):
         assert read(f"/threads/{thread_id}/browser")["browser_id"] == browser["id"]
 
     async def subscribers():
@@ -775,70 +701,6 @@ def exercise_lifecycle(
     assert duplicate["credential_configured"]
     client.portal.call(replica.close)
 
-    async def admit_opened_lark():
-        async with transaction(client.app.state.runtime.storage) as session:
-            row = await inbox.lock_claw(session, ws, claw["id"])
-            admission = await inbox.admit(
-                session,
-                row,
-                inbox.Offer(
-                    "user",
-                    "lark",
-                    connectors.event_key(lark["id"], "evt-fixture"),
-                    {
-                        "platform": "lark",
-                        "message_id": "om_fixture",
-                        "attachments": [
-                            {"key": "file_fixture", "kind": "file", "name": "fixture.txt"}
-                        ],
-                    },
-                    "Fixture source",
-                    "Fixture source",
-                ),
-            )
-            item = await session.get(InboxItem, admission.item_id)
-            item.read_at = datetime.now(UTC)
-            return item.id
-
-    item_id = client.portal.call(admit_opened_lark)
-    reply.extend(
-        [
-            dict(
-                connector_id=duplicate["id"],
-                destination="ou_operator",
-                content="refuse",
-                operation="lark_send",
-            ),
-            dict(
-                connector_id=connector["id"],
-                destination="team/repo#123",
-                content="Fixture reply",
-                operation="issue_comment",
-            ),
-            dict(
-                connector_id=lark["id"],
-                destination="om_fixture",
-                content="Fixture reply",
-                operation="lark_reply",
-                source_item_id=item_id,
-            ),
-            dict(
-                connector_id=lark["id"],
-                destination="om_fixture",
-                content="file_fixture",
-                content_type="file",
-                operation="lark_download",
-                source_item_id=item_id,
-            ),
-            dict(
-                connector_id=lark["id"],
-                destination="ou_operator",
-                content="fail",
-                operation="lark_send",
-            ),
-        ]
-    )
-
     followup = post(
         f"{path}/input",
         {"content": "Run with the replacement"},
@@ -852,25 +714,7 @@ def exercise_lifecycle(
         lambda: read(f"/runs/{next_delivery['run_id']}"), lambda run: run["sealed_at"]
     )
     assert next_run["status"] == "completed", next_run.get("failure")
-    assert outbound[0] == (
-        "gh",
-        "issue",
-        "comment",
-        "123",
-        "--repo",
-        "github.com/team/repo",
-        "--body=Fixture reply",
-    )
-    assert [argv[2] for argv in outbound[1:]] == [
-        "+messages-reply",
-        "+messages-resources-download",
-        "+messages-send",
-    ]
-    diagnostics = " ".join(str(value) for value in tool_results)
-    assert "auth rejected [redacted] and [redacted]" in diagnostics
-    assert "synthetic-lark-" not in diagnostics
-    assert "An admin must authorize replies in this Project Environment" in diagnostics
-    assert '"unknown"' in diagnostics
+    assert outbound == []  # Connector-managed Main replies are not exposed.
 
     cleared = client.put(f"/api/v1{lark_path}", json={**lark_body, "credential": None})
     assert cleared.status_code == 200, cleared.text
@@ -895,7 +739,7 @@ def exercise_lifecycle(
     detached = client.patch(update_url, json={"browser_id": None})
     assert detached.status_code == 200, detached.text
     assert read(path)["project"]["browser"] is None
-    for thread_id in (main["thread_id"], worker["thread_id"]):
+    for thread_id in (main["thread_id"],):
         assert read(f"/threads/{thread_id}/browser") is None
     assert read(f"/runs/{main['id']}")["browser_binding"] is None
     assert read(f"/runs/{next_run['id']}")["browser_binding"]["browser_id"] == browser["id"]
@@ -997,6 +841,28 @@ def exercise_lifecycle(
     assert read(scheduled_path)["items"] == []
     assert read(f"{scheduled_path}/{tick['id']}/occurrences")["items"] == [occurrence]
     assert client.patch(tick_url, json={"enabled": True}).status_code == 404
+
+    manual = post(scheduled_path, {**body, "name": "Manual"})
+
+    async def trigger_manual():
+        async with transaction(runtime.storage) as session:
+            locked = await inbox.lock_claw(session, ws, inspectable["id"])
+            first = await schedules.trigger(session, locked, manual["id"], occurrence_id="ct_first")
+            duplicate = await schedules.trigger(
+                session, locked, manual["id"], occurrence_id="ct_first"
+            )
+            overlap = await schedules.trigger(
+                session, locked, manual["id"], occurrence_id="ct_second"
+            )
+            row = await schedules.find_schedule(session, locked, manual["id"])
+            return first.id, duplicate.id, first.status, overlap.status, row.next_at.isoformat()
+
+    first_id, duplicate_id, first_status, overlap_status, next_at = client.portal.call(
+        trigger_manual
+    )
+    assert first_id == duplicate_id == "ct_first"
+    assert (first_status, overlap_status) == ("unread", "overlap")
+    assert next_at == datetime.fromisoformat(once).isoformat()
 
     # Apply retention after a delivery has already been accepted; do not age its receipt.
     async def mark_read(at):

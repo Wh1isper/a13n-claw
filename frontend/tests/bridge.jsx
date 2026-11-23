@@ -25,9 +25,10 @@ export const Toolbar = ({ filters, children }) => (
     {children}
   </div>
 );
-export const FormSection = ({ title, children }) => (
+export const FormSection = ({ title, description, children }) => (
   <section>
     <h3>{title}</h3>
+    {description && <p>{description}</p>}
     {children}
   </section>
 );
@@ -138,7 +139,22 @@ export const FormActions = ({ label = "Save", pending }) => (
     {label}
   </button>
 );
-export const SaveBar = FormActions;
+export const SaveBar = ({
+  saveLabel,
+  discardLabel,
+  pending,
+  disabled,
+  onDiscard,
+}) => (
+  <div>
+    <button type="button" onClick={onDiscard} disabled={pending}>
+      {discardLabel}
+    </button>
+    <button type="submit" disabled={pending || disabled}>
+      {saveLabel}
+    </button>
+  </div>
+);
 export const Confirm = () => null;
 export const Switch = ({ checked, onCheckedChange }) => (
   <input

@@ -4,17 +4,18 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
+from a13n_service.app_sdk import schedules as app_schedules
+from a13n_service.app_sdk import threads as app_threads
+from a13n_service.infra.audit import record as audit_record
 from a13n_service.infra.cursors import keyset_page
-from a13n_service.infra.db import advisory_lock, now, short_session, transaction
+from a13n_service.infra.db import now, short_session, transaction
 from a13n_service.infra.errors import ServiceError, conflict, invalid, not_found
 from a13n_service.resources.agents.tables import AgentRow
 from a13n_service.resources.memories.tables import MemorySpaceRow
-from a13n_service.runs.memories.session_memory import configure
 from a13n_service.runs.schedules import queries as native_queries
 from a13n_service.runs.schedules import service as native_service
 from a13n_service.runs.schedules.calendar import Calendar
@@ -26,8 +27,8 @@ from a13n_service.runs.schedules.schemas import (
     ScheduleTarget,
 )
 from a13n_service.runs.schedules.tables import ScheduleRow as NativeScheduleRow
-from a13n_service.runs.sessions import new_session
 from a13n_service.runs.tables import RunRow
+from a13n_service.tenancy.access import workspace_scope
 from a13n_service.tenancy.authorize import (
     ExecutionAuthority,
     Principal,
@@ -37,12 +38,12 @@ from a13n_service.tenancy.authorize import (
 from a13n_service.tenancy.tables import WorkspaceRow
 from pydantic import BaseModel, ConfigDict, Field
 from redis.exceptions import LockError
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from . import inbox, main_thread
-from .models import Claw, Occurrence, Schedule, ScheduleRequest
+from .models import APP_ID, Claw, Occurrence, Schedule, ScheduleRequest
 
 if TYPE_CHECKING:
     from a13n_service.runs.runtime import Runtime
@@ -57,7 +58,7 @@ class ScheduleInput(BaseModel):
 
 
 async def fresh_definition(
-    session: AsyncSession, claw: Claw, body: ScheduleInput, actor: Principal
+    session: AsyncSession, runtime: Runtime, claw: Claw, body: ScheduleInput, actor: Principal
 ) -> ScheduleCreate:
     if claw.environment_id is None:
         raise conflict("claw", claw.id, "project_environment_required")
@@ -71,12 +72,15 @@ async def fresh_definition(
         raise conflict("memory space", space.id, "disabled")
     if claw.schedule_session_id is None:
         details = main_thread.project_session(claw, f"{claw.name} · Scheduled work")
-        owner = new_session(space.organization_id, claw.workspace_id, actor.id, details)
-        session.add(owner)
-        await session.flush()
-        assert details.memory is not None
-        await configure(session, owner, details.memory)
-        claw.schedule_session_id = owner.id
+        claw.schedule_session_id = await app_schedules.ensure_schedule_session(
+            session,
+            runtime,
+            claw.workspace_id,
+            app_id=APP_ID,
+            principal_id=actor.id,
+            existing_session_id=None,
+            session_create=details,
+        )
     return ScheduleCreate(
         name=body.name,
         labels={"claw": claw.id},
@@ -87,10 +91,12 @@ async def fresh_definition(
             agent_revision_id=main_thread.selected_revision(claw, agent),
             payload=main_thread.payload(body.prompt),
             options=await main_thread.options(session, claw, agent, role="scheduled"),
+            # Native Schedule invocations are immutable. Do not capture a
+            # revocable connector generation in a recurring definition.
             environments=main_thread.project_mounts(claw),
             browser_binding=main_thread.project_browser(claw),
         ),
-        target=ScheduleTarget(session_id=claw.schedule_session_id),
+        target=ScheduleTarget(mode="new_thread", session_id=claw.schedule_session_id),
         state="enabled",
     )
 
@@ -98,7 +104,7 @@ async def fresh_definition(
 async def fresh_account(session: AsyncSession, runtime: Runtime, claw: Claw) -> Principal:
     workspace = await session.get_one(WorkspaceRow, claw.workspace_id)
     scope = WorkspaceScope(workspace.organization_id, workspace.id)
-    return await main_thread.account(session, runtime, scope, claw.service_account_id)
+    return await main_thread.automation_account(session, runtime, scope, claw.service_account_id)
 
 
 async def fresh_schedule_count(session: AsyncSession, claw: Claw) -> int:
@@ -134,8 +140,14 @@ async def require_no_fresh_work(session: AsyncSession, claw: Claw, *, reason: st
         raise conflict("claw", claw.id, reason)
 
 
-async def create_fresh(runtime: Runtime, claw: Claw, body: ScheduleInput, request_key: str):
+async def create_fresh(
+    runtime: Runtime, claw: Claw, body: ScheduleInput, request_key: str, operator: Principal
+):
     async with transaction(runtime.storage) as session:
+        scope = await workspace_scope(session, operator, claw.workspace_id, "write")
+        await app_threads.prepare_admission(
+            session, runtime, claw.workspace_id, claw.service_account_id, app_id=APP_ID
+        )
         claw = await inbox.lock_claw(session, claw.workspace_id, claw.id)
         actor = await fresh_account(session, runtime, claw)
         assert actor.confinement is not None
@@ -146,7 +158,7 @@ async def create_fresh(runtime: Runtime, claw: Claw, body: ScheduleInput, reques
         )
         if row is None:
             request = FreshRequest(
-                definition=await fresh_definition(session, claw, body, actor),
+                definition=await fresh_definition(session, runtime, claw, body, actor),
                 authority=execution_authority(actor, actor.confinement),
                 input_digest=digest,
                 native_key=request_key,
@@ -157,6 +169,15 @@ async def create_fresh(runtime: Runtime, claw: Claw, body: ScheduleInput, reques
                     claw_id=claw.id,
                     request=request.model_dump(mode="json"),
                 )
+            )
+            audit_record(
+                session,
+                scope,
+                actor_id=operator.id,
+                action="claw.fresh_schedule.request",
+                target_kind="claw_schedule_request",
+                target_id=request_id,
+                details={"claw_id": claw.id},
             )
         elif row.request is not None and row.request.get("input_digest") != digest:
             raise conflict("request", request_key, "idempotency_key_reused")
@@ -221,74 +242,63 @@ async def _submit_fresh(
         if row.completed_at is not None:
             return receipt(row)
         request = FreshRequest.model_validate(row.request)
+        created_at = row.created_at
+        pending_receipt = receipt(row)
     native_key = request.native_key or request_id
-    submission_error = None
     try:
-        async with short_session(runtime.storage) as session:
-            actor = await fresh_account(session, runtime, claw)
-        if actor.id != request.authority.principal_id:
-            raise conflict("claw", claw.id, "automation_account_changed")
-        actor = replace(
-            actor,
-            grants=tuple(
-                replace(grant, verbs=grant.verbs & request.authority.verbs)
-                for grant in actor.grants
-            ),
-        )
-        schedule, _ = await native_service.create(
-            runtime, actor, claw.workspace_id, request.definition, request_key=native_key
-        )
-        schedule_id, failure = schedule.id, None
-    except ServiceError as error:
-        if error.code == "unavailable" and datetime.now(UTC) - row.created_at < inbox.HISTORY_AGE:
+        # App admission takes the Organization lock before any Claw or request lock.
+        # The native Schedule and its App receipt then commit in one transaction.
+        async with transaction(runtime.storage) as session:
+            await app_threads.prepare_admission(
+                session, runtime, claw.workspace_id, claw.service_account_id, app_id=APP_ID
+            )
+            current = await inbox.lock_claw(session, claw.workspace_id, claw.id)
+            row = await session.get(ScheduleRequest, request_id, with_for_update=True)
+            if row is None:
+                return ScheduleReceipt(id=request_id, state="pending")
+            if row.completed_at is not None:
+                return receipt(row)
+            actor = await fresh_account(session, runtime, current)
+            assert actor.confinement is not None
+            current_authority = execution_authority(actor, actor.confinement)
+            if (
+                current_authority.principal_id != request.authority.principal_id
+                or current_authority.organization_id != request.authority.organization_id
+                or current_authority.workspace_id != request.authority.workspace_id
+                or not current_authority.verbs <= request.authority.verbs
+            ):
+                raise conflict("claw", claw.id, "automation_authority_changed")
+            schedule, _ = await app_schedules.create_fresh_schedule(
+                session,
+                runtime,
+                claw.workspace_id,
+                app_id=APP_ID,
+                actor_id=actor.id,
+                body=request.definition,
+                request_key=native_key,
+            )
+            row.request = {"input_digest": request.input_digest} if request.input_digest else None
+            row.schedule_id = schedule.id
+            row.failure = None
+            row.completed_at = await now(session)
             return receipt(row)
-        submission_error = error
-        schedule_id = None
+    except ServiceError as error:
+        if error.code == "unavailable" and datetime.now(UTC) - created_at < inbox.HISTORY_AGE:
+            return pending_receipt
         failure = str(error.details.get("reason") or error.code)[:200]
-    async with transaction(runtime.storage) as session:
-        if schedule_id is None:
-            # The native write may already have committed before the App receipt, even
-            # if the original account can no longer replay the call.
-            await advisory_lock(session, "schedules", claw.workspace_id)
-            schedule_id = await session.scalar(
-                select(NativeScheduleRow.id).where(
-                    NativeScheduleRow.workspace_id == claw.workspace_id,
-                    NativeScheduleRow.created_by_id == request.authority.principal_id,
-                    NativeScheduleRow.create_request_key == native_key,
-                    NativeScheduleRow.create_request_digest
-                    == native_service.request_digest(
-                        "schedule.create",
-                        claw.workspace_id,
-                        request.definition.model_dump(mode="json"),
-                    ),
-                )
-            )
-            if schedule_id is not None:
-                failure = None
-        if schedule_id is None and request.native_key is not None:
-            # A definitive HTTP failure must not consume the client's idempotency key.
-            await session.execute(delete(ScheduleRequest).where(ScheduleRequest.id == request_id))
-        else:
-            # Native creation is idempotent across workers and process restarts.
-            await session.execute(
-                update(ScheduleRequest)
-                .where(
-                    ScheduleRequest.id == request_id,
-                    ScheduleRequest.completed_at.is_(None),
-                )
-                .values(
-                    request={"input_digest": request.input_digest}
-                    if request.input_digest
-                    else None,
-                    schedule_id=schedule_id,
-                    failure=failure,
-                    completed_at=await now(session),
-                )
-            )
-            return receipt(await session.get_one(ScheduleRequest, request_id))
-    if submission_error is not None and report_errors:
-        raise submission_error
-    return ScheduleReceipt(id=request_id, state="failed", failure=failure)
+        async with transaction(runtime.storage) as session:
+            row = await session.get(ScheduleRequest, request_id, with_for_update=True)
+            if row is not None and row.completed_at is not None:
+                return receipt(row)
+            if row is not None and request.native_key is not None:
+                # A definitive HTTP failure must not consume the client's idempotency key.
+                await session.delete(row)
+            elif row is not None:
+                row.failure = failure
+                row.completed_at = await now(session)
+        if report_errors:
+            raise
+        return ScheduleReceipt(id=request_id, state="failed", failure=failure)
 
 
 async def retry_fresh(runtime: Runtime, workspace_id: str, claw_id: str) -> None:
@@ -486,6 +496,47 @@ async def settle(session: AsyncSession, schedule_id: str) -> bool:
         row.status = run.status
         return False
     return True
+
+
+async def trigger(
+    session: AsyncSession, claw: Claw, schedule_id: str, *, occurrence_id: str
+) -> Occurrence:
+    """Record an immediate occurrence without moving the schedule's future rule."""
+    row = await find_schedule(session, claw, schedule_id, include_deleted=True)
+    previous = await session.get(Occurrence, occurrence_id)
+    if previous is not None:
+        if previous.schedule_id != row.id:
+            raise conflict("occurrence", occurrence_id, "schedule_mismatch")
+        return previous
+    if row.deleted_at is not None:
+        raise not_found("schedule", schedule_id)
+    current = await now(session)
+    while await occurred(session, row.id, current):
+        current += timedelta(microseconds=1)
+    occurrence = Occurrence(
+        id=occurrence_id, schedule_id=row.id, scheduled_at=current, status="unread"
+    )
+    if await settle(session, row.id):
+        occurrence.status = "overlap"
+    else:
+        title = f"Scheduled occurrence: {row.name} · {current.astimezone(UTC).isoformat()}"
+        result = await inbox.admit(
+            session,
+            claw,
+            inbox.Offer(
+                "schedule",
+                "schedule",
+                f"schedule:{occurrence.id}",
+                {"schedule_id": row.id, "occurrence_id": occurrence.id},
+                row.prompt,
+                title,
+            ),
+        )
+        occurrence.item_id = result.item_id
+        occurrence.status = "unread" if result.status == "accepted" else "full"
+    session.add(occurrence)
+    await session.flush()
+    return occurrence
 
 
 async def sweep(runtime: Runtime, workspace_id: str, claw_id: str) -> None:

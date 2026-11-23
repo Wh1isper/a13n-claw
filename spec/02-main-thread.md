@@ -8,31 +8,29 @@ All user messages submitted to Claw, including from its input interface, first e
 
 Committed Run seal notifications are best-effort hints. A normal Main completion can immediately wake the same Thread for unread work once it is still the latest Run and no native Inbox entry takes priority. A wake that made no Inbox progress does not immediately repeat on its own completion; the maintenance sweep still retries unread work. A seal notification cannot reopen a failed or cancelled Main or resolve a native wait. The sweep reconciles missed hints and remains responsible for heartbeat, schedules, and retention.
 
-Main handles user-facing communication; ordinary user messages and coordination do not go directly to workers. A heartbeat wakes the same Main after the configured idle interval. Native decision responses and execution controls use Service's native controls against the exact operation, not messages delivered to the conversation.
+Main handles user-facing communication; ordinary user messages do not go directly to workers. A heartbeat wakes the same Main after the configured idle interval. Main and Workers do not wait for interactive approvals, native user questions, or client tool responses. A decision-dependent operation is denied; an unexpected suspension fails the Run rather than being treated as completion.
 
 Claw supplies Main and its workers with [capabilities and instructions](04-project.md#agent-composition) suited to their available resources. Main uses background tools for operations that need to continue without blocking input handling; workers remain the owners of delegated long-running work.
 
 ## Managed Workers
 
-Main owns and can list, inspect, and manage its worker Threads. When delegating, Main explicitly creates a worker Thread or continues an existing one. Main can attempt an immediate steer of an active worker. Workers have no Claw Inbox: a missed steer does not implicitly start or continue a Run.
+Main delegates to Service's native asynchronous subagents. Named Workers select published Agent revisions; dynamic Workers inherit a subset of the Main Run's capabilities and use a configured model or Main's own model, which Service always permits. Dynamic Workers and named Workers with shared Environment policy inherit the parent Run's captured Environment mounts; named Workers with dedicated or none policy follow their configured policy. Native Workers do not inherit the parent Browser by default. Service owns child execution, continuation, messages, and terminal results.
 
-Workers use native Background where supported and subject to Service authority. They do not have human-approval, native user-question, or deferred decision tool paths or statuses. Claw does not automatically approve operations: Service grants and execution policy remain authoritative. If work needs a human decision, the worker can report that need to Main as an ordinary message rather than entering an approval wait.
+A native child's messages and terminal results enter the parent Service Thread Inbox, not the Claw Inbox. They are not duplicated as Claw worker messages or terminal notices. Main can inspect child Threads and saved Runs through native controls. Historical Claw Worker records and previously accepted Inbox entries remain available; the former custom assignment, steering, and worker terminal-notice paths do not create new work.
 
-Worker-authored progress, questions, and other messages to Main enter the Claw Inbox. On each worker Run completion, failure, or cancellation, Claw attempts one lightweight Inbox notice identifying the worker Thread, Run, and terminal status, without the full result. Main can inspect the saved outcome in Service. Worker message bodies and results are not also injected directly into Main's model context. [Inbox capacity](01-inbox.md#capacity-and-retention) determines whether messages and notices are accepted.
-
-Native Background completion returns directly and promptly to its owning Thread, without going through the Claw Inbox. This is distinct from a worker's message or terminal notice.
+Workers do not have human-approval, native user-question, or deferred decision tool paths. Claw does not automatically approve operations: Service grants and execution policy remain authoritative. If work needs a human decision, a Worker reports the need to Main without entering an interactive wait. Native Background completion likewise returns to its owning Thread without going through the Claw Inbox.
 
 ## Scheduled Work
 
 Main chooses an execution mode when it creates a scheduled task. The default delivers each scheduled occurrence to the Claw Inbox as an unread item, not as the scheduled prompt in Main's native input. An unread notice can wake or steer Main with a short preview of the occurrence; the trigger-time prompt enters Main's context only when Main opens the item. A scheduled item is not a user message. Use this mode for ordinary tasks and work that needs continuity with Main's context.
 
-Claw owns default-mode schedule definitions, durable cron and one-time rules, lateness, coalescing, overlap decisions, and occurrence history in its AppDatabase. A Service App OrganizationSweep supplies bounded execution cadence; it does not own the schedule state. Missed cron matches are coalesced subject to lateness, and a firing overlapping an unfinished occurrence is skipped.
+Claw owns default-mode schedule definitions, durable cron and one-time rules, lateness, coalescing, overlap decisions, and occurrence history in its AppDatabase. A Service App OrganizationSweep supplies bounded execution cadence; it does not own the schedule state. Missed cron matches are coalesced subject to lateness, and a firing overlapping an unfinished occurrence is skipped. Main may update or delete these schedules and trigger one immediately. A manual trigger does not move the future rule and is available for a paused schedule; it follows the same overlap and Inbox capacity rules. Replaying the same tool call returns its original occurrence rather than admitting another item. Deletion stops future occurrences but retains history.
 
 Claw records the occurrence identity and Inbox acceptance together. Repeated sweeps or restarts do not admit an occurrence more than once, even after the Inbox item leaves retained history. After that commit, Claw attempts the ordinary wake or steer with an occurrence preview, without exposing the prompt. This path uses no Service Schedule, placeholder Run, or interception of a native scheduled Run. An Inbox-full rejection is visible as an occurrence delivery outcome; admission is not execution or completion.
 
 An accepted occurrence remains outstanding while its Inbox item is unread or Main is processing it. Opening the item marks it Read but does not itself finish the occurrence. Main's processing outcome ends that occurrence; it does not wait for the entire downstream chain of worker work that Main may delegate. A processing failure or cancellation is not successful completion, and an uncertain outcome is not assumed successful. Pending native decisions are not answered or bypassed by schedule delivery.
 
-For self-contained transactional work, Main can instead select a fresh native Thread in the same Project for each firing. Transactional describes the task's self-contained work, not a database atomicity guarantee. The task prompt directs the scheduled Thread to report its outcome to Main for any user-facing communication; it does not contact users directly. Service Schedule owns this mode's clock, definitions, occurrences, and lifecycle; Claw does not mirror those definitions or occurrences. Claw does not generate a managed-worker terminal notice for a fresh scheduled Thread unless it is also a managed worker.
+For self-contained transactional work, Main can instead select a fresh native Thread in the same Project for each firing. Transactional describes the task's self-contained work, not a database atomicity guarantee. The task prompt directs the scheduled Thread to report its outcome to Main for any user-facing communication; it does not contact users directly. Service Schedule owns this mode's clock, definitions, occurrences, and lifecycle; Claw does not mirror those definitions or occurrences. A fresh scheduled Thread reports its outcome through the scheduled reporting path, not a native child-result notification. Its immutable Schedule invocation captures Project resource bindings but not connector Egress credential references; Main uses its current authorized connector credentials for user-facing communication.
 
 Claw's instructions guide Main to create each task and write its trigger-time prompt:
 
@@ -43,7 +41,7 @@ Claw's instructions guide Main to create each task and write its trigger-time pr
 
 ## Activity and Idleness
 
-Claw prompts Main again if a Run finishes and unread mail remains. Once Main can accept work, an unread notice can continue the same Thread. An outstanding native decision is a wait, not idleness: new mail can remain unread, but its notice and a heartbeat do not answer the decision or start a replacement Run. The response goes to the exact native wait. After continuation, Main returns to the same Inbox loop.
+Claw prompts Main again if a Run finishes and unread mail remains. Once Main can accept work, an unread notice can continue the same Thread. A failed or cancelled Run is not treated as normal completion or implicitly restarted by a heartbeat.
 
 When Main has no active work or outstanding decision, no unread mail, and no competing eligible work such as a native Background return, it becomes idle and the heartbeat interval starts. New eligible work can bring Main back before that interval ends. If Main finishes that work and goes idle again, the interval starts again. Heartbeats occur only during true idleness and do not catch up missed intervals. An independently running worker does not by itself keep Main active; idleness does not stop that worker or the Project resources.
 
@@ -54,9 +52,6 @@ stateDiagram-v2
     CheckInbox --> Active: Unread notice or other eligible work
     CheckInbox --> Idle: No unread or other eligible work
     Active --> Active: Accepted unread-notice steer
-    Active --> Waiting: Native question or approval
-    Waiting --> Waiting: Fan-in retained as unread
-    Waiting --> Active: Exact decision resumed
     Active --> CheckInbox: Run finishes normally
     Idle --> Active: Unread notice
     Idle --> Active: Native Background return or heartbeat due
