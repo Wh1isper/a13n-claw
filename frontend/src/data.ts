@@ -68,7 +68,6 @@ export interface Overview {
     } | null;
     browser_failure: string | null;
     fresh_schedule_count: number;
-    unauthorized_reply_connectors: number;
     browser_name: string | null;
     browser: string | null;
     automation_account: string;
@@ -81,7 +80,6 @@ export interface Worker {
   thread_id: string;
   session_id: string;
   name: string;
-  model: string | null;
   activity: Activity | null;
 }
 export interface Delivery {
@@ -112,8 +110,6 @@ export interface Connector {
   listener_status: string | null;
   egress_status: string | null;
   egress_failure: string | null;
-  reply_environment_id: string | null;
-  reply_reauthorization_required: boolean;
   config: Record<string, unknown>;
 }
 export interface Schedule {

@@ -56,7 +56,8 @@ def test_rebind_preserves_busy_project_and_uses_sdk_result(monkeypatch):
         busy = False
         await project.rebind(Session(), None, scope, account, claw, "new", "browser")
         assert claw.environment_id == "new" and claw.cli_update_id is None
-        assert calls[-2:] == ["connector-update", "flush"]
+        assert calls[-3] == "connector-update" and calls[-2]["environment_id"] == "new"
+        assert calls[-1] == "flush"
 
     asyncio.run(run())
 

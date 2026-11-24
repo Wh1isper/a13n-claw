@@ -84,41 +84,6 @@ def credential(runtime: Runtime, organization_id: str, row: Connector) -> str | 
     return None
 
 
-async def command_environment(
-    kind: str, connector_id: str, config: dict, token: str
-) -> dict[str, str]:
-    if kind == "github":
-        return {"GH_TOKEN": token, "GH_HOST": "github.com", "GH_PROMPT_DISABLED": "1"}
-    settings = LarkSettings.model_validate(config)
-    adapter = LarkAdapter(connector_id, settings, token)
-    try:
-        tenant_token = await adapter.access_token()
-    finally:
-        await adapter.close()
-    return {
-        "LARKSUITE_CLI_APP_ID": settings.app_id,
-        "LARKSUITE_CLI_TENANT_ACCESS_TOKEN": tenant_token,
-        "LARKSUITE_CLI_BRAND": "lark" if settings.domain.endswith("larksuite.com") else "feishu",
-        "LARKSUITE_CLI_DEFAULT_AS": "bot",
-        "LARKSUITE_CLI_STRICT_MODE": "bot",
-        "LARKSUITE_CLI_NO_UPDATE_NOTIFIER": "1",
-        "LARKSUITE_CLI_NO_SKILLS_NOTIFIER": "1",
-    }
-
-
-async def reply_credentials(
-    kind: str, connector_id: str, config: dict, token: str
-) -> dict[str, str]:
-    # Service injects the credential only into this invocation. When the
-    # runtime supports broker grants, substitute the allowed-host placeholder here.
-    return {
-        **await command_environment(kind, connector_id, config, token),
-        "GH_DEBUG": "",
-        "DEBUG": "",
-        "LARKSUITE_CLI_DEBUG": "",
-    }
-
-
 def listener_key(connector_id: str) -> str:
     return f"claw:lark:status:{connector_id}"
 
@@ -141,7 +106,11 @@ async def lark_changed(runtime: Runtime, organization_id: str) -> None:
 
 async def check(kind: str, connector_id: str, config: dict, token: str) -> None:
     if kind == "lark":
-        await command_environment(kind, connector_id, config, token)
+        adapter = LarkAdapter(connector_id, LarkSettings.model_validate(config), token)
+        try:
+            await adapter.exchange_token()
+        finally:
+            await adapter.close()
         return
     settings = GitHubSettings.model_validate(config)
     async with httpx.AsyncClient(timeout=4) as client:

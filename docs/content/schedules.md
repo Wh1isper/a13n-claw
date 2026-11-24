@@ -9,4 +9,6 @@ A **fresh Thread** runs self-contained scheduled work in the Project Environment
 
 Fresh Threads use the Project Environment and optional Browser selected when the schedule is created. Archive enabled or paused fresh-Thread schedules before changing either binding, then create new schedules with the new selection. Existing Run and occurrence history remains intact.
 
+To test a Main schedule, select **Trigger now**. An accepted unread occurrence wakes Main after the transaction commits. For fresh schedules, reuse an idempotency key only for the same effective definition; changing the Project revision or captured resources can cause a conflict. This pre-release schema requires a clean installation rather than migration of old pending request receipts or unlabeled schedules.
+
 The heartbeat runs only when Main is idle. Its interval is independent of schedules. When no follow-up is needed, Main can finish quietly and retain an inspectable successful Run.

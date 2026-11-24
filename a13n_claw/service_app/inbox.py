@@ -11,7 +11,7 @@ from a13n_service.infra.errors import ServiceError
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Claw, Delivery, InboxItem, Occurrence, ScheduleRequest
+from .models import Claw, Delivery, InboxItem, Occurrence
 
 HISTORY_AGE = timedelta(days=7)
 DELIVERY_LIMIT = 3000
@@ -214,12 +214,6 @@ async def cleanup(storage: Storage, workspace_id: str, claw_id: str) -> None:
         current = await now(session)
         await prune_read(session, claw, current)
         await _prune_deliveries(session, claw.id, current)
-        await session.execute(
-            delete(ScheduleRequest).where(
-                ScheduleRequest.claw_id == claw_id,
-                ScheduleRequest.completed_at < current - HISTORY_AGE,
-            )
-        )
 
 
 async def unread_previews(

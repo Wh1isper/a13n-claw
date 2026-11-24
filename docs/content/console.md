@@ -27,4 +27,4 @@ Save the connector, reopen it, and select **Check saved connection** to verify a
 
 ## Schedules
 
-Main schedules can be edited, paused, resumed, or deleted. Their occurrence history links to retained deliveries and exact Main Runs. Fresh-Thread schedules link to native Service definitions and occurrence history. See [Schedules and heartbeat](./schedules.md).
+Main schedules can be edited, triggered immediately, paused, resumed, or deleted. Their occurrence history links to retained deliveries and exact Main Runs. Fresh-Thread schedules link to native Service definitions and occurrence history. See [Schedules and heartbeat](./schedules.md).

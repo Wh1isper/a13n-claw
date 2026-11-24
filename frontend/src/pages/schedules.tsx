@@ -539,6 +539,7 @@ function ScheduleDetails({ claw, row }: { claw: Claw; row: Schedule }) {
   const { workspaceId } = useApp();
   const { select } = useSelection();
   const write = useWrite<Schedule>();
+  const triggerKey = React.useRef<string | null>(null);
   const [pages, setPages] = React.useState<string[]>([]);
   const path = `${clawPath(claw.id)}/schedules/${row.id}`;
   const query = useRead<Collection<Occurrence>>(
@@ -566,6 +567,28 @@ function ScheduleDetails({ claw, row }: { claw: Claw; row: Schedule }) {
             can("write") &&
             !row.deleted_at && (
               <div className={styles.actions}>
+                <Button
+                  variant="outline"
+                  disabled={write.isPending}
+                  onClick={() => {
+                    triggerKey.current ??= crypto.randomUUID();
+                    write.mutate(
+                      {
+                        path: `${path}/trigger`,
+                        method: "POST",
+                        body: {},
+                        key: triggerKey.current,
+                      },
+                      {
+                        onSuccess: () => {
+                          triggerKey.current = null;
+                        },
+                      },
+                    );
+                  }}
+                >
+                  {copy("Trigger now", "立即触发")}
+                </Button>
                 <Button variant="outline" onClick={() => select({ edit: "1" })}>
                   {copy("Edit", "编辑")}
                 </Button>

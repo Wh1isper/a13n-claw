@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Literal
+from urllib.parse import urlsplit
 
 from a13n_service.app_sdk.threads import SessionConfiguration
 
@@ -12,6 +13,21 @@ LARK_HOSTS = {
 }
 
 
+def github_hosts(domain: str | None) -> tuple[str, ...]:
+    if domain is None or domain == "api.github.com":
+        return GITHUB_HOSTS
+    return (domain,)
+
+
+def target(kind: str, config: dict) -> str | None:
+    if kind == "lark":
+        return config.get("domain")
+    host = urlsplit(config.get("api_url", "https://api.github.com")).hostname
+    if not host:
+        raise ValueError("GitHub API URL must have a host")
+    return None if host == "api.github.com" else host
+
+
 @dataclass(frozen=True, slots=True)
 class Binding:
     kind: Literal["github", "lark"]
@@ -19,27 +35,50 @@ class Binding:
     domain: str | None = None
 
 
-def session_configuration(bindings: tuple[Binding, ...]) -> SessionConfiguration:
-    """Build a controlled-public policy containing references, never credential values."""
-    secrets = []
+def session_configuration(
+    bindings: tuple[Binding, ...], base: SessionConfiguration | None = None
+) -> SessionConfiguration:
+    """Apply references without widening the selected Agent's policy."""
+    from a13n_envd_client.eip.v1 import EgressMode, PublicDestinations
+    from a13n_service.resources.environment_instances.session_configuration import (
+        EgressConfiguration,
+    )
+
+    base = base or SessionConfiguration()
+    if base.egress_mode is None and base.egress is None:
+        destinations = PublicDestinations(mode="public")
+    elif base.egress_mode == "controlled" and base.egress is not None:
+        destinations = base.egress.destinations
+    else:
+        raise ValueError(
+            "Credential injection requires controlled egress with a destination policy"
+        )
+    secrets = list(base.credential_references)
+    additions = []
     seen: set[str] = set()
     for binding in bindings:
         if binding.kind in seen:
             raise ValueError("Only one primary connector per platform is supported")
         seen.add(binding.kind)
         if binding.kind == "github":
-            env, hosts = "GH_TOKEN", GITHUB_HOSTS
+            env, hosts = "GH_TOKEN", github_hosts(binding.domain)
         else:
             if binding.domain not in LARK_HOSTS:
                 raise ValueError("Unsupported Lark region")
             env, hosts = "LARKSUITE_CLI_TENANT_ACCESS_TOKEN", (LARK_HOSTS[binding.domain],)
-        secrets.append({"env": env, "credential_id": binding.credential_id, "inject_hosts": hosts})
-    return SessionConfiguration.model_validate(
-        {
-            "egress_mode": "controlled",
-            "egress": {"destinations": {"mode": "public"}, "secrets": secrets},
-        }
+        additions.append(
+            {"env": env, "credential_id": binding.credential_id, "inject_hosts": hosts}
+        )
+    refs = {ref.env: ref for ref in secrets}
+    for ref in additions:
+        previous = refs.get(ref["env"])
+        if previous is not None and previous.credential_id != ref["credential_id"]:
+            raise ValueError("Credential environment name is already in use")
+        refs[ref["env"]] = ref
+    policy = EgressConfiguration.model_validate(
+        {"destinations": destinations, "secrets": tuple(refs.values())}
     )
+    return base.model_copy(update={"egress_mode": EgressMode.CONTROLLED, "egress": policy})
 
 
 def token_refresh_delay(lifetime: int) -> int:
@@ -65,7 +104,7 @@ async def commit_generation(session, runtime, claw, generation, value: str, expi
     if generation.state != "preparing":
         raise ValueError("Connector generation is no longer current")
     if generation.kind == "github":
-        env, hosts = "GH_TOKEN", GITHUB_HOSTS
+        env, hosts = "GH_TOKEN", github_hosts(generation.domain)
     elif generation.kind == "lark" and generation.domain in LARK_HOSTS:
         env, hosts = "LARKSUITE_CLI_TENANT_ACCESS_TOKEN", (LARK_HOSTS[generation.domain],)
     else:
@@ -195,7 +234,7 @@ async def enqueue_generation(session, claw, connector) -> None:
 
     if not connector.enabled or not connector.egress_primary or connector.credential is None:
         return
-    domain = connector.config.get("domain") if connector.kind == "lark" else None
+    domain = target(connector.kind, connector.config)
     session.add(
         ConnectorEgress(
             id=new_id("ceg"),
@@ -357,9 +396,14 @@ async def _process_generation(runtime, workspace_id: str, claw_id: str, generati
                 or not connector.enabled
                 or not connector.egress_primary
                 or connector.credential != encrypted
-                or connector.config != config
+                or target(connector.kind, connector.config) != target(kind, config)
             ):
                 row.state = "revoke_pending" if row.credential_id else "revoked"
+                return
+            if connector.config.get("app_id") != config.get("app_id"):
+                row.state = "ready" if row.credential_id else "pending"
+                row.refresh_at = datetime.now(UTC)
+                row.attempt_started_at = None
                 return
             await commit_generation(session, runtime, claw, row, value, expires_at)
             row.refresh_at = refresh_at
@@ -371,7 +415,7 @@ async def _process_generation(runtime, workspace_id: str, claw_id: str, generati
                 row.failure = "credential_sync_failed"
 
 
-async def initial_configuration(session, claw):
+async def initial_configuration(session, claw, base: SessionConfiguration | None = None):
     """Select ready owned references for a newly created Project mount."""
     from sqlalchemy import select
 
@@ -389,7 +433,14 @@ async def initial_configuration(session, claw):
         if row.kind not in ("github", "lark") or row.credential_id is None:
             raise ValueError("Invalid connector credential generation")
         bindings.append(Binding(row.kind, row.credential_id, row.domain))
-    return session_configuration(tuple(bindings)) if bindings else None
+    if not bindings:
+        return None
+    try:
+        return session_configuration(tuple(bindings), base)
+    except ValueError as error:
+        from a13n_service.infra.errors import invalid
+
+        raise invalid("session_configuration", "connector_egress_policy_conflict") from error
 
 
 async def invalidate_claw(session, claw_id: str) -> None:

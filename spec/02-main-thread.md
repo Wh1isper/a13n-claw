@@ -32,6 +32,8 @@ An accepted occurrence remains outstanding while its Inbox item is unread or Mai
 
 For self-contained transactional work, Main can instead select a fresh native Thread in the same Project for each firing. Transactional describes the task's self-contained work, not a database atomicity guarantee. The task prompt directs the scheduled Thread to report its outcome to Main for any user-facing communication; it does not contact users directly. Service Schedule owns this mode's clock, definitions, occurrences, and lifecycle; Claw does not mirror those definitions or occurrences. A fresh scheduled Thread reports its outcome through the scheduled reporting path, not a native child-result notification. Its immutable Schedule invocation captures Project resource bindings but not connector Egress credential references; Main uses its current authorized connector credentials for user-facing communication.
 
+Fresh Schedule creation and Service audit commit in the caller's transaction. Interactive creation also records one operator audit on first creation. Reusing a request key with the same effective definition returns the original Schedule; a changed effective definition conflicts. A Main Run may create one only while its lease and captured authority remain valid, and the current account authority must not exceed that capture. This pre-release schema requires a clean installation; historical pending request receipts and unlabeled schedules are not migrated.
+
 Claw's instructions guide Main to create each task and write its trigger-time prompt:
 
 - Choose the execution mode for the task, defaulting to Main's Thread and selecting a fresh Thread for self-contained transactional work.

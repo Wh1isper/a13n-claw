@@ -590,10 +590,6 @@ function DashboardBody({
                     ),
                   },
                   {
-                    label: copy("Model", "模型"),
-                    render: (row) => row.model ?? copy("See Run", "查看运行"),
-                  },
-                  {
                     label: copy("Activity", "活动"),
                     render: (row) => (
                       <Status
@@ -606,6 +602,15 @@ function DashboardBody({
                         }
                       />
                     ),
+                  },
+                  {
+                    label: copy("Last status", "最近状态"),
+                    render: (row) =>
+                      row.activity?.last_status ? (
+                        <Status state={row.activity.last_status} />
+                      ) : (
+                        "—"
+                      ),
                   },
                   {
                     label: copy("Last Run", "最近运行"),

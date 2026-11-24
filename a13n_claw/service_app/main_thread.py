@@ -21,9 +21,7 @@ from a13n_service.resources.agents.toolsets import catalog
 from a13n_service.resources.environment_instances.tables import EnvironmentRow
 from a13n_service.resources.memories.schemas import SessionMemorySettings, SpaceBinding
 from a13n_service.runs.accept import eligible, paused
-from a13n_service.runs.browsers import lifecycle as browser_lifecycle
 from a13n_service.runs.browsers.schemas import BrowserBinding
-from a13n_service.runs.browsers.tables import BrowserBlockedRow, ThreadBrowserRow
 from a13n_service.runs.environments.schemas import MountCreate
 from a13n_service.runs.inbox import Request, pending_entries
 from a13n_service.runs.schemas import (
@@ -39,7 +37,6 @@ from a13n_service.runs.tables import AttemptRow, InboxEntryRow, RunRow, ThreadRo
 from a13n_service.runs.threads import get_thread
 from a13n_service.tenancy.access import principal_for
 from a13n_service.tenancy.authorize import (
-    ExecutionAuthority,
     Principal,
     WorkspaceScope,
     authorize,
@@ -325,50 +322,6 @@ def project_browser(claw: Claw) -> BrowserBinding | None:
     return BrowserBinding(browser_id=claw.browser_id, tab_access="global")
 
 
-async def bind_project_browser(
-    session: AsyncSession,
-    claw: Claw,
-    thread: ThreadRow,
-    actor: Principal,
-    scope: WorkspaceScope,
-    authority: ExecutionAuthority,
-) -> None:
-    previous = await session.get(ThreadBrowserRow, thread.id)
-    if claw.browser_id is not None:
-        browser = await browser_lifecycle.find(
-            session, scope.workspace_id, claw.browser_id, lock=True
-        )
-        browser_lifecycle.usable(browser)
-        await browser_lifecycle.authorize_use(session, actor, browser, scope, authority=authority)
-        binding = BrowserBinding(browser_id=browser.id, tab_access="global")
-        if (
-            previous is not None
-            and previous.browser_id == binding.browser_id
-            and previous.tab_access == binding.tab_access
-        ):
-            return
-    else:
-        binding = None
-        if previous is None:
-            return
-    if previous is not None:
-        await session.delete(previous)
-        await session.flush()
-    if binding is not None:
-        session.add(
-            ThreadBrowserRow(
-                thread_id=thread.id, workspace_id=scope.workspace_id, **binding.model_dump()
-            )
-        )
-    if previous is not None:
-        await session.execute(
-            update(BrowserBlockedRow)
-            .where(BrowserBlockedRow.thread_id == thread.id)
-            .values(suppressed=True)
-        )
-    await session.flush()
-
-
 async def options(
     session: AsyncSession, claw: Claw, agent: AgentRow, *, role: str, model: str | None = None
 ) -> RunOptions:
@@ -634,10 +587,15 @@ async def _wake(
         await link_delivery(session, claw, delivery_id, run_id)
         return
 
+    revision = await session.get_one(AgentRevisionRow, selected_revision(claw, agent))
+    default_config = revision.config.get("default_session_configuration")
+    base = (
+        app_threads.SessionConfiguration.model_validate(default_config) if default_config else None
+    )
     body = NewThread(
         **message.model_dump(),
         session=project_session(claw, f"{claw.name} · Main"),
-        environments=project_mounts(claw, await egress.initial_configuration(session, claw)),
+        environments=project_mounts(claw, await egress.initial_configuration(session, claw, base)),
         browser_binding=project_browser(claw),
     )
     created_thread, receipt = await app_threads.create_thread_in_transaction(

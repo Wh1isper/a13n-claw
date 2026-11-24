@@ -95,7 +95,7 @@ async def rebind(
         await session.execute(
             update(Connector)
             .where(Connector.claw_id == claw.id, Connector.egress_primary.is_(True))
-            .values(egress_primary=False, reply_reauthorization_required=True)
+            .values(egress_primary=False)
         )
     if claw.main_thread_id is not None:
         kwargs: _ResourceChanges = {}
@@ -139,11 +139,6 @@ async def rebind(
         claw.cli_update_id = None
         claw.cli_update_state = None
         claw.cli_update_error = None
-        await session.execute(
-            update(Connector)
-            .where(Connector.claw_id == claw.id, Connector.reply_environment_id.is_not(None))
-            .values(reply_environment_id=None, reply_reauthorization_required=True)
-        )
     claw.environment_id = environment_id
     claw.browser_id = browser_id
     await session.flush()

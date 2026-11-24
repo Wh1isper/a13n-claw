@@ -1,17 +1,13 @@
 """Keep connector secrets out of scripts and update only verified release assets."""
 
 import asyncio
-from dataclasses import dataclass
 from types import SimpleNamespace
 
 import httpx
 import pytest
-from a13n_harness.environment.commands import ShellCommand
-from pydantic_ai import ModelRetry
 
-from a13n_claw.service_app import connectors, project_cli
+from a13n_claw.service_app import project_cli
 from a13n_claw.service_app.feishu import reply_key
-from a13n_claw.service_app.plugin import reply_arguments
 
 
 def test_lark_reply_key_is_stable_and_within_provider_limit():
@@ -26,57 +22,6 @@ def result(code=0, stdout=b""):
         status=SimpleNamespace(exit_code=code),
         output=SimpleNamespace(stdout=SimpleNamespace(inline=stdout)),
     )
-
-
-@dataclass
-class FixtureShell:
-    requests: list
-
-    async def exec_captured(self, request, *, alias):
-        assert alias == "workspace"
-        self.requests.append(request)
-        return result()
-
-
-def test_reply_uses_only_selected_platform_environment():
-    async def run():
-        requests = []
-        environment = SimpleNamespace(shell=FixtureShell(requests))
-        token = "synthetic-github-token"
-        config = {"principal_id": "account", "channels": ["team/repo"], "senders": ["operator"]}
-        with pytest.raises(ModelRetry):
-            reply_arguments("github", config, "other/repo#2", "text", "issue_comment", "text")
-        args = reply_arguments(
-            "github", config, "team/repo#2", "quotes ' and $HOME", "issue_comment", "text"
-        )
-        variables = await connectors.command_environment("github", "con-example", config, token)
-        await project_cli.command(environment, project_cli.REPLY_CLI, args, variables=variables)
-        (request,) = requests
-        assert isinstance(request.command, ShellCommand)
-        assert token not in request.command.script
-        assert request.environment.set["GH_TOKEN"] == token
-        assert "LARKSUITE_CLI_TENANT_ACCESS_TOKEN" not in request.environment.set
-        await project_cli.command(environment, project_cli.RUN_CLI, ("gh", "--version"))
-        assert "GH_TOKEN" not in requests[-1].environment.set
-
-    asyncio.run(run())
-
-
-def test_lark_reply_uses_bot_access_token_not_app_secret(monkeypatch):
-    async def token(self):
-        assert self.secret == "synthetic-app-secret"
-        return "synthetic-access-token"
-
-    monkeypatch.setattr(connectors.LarkAdapter, "access_token", token)
-    config = {"app_id": "cli_test", "bot_open_id": "ou_bot", "senders": ["ou_operator"]}
-    variables = asyncio.run(
-        connectors.command_environment("lark", "con-fixture", config, "synthetic-app-secret")
-    )
-    assert variables["LARKSUITE_CLI_TENANT_ACCESS_TOKEN"] == "synthetic-access-token"
-    assert variables["LARKSUITE_CLI_STRICT_MODE"] == "bot"
-    assert "synthetic-app-secret" not in variables.values() and "GH_TOKEN" not in variables
-    args = reply_arguments("lark", config, "om_message", "hello", "lark_reply", "text")
-    assert args[-3:] == ("--as", "bot", "--text=hello")
 
 
 def test_latest_uses_expected_official_assets_and_digest():
@@ -178,27 +123,3 @@ def test_provision_reuses_installed_binaries_even_if_version_is_unrecognized(mon
     outcome = asyncio.run(project_cli.provision(SimpleNamespace()))
     assert not outcome.failed
     assert outcome.versions == {"gh": "installed", "lark-cli": "installed"}
-
-
-@pytest.mark.parametrize(
-    "operation,destination", [("lark_reply", "om_message"), ("lark_send", "ou_sender")]
-)
-@pytest.mark.parametrize(
-    "content_type, flags",
-    [
-        ("text", ("--text=fixture",)),
-        ("markdown", ("--markdown=fixture",)),
-        ("post", ("--msg-type", "post", "--content=fixture")),
-        ("interactive", ("--msg-type", "interactive", "--content=fixture")),
-        ("file", ("--file=fixture",)),
-        ("image", ("--image=fixture",)),
-    ],
-)
-def test_lark_send_and_reply_use_content_specific_flags(
-    operation, destination, content_type, flags
-):
-    config = {"app_id": "app", "bot_open_id": "ou_bot", "senders": ["ou_sender"]}
-    assert (
-        reply_arguments("lark", config, destination, "fixture", operation, content_type)[7:]
-        == flags
-    )

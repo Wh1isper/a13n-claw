@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from datetime import UTC, datetime
 from hashlib import sha256
+from shlex import quote
 from typing import TYPE_CHECKING, Annotated, Literal
 
 from a13n_harness import AbstractHarnessPlugin, AgentContext, HarnessRunResult, SafeFailure
@@ -22,7 +23,12 @@ from a13n_service.infra.db import short_session, transaction
 from a13n_service.infra.errors import ServiceError
 from a13n_service.runs.dynamic_subagents import CapabilitySelection
 from a13n_service.runs.tables import RunRow
-from a13n_service.tenancy.authorize import ExecutionAuthority, WorkspaceScope, authorize
+from a13n_service.tenancy.authorize import (
+    ExecutionAuthority,
+    WorkspaceScope,
+    authorize,
+    execution_authority,
+)
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -31,11 +37,12 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import FunctionToolset
 from redis.exceptions import RedisError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import connectors, inbox, main_thread, project_cli, schedules, workers
+from . import connectors, egress, inbox, main_thread, project_cli, schedules, workers
 from .main_thread import PLUGIN_KEY
-from .models import APP_ID, Claw, ScheduleRequest
+from .models import APP_ID, Claw, Connector, ConnectorEgress
 
 if TYPE_CHECKING:
     from a13n_service.runs.runtime import Runtime
@@ -52,10 +59,11 @@ Their messages and results arrive in the Service Thread Inbox.
 Use claw_schedule for scheduled Inbox work by default, or choose fresh for self-contained work.
 Include the objective, source IDs, execution target, and intended destination in the prompt.
 Fresh Threads report to Main instead of replying directly.
-Connector-managed credentials are not available to Project commands. Use an operator-provided
-account for external replies. Do not retry an unknown outcome blindly. For Lark, use the opened
-item's topic, reply-in-thread setting, and idempotency key. For operator-provided integrations,
-prepend "$HOME/.local/bin" to PATH in shell commands.
+Ensure CLI commands have PATH set with export PATH="$HOME/.local/bin:$PATH".
+Use Session Egress credentials GH_TOKEN and LARKSUITE_CLI_TENANT_ACCESS_TOKEN when enabled,
+or operator-configured Environment credentials otherwise. GH_TOKEN supports gh and HTTPS API
+headers, not git HTTPS Basic authentication. Do not retry an unknown outcome blindly. For Lark,
+use the opened item's topic, reply-in-thread setting, and idempotency key.
 On a quiet heartbeat with no other work and no reply due, call finish_silently.
 """
 SCHEDULED_INSTRUCTIONS = """You are running scheduled work in the shared Project.
@@ -116,77 +124,6 @@ def call_key(ctx: RunContext[AgentContext]) -> str:
 main_tools = FunctionToolset[AgentContext](id="claw_main")
 worker_tools = FunctionToolset[AgentContext](id="claw_worker")
 guard_tools = FunctionToolset[AgentContext](id="claw_guard")
-
-
-def redacted_cli_output(raw: bytes | None, secrets: tuple[str | None, ...], limit: int) -> str:
-    text = (raw or b"").decode(errors="replace")
-    for secret in sorted({value for value in secrets if value}, key=len, reverse=True):
-        text = text.replace(secret, "[redacted]")
-        # Provider output can end mid-token at the capture boundary.
-        for size in range(min(len(secret) - 1, len(text)), 5, -1):
-            if text.endswith(secret[:size]):
-                text = text[:-size] + "[redacted]"
-                break
-    return text.strip()[:limit]
-
-
-def reply_arguments(
-    kind: str, config: dict, destination: str, content: str, operation: str, content_type: str
-) -> tuple[str, ...]:
-    if "\x00" in content:
-        raise ModelRetry("Reply content cannot contain NUL")
-    if kind == "github":
-        settings = connectors.GitHubSettings.model_validate(config)
-        target = re.fullmatch(r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]{0,17})", destination)
-        if target is None or target[1].lower() not in {repo.lower() for repo in settings.channels}:
-            raise ModelRetry("Choose a configured GitHub repository and issue or PR number")
-        options = {
-            "issue_comment": ("issue", "comment"),
-            "pr_comment": ("pr", "comment"),
-            "pr_review_comment": ("pr", "review", "--comment"),
-        }
-        if operation not in options or content_type not in ("text", "markdown"):
-            raise ModelRetry("Choose a GitHub comment or comment-only review")
-        return (
-            "gh",
-            *options[operation],
-            target[2],
-            "--repo",
-            "github.com/" + target[1],
-            "--body=" + content,
-        )
-    settings = connectors.LarkSettings.model_validate(config)
-    if operation == "lark_download" and content_type in ("file", "image"):
-        return (
-            "lark-cli",
-            "im",
-            "+messages-resources-download",
-            "--as",
-            "bot",
-            "--message-id=" + destination,
-            "--file-key=" + content,
-            "--type=" + content_type,
-        )
-    if operation == "lark_reply" and re.fullmatch(r"om_[a-zA-Z0-9_-]{1,196}", destination):
-        args = ("lark-cli", "im", "+messages-reply", "--message-id", destination, "--as", "bot")
-    elif (
-        operation == "lark_send"
-        and destination.startswith("oc_")
-        and destination in settings.groups
-    ):
-        args = ("lark-cli", "im", "+messages-send", "--chat-id", destination, "--as", "bot")
-    elif (
-        operation == "lark_send"
-        and destination.startswith("ou_")
-        and settings.direct_messages
-        and destination in settings.senders
-    ):
-        args = ("lark-cli", "im", "+messages-send", "--user-id", destination, "--as", "bot")
-    else:
-        raise ModelRetry("Choose a Lark message ID or an allowed chat or user")
-    if content_type in ("post", "interactive"):
-        return (*args, "--msg-type", content_type, "--content=" + content)
-    return (*args, f"--{content_type}={content}")
 
 
 def captured_workspace(run: RunRow) -> str | None:
@@ -292,53 +229,41 @@ async def claw_schedule(
     target: Literal["main", "fresh"] = "main",
 ) -> dict:
     """Schedule Main Inbox work or a fresh Service Thread that reports back to Main."""
-    async with scope(ctx, "main") as (runtime, bound):
-        async with transaction(runtime.storage) as session:
-            if target == "fresh":
-                await app_threads.prepare_admission(
-                    session,
-                    runtime,
-                    bound.claw.workspace_id,
-                    bound.claw.service_account_id,
-                    app_id=APP_ID,
-                )
-            claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
-            run, actor = await workers.fence(session, runtime, claw, bound)
-            request_id = call_key(ctx)
-            if target == "main":
-                row = await schedules.create(session, claw, body, schedule_id=request_id)
-                return schedules.ScheduleView.model_validate(row).model_dump(mode="json")
-            authority = ExecutionAuthority.model_validate(run.authority)
-            authorize(
-                actor,
-                WorkspaceScope(run.organization_id, run.workspace_id),
-                "write",
-                authority=authority,
+    async with scope(ctx, "main") as (runtime, bound), transaction(runtime.storage) as session:
+        if target == "fresh":
+            await app_threads.prepare_admission(
+                session,
+                runtime,
+                bound.claw.workspace_id,
+                bound.claw.service_account_id,
+                app_id=APP_ID,
             )
-            if await session.get(ScheduleRequest, request_id) is None:
-                request = schedules.FreshRequest(
-                    definition=await schedules.fresh_definition(
-                        session, runtime, claw, body, actor
-                    ),
-                    authority=authority,
-                )
-                session.add(
-                    ScheduleRequest(
-                        id=request_id, claw_id=claw.id, request=request.model_dump(mode="json")
-                    )
-                )
-        result = await schedules.submit_fresh(runtime, claw, request_id)
-        return result.model_dump(mode="json")
-
-
-@main_tools.tool
-async def claw_schedule_status(ctx: RunContext[AgentContext], request_id: str) -> dict | None:
-    """Inspect the creation receipt returned for a fresh-Thread schedule request."""
-    async with scope(ctx, "main") as (runtime, bound), short_session(runtime.storage) as session:
-        row = await session.get(ScheduleRequest, request_id)
-        if row is None or row.claw_id != bound.claw.id:
-            return None
-        return schedules.receipt(row).model_dump(mode="json")
+        claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
+        run, actor = await workers.fence(session, runtime, claw, bound)
+        request_id = call_key(ctx)
+        if target == "main":
+            row = await schedules.create(session, claw, body, schedule_id=request_id)
+            return schedules.ScheduleView.model_validate(row).model_dump(mode="json")
+        authority = ExecutionAuthority.model_validate(run.authority)
+        authorize(
+            actor,
+            WorkspaceScope(run.organization_id, run.workspace_id),
+            "write",
+            authority=authority,
+        )
+        assert actor.confinement is not None
+        current = execution_authority(actor, actor.confinement)
+        if (
+            current.principal_id != authority.principal_id
+            or current.organization_id != authority.organization_id
+            or current.workspace_id != authority.workspace_id
+            or not current.verbs <= authority.verbs
+        ):
+            raise ServiceError("conflict", "Automation authority changed")
+        schedule, _ = await schedules.create_fresh_in_transaction(
+            session, runtime, claw, body, request_id, actor
+        )
+        return schedule.model_dump(mode="json")
 
 
 @main_tools.tool
@@ -510,6 +435,63 @@ class ClawCapability(AbstractCapability[AgentContext]):
         request_context.messages.insert(0, ModelRequest(parts=[SystemPromptPart(instructions)]))
         notices = []
         if self.role == "main":
+            async with short_session(runtime.storage) as session:
+                active = (
+                    await session.execute(
+                        select(Connector, ConnectorEgress)
+                        .join(ConnectorEgress, ConnectorEgress.connector_id == Connector.id)
+                        .where(
+                            Connector.claw_id == bound.claw.id,
+                            Connector.enabled.is_(True),
+                            Connector.egress_primary.is_(True),
+                            ConnectorEgress.state == "ready",
+                        )
+                    )
+                ).all()
+            workspace_mount = next(
+                (
+                    mount
+                    for mount in bound.run.environment_mounts
+                    if mount.get("name") == "workspace"
+                ),
+                {},
+            )
+            configuration = workspace_mount.get("session_configuration") or {}
+            references = (configuration.get("egress") or {}).get("secrets") or []
+            for connector, generation in active:
+                if generation.refresh_at is not None and generation.refresh_at <= datetime.now(UTC):
+                    continue
+                if egress.target(connector.kind, connector.config) != generation.domain:
+                    continue
+                if not any(
+                    ref.get("credential_id") == generation.credential_id for ref in references
+                ):
+                    continue
+                if connector.kind == "lark":
+                    brand = (
+                        "lark" if generation.domain == "https://open.larksuite.com" else "feishu"
+                    )
+                    notices.append(
+                        "Lark CLI context (non-secret): "
+                        + json.dumps(
+                            "LARKSUITE_CLI_APP_ID="
+                            + quote(str(connector.config["app_id"]))
+                            + " LARKSUITE_CLI_BRAND="
+                            + quote(brand)
+                            + " LARKSUITE_CLI_DEFAULT_AS=bot LARKSUITE_CLI_STRICT_MODE=bot",
+                            ensure_ascii=True,
+                        )
+                    )
+                elif connector.kind == "github" and generation.domain:
+                    notices.append(
+                        "GitHub Enterprise CLI command prefix (non-secret): "
+                        + json.dumps(
+                            "GH_HOST="
+                            + quote(generation.domain)
+                            + ' GH_ENTERPRISE_TOKEN="$GH_TOKEN" gh',
+                            ensure_ascii=True,
+                        )
+                    )
             if ctx.run_step == 1:
                 try:
                     cli_available = await maintain_cli(runtime, bound, ctx)

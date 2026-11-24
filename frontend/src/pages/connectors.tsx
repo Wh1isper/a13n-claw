@@ -294,6 +294,17 @@ function ConnectorEditor({
     String(config?.domain ?? "https://open.feishu.cn"),
   );
   const [direct, setDirect] = React.useState(config?.direct_messages !== false);
+  const defaultEvents = [
+    "im.message.receive_v1",
+    "im.chat.member.bot.added_v1",
+    "im.chat.member.user.added_v1",
+    "drive.notice.comment_add_v1",
+  ];
+  const [eventTypes, setEventTypes] = React.useState<string[]>(
+    Array.isArray(config?.event_types)
+      ? (config.event_types as string[])
+      : defaultEvents,
+  );
   const [enabled, setEnabled] = React.useState(row?.enabled ?? true);
   const [egressPrimary, setEgressPrimary] = React.useState(
     row?.egress_primary ?? false,
@@ -309,6 +320,11 @@ function ConnectorEditor({
     setAccount(String(config?.principal_id ?? ""));
     setDomain(String(config?.domain ?? "https://open.feishu.cn"));
     setDirect(config?.direct_messages !== false);
+    setEventTypes(
+      Array.isArray(config?.event_types)
+        ? (config.event_types as string[])
+        : defaultEvents,
+    );
     setEnabled(row?.enabled ?? true);
     setEgressPrimary(row?.egress_primary ?? false);
     setDirty(false);
@@ -330,13 +346,17 @@ function ConnectorEditor({
       "Use an allowlisted repository in owner/repo form.",
       "请按 owner/repo 格式填写允许的仓库。",
     ),
-    provider_auth_rejected: copy(
+    credentials_rejected: copy(
       "The provider rejected the credential.",
       "平台拒绝了该凭据。",
     ),
-    repository_not_found_or_forbidden: copy(
+    repository_unavailable: copy(
       "The repository is missing or the credential cannot access it.",
       "仓库不存在，或该凭据无权访问。",
+    ),
+    provider_http_error: copy(
+      "The provider returned an error.",
+      "平台返回错误。",
     ),
     credential_unavailable: copy(
       "The stored credential could not be opened.",
@@ -519,7 +539,7 @@ function ConnectorEditor({
                       unmentioned_groups: items(form, "unmentioned"),
                       direct_messages: direct,
                       senders: items(form, "senders"),
-                      event_types: items(form, "event_types"),
+                      event_types: eventTypes,
                     },
               credential: field(form, "credential") || undefined,
             };
@@ -795,25 +815,39 @@ function ConnectorEditor({
                 <FormField
                   label={copy("Event types", "事件类型")}
                   description={copy(
-                    "Subscribe to these events in the Lark developer console as well. Separate entries with spaces or new lines.",
-                    "同时在飞书开发者控制台订阅这些事件。用空格或换行分隔。",
+                    "Subscribe to these events in the Lark developer console as well.",
+                    "同时在飞书开发者控制台订阅这些事件。",
                   )}
                 >
-                  <Textarea
-                    name="event_types"
-                    rows={4}
-                    readOnly={!allowed}
-                    defaultValue={
-                      config?.event_types
-                        ? list(config, "event_types")
-                        : [
-                            "im.message.receive_v1",
-                            "im.chat.member.bot.added_v1",
-                            "im.chat.member.user.added_v1",
-                            "drive.notice.comment_add_v1",
-                          ].join("\n")
-                    }
-                  />
+                  <div>
+                    {[
+                      [defaultEvents[0], copy("Messages", "消息")],
+                      [
+                        defaultEvents[1],
+                        copy("Bot added to a chat", "机器人加入群聊"),
+                      ],
+                      [
+                        defaultEvents[2],
+                        copy("Users added to a chat", "用户加入群聊"),
+                      ],
+                      [defaultEvents[3], copy("Document comments", "文档评论")],
+                    ].map(([value, label]) => (
+                      <FormField key={value} label={label}>
+                        <Checkbox
+                          checked={eventTypes.includes(value)}
+                          disabled={!allowed}
+                          onCheckedChange={(checked) => {
+                            setEventTypes((current) =>
+                              checked
+                                ? [...current, value]
+                                : current.filter((event) => event !== value),
+                            );
+                            setDirty(true);
+                          }}
+                        />
+                      </FormField>
+                    ))}
+                  </div>
                 </FormField>
                 <FormField
                   label={copy(

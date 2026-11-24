@@ -250,3 +250,97 @@ def test_background_revoke_commits_before_thread_unbinding(monkeypatch):
         assert calls == ["commit", "revoke", "commit"]
 
     asyncio.run(run())
+
+
+def test_first_mount_preserves_selected_agent_policy_and_rejects_widening():
+    from a13n_service.app_sdk.threads import SessionConfiguration
+
+    hosts = ["api.github.com", "github.com", "uploads.github.com", "example.com"]
+    base = SessionConfiguration.model_validate(
+        {
+            "working_directory": "/workspace/project",
+            "commands": True,
+            "egress_mode": "controlled",
+            "egress": {"destinations": {"mode": "allowlist", "hosts": hosts}},
+        }
+    )
+    result = session_configuration((Binding("github", "ecred_" + "a" * 20),), base)
+    assert result.working_directory == base.working_directory
+    assert result.commands == base.commands
+    assert result.egress.destinations == base.egress.destinations
+    assert len(result.credential_references) == 1
+    blocked = SessionConfiguration.model_validate(
+        {
+            "egress_mode": "controlled",
+            "egress": {"destinations": {"mode": "allowlist", "hosts": ["example.com"]}},
+        }
+    )
+    with pytest.raises(ValueError, match="allowed destinations"):
+        session_configuration((Binding("github", "ecred_" + "a" * 20),), blocked)
+
+
+def test_enterprise_host_does_not_include_public_github_hosts():
+    config = session_configuration((Binding("github", "ecred_" + "a" * 20, "git.example.com"),))
+    assert config.credential_references[0].inject_hosts == ("git.example.com",)
+
+
+def test_existing_connector_environment_name_is_not_overwritten():
+
+    original = "ecred_" + "a" * 20
+    base = session_configuration((Binding("github", original),))
+    with pytest.raises(ValueError, match="already in use"):
+        session_configuration((Binding("github", "ecred_" + "b" * 20),), base)
+    assert session_configuration((Binding("github", original),), base) == base
+
+
+def test_initial_configuration_maps_policy_conflict_to_service_error():
+    import asyncio
+    from types import SimpleNamespace
+
+    from a13n_service.app_sdk.threads import SessionConfiguration
+    from a13n_service.infra.errors import ServiceError
+
+    from a13n_claw.service_app.egress import initial_configuration
+
+    class Session:
+        async def scalars(self, _query):
+            return [SimpleNamespace(kind="github", credential_id="ecred_" + "a" * 20, domain=None)]
+
+    async def run():
+        base = SessionConfiguration.model_validate({"egress_mode": "deny"})
+        with pytest.raises(ServiceError) as error:
+            await initial_configuration(Session(), SimpleNamespace(id="claw"), base)
+        assert error.value.details["reason"] == "connector_egress_policy_conflict"
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("kind,domain", [("github", None), ("lark", "https://open.larksuite.com")])
+def test_ready_generation_rotates_same_reference_without_rebinding(monkeypatch, kind, domain):
+    import asyncio
+    from types import SimpleNamespace
+
+    from a13n_service.app_sdk import egress as sdk_egress
+    from a13n_service.app_sdk import threads as sdk_threads
+
+    from a13n_claw.service_app.egress import commit_generation
+
+    async def run():
+        calls = []
+        generation = SimpleNamespace(
+            id="gen", kind=kind, domain=domain, state="preparing", credential_id="ecred_existing"
+        )
+        claw = SimpleNamespace(workspace_id="ws", service_account_id="sa", main_thread_id="busy")
+
+        async def rotate(*_args, **kwargs):
+            calls.append(kwargs["credential_id"])
+
+        async def no_bind(*_args, **_kwargs):
+            pytest.fail("rotation must not rebind a busy Thread")
+
+        monkeypatch.setattr(sdk_egress, "rotate_app_credential_in_transaction", rotate)
+        monkeypatch.setattr(sdk_threads, "update_app_egress_secrets", no_bind)
+        await commit_generation(object(), object(), claw, generation, "replacement", None)
+        assert calls == ["ecred_existing"] and generation.state == "ready"
+
+    asyncio.run(run())

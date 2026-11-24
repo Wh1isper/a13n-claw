@@ -21,12 +21,6 @@ NOTIFIERS = {"LARKSUITE_CLI_NO_UPDATE_NOTIFIER": "1", "LARKSUITE_CLI_NO_SKILLS_N
 RESOLVE = 'binary=$1; shift; export PATH="$HOME/.local/bin:$PATH"'
 RUN_CLI = RESOLVE + '\nexec "$binary" "$@"'
 PROBE_CLI = RESOLVE + '\ncommand -v "$binary" >/dev/null'
-CLI_MISSING = b"claw: platform CLI not found"
-REPLY_CLI = (
-    RESOLVE
-    + '\ncommand -v "$binary" >/dev/null || { echo "claw: platform CLI not found" >&2; exit 127; }'
-    + '\nexec "$binary" "$@"'
-)
 INSTALL = r"""
 set -eu
 name=$1 url=$2 digest=$3 member=$4 version=$5

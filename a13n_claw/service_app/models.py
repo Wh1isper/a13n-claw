@@ -155,32 +155,6 @@ class Schedule(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class ScheduleRequest(Base):
-    """A fenced request to create a Service Schedule, not a copy of its definition."""
-
-    __tablename__ = database.name("schedule_requests")
-    __table_args__ = (
-        Index(
-            database.name("schedule_request_pending_idx"),
-            "claw_id",
-            "created_at",
-            "id",
-            postgresql_where=text("completed_at IS NULL"),
-        ),
-        Index(database.name("schedule_request_receipt_idx"), "claw_id", "completed_at"),
-    )
-
-    id: Mapped[str] = mapped_column(String(72), primary_key=True)
-    claw_id: Mapped[str] = mapped_column(
-        ForeignKey(f"{database.name('claws')}.id", ondelete="CASCADE")
-    )
-    request: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    schedule_id: Mapped[str | None] = mapped_column(String(72))
-    failure: Mapped[str | None] = mapped_column(String(200))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-
 class Occurrence(Base):
     __tablename__ = database.name("occurrences")
     __table_args__ = (
@@ -306,8 +280,6 @@ class Connector(Base):
     kind: Mapped[str] = mapped_column(String(32))
     config: Mapped[dict[str, Any]] = mapped_column(JSON)
     credential: Mapped[dict[str, str] | None] = mapped_column(JSON)
-    reply_environment_id: Mapped[str | None] = mapped_column(String(64))
-    reply_reauthorization_required: Mapped[bool] = mapped_column(server_default=text("false"))
     egress_primary: Mapped[bool] = mapped_column(server_default=text("false"))
     enabled: Mapped[bool] = mapped_column(default=True)
     last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

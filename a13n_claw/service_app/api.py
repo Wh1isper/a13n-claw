@@ -6,8 +6,10 @@ from typing import Annotated, Literal
 
 import httpx
 import pydantic
+from a13n_service.app_sdk import schedules as app_schedules
 from a13n_service.app_sdk import threads as app_threads
 from a13n_service.app_sdk.usage import AppModelUsageQuery, app_models
+from a13n_service.infra.audit import record as audit_record
 from a13n_service.infra.cursors import keyset_page
 from a13n_service.infra.db import now, short_session, transaction
 from a13n_service.infra.errors import ServiceError, conflict, not_found
@@ -19,10 +21,7 @@ from a13n_service.runs.browsers.tables import BrowserRow
 from a13n_service.runs.environments.schemas import EnvironmentFailure
 from a13n_service.runs.requests import CurrentRuntime
 from a13n_service.runs.runtime import Runtime
-from a13n_service.runs.schedules import queries as native_schedules
 from a13n_service.runs.schedules.schemas import Schedule as NativeSchedule
-from a13n_service.runs.schedules.schemas import ScheduleQuery
-from a13n_service.runs.schedules.tables import ScheduleRow as NativeScheduleRow
 from a13n_service.runs.schemas import Failure
 from a13n_service.tenancy.access import workspace_scope
 from a13n_service.tenancy.app_plugins import app_router
@@ -148,7 +147,6 @@ class ProjectStatus(BaseModel):
     browser_name: str | None
     browser_failure: str | None
     fresh_schedule_count: int
-    unauthorized_reply_connectors: int
     browser: str | None
     automation_account: str
     cli_versions: dict[str, str] | None
@@ -664,13 +662,6 @@ async def overview(
             if claw.agent_revision_id
             else None
         )
-        unauthorized = await session.scalar(
-            select(func.count(Connector.id)).where(
-                Connector.claw_id == claw.id,
-                Connector.enabled,
-                Connector.reply_reauthorization_required,
-            )
-        )
         return Overview(
             claw=ClawView.model_validate(claw),
             unread=unread,
@@ -691,7 +682,6 @@ async def overview(
                 environment_failure=environment.failure if environment else None,
                 browser_failure=browser.failure if browser else None,
                 fresh_schedule_count=await schedules.fresh_schedule_count(session, claw),
-                unauthorized_reply_connectors=unauthorized or 0,
                 browser_name=browser.name if browser else None,
                 browser=browser.status if browser else ("missing" if claw.browser_id else None),
                 automation_account=account_status,
@@ -930,7 +920,6 @@ async def list_workers(
                     "thread_id": row.id,
                     "session_id": claw.main_session_id,
                     "name": row.subagent or "Worker",
-                    "model": None,
                     "activity": {
                         "id": row.id,
                         "current_run_id": row.current_run_id,
@@ -986,6 +975,28 @@ async def create_schedule(
         return schedules.ScheduleView.model_validate(await schedules.create(session, claw, body))
 
 
+@router.post("/claws/{claw_id}/schedules/{schedule_id}/trigger", name="claw_trigger_schedule")
+async def trigger_schedule(
+    claw_id: ResourceId,
+    schedule_id: ResourceId,
+    workspace_id: WorkspaceId,
+    actor: Actor,
+    runtime: CurrentRuntime,
+    request_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
+) -> schedules.OccurrenceView:
+    occurrence_id = "ct_" + sha256(f"{claw_id}:{actor.id}:{request_key}".encode()).hexdigest()
+    async with transaction(runtime.storage) as session:
+        await workspace_scope(session, actor, workspace_id, "write")
+        claw = await lock_active_claw(session, workspace_id, claw_id)
+        occurrence = await schedules.trigger(
+            session, claw, schedule_id, occurrence_id=occurrence_id
+        )
+        result = schedules.OccurrenceView.model_validate(occurrence)
+    if result.status == "unread":
+        await main_thread.notify(runtime, workspace_id, claw_id)
+    return result
+
+
 @router.get("/claws/{claw_id}/fresh-schedules", name="claw_list_fresh_schedules")
 async def list_fresh_schedules(
     claw_id: ResourceId,
@@ -996,42 +1007,22 @@ async def list_fresh_schedules(
     limit: PageSize = 30,
 ) -> dict:
     async with short_session(runtime.storage) as session:
+        await workspace_scope(session, actor, workspace_id, "read")
         claw = await get_claw(session, workspace_id, claw_id)
-    page = await native_schedules.list_schedules(
-        runtime.storage,
-        actor,
-        workspace_id,
-        ScheduleQuery(
+        page = await app_schedules.list_app_schedules(
+            session,
+            workspace_id,
+            app_id=APP_ID,
+            labels={"claw": claw.id},
             cursor=cursor,
             limit=limit,
-            label=[f"claw:{claw.id}"],
-            principal_id=claw.service_account_id,
-        ),
-    )
-    async with short_session(runtime.storage) as session:
-        next_times = (
-            dict(
-                (
-                    await session.execute(
-                        select(NativeScheduleRow.id, NativeScheduleRow.next_fire_at).where(
-                            NativeScheduleRow.workspace_id == workspace_id,
-                            NativeScheduleRow.id.in_([row.id for row in page.items]),
-                        )
-                    )
-                )
-                .tuples()
-                .all()
-            )
-            if page.items
-            else {}
         )
-    return {
-        "items": [
-            dict(id=row.id, name=row.name, state=row.state, next_at=next_times.get(row.id))
-            for row in page.items
-        ],
-        "next_cursor": page.next_cursor,
-    }
+        return {
+            "items": [
+                dict(id=row.id, name=row.name, state=row.state, next_at=None) for row in page.items
+            ],
+            "next_cursor": page.next_cursor,
+        }
 
 
 @router.post("/claws/{claw_id}/fresh-schedules", status_code=201, name="claw_create_fresh_schedule")
@@ -1043,15 +1034,25 @@ async def create_fresh_schedule(
     runtime: CurrentRuntime,
     request_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
 ) -> NativeSchedule:
-    async with short_session(runtime.storage) as session:
-        await workspace_scope(session, actor, workspace_id, "write")
-        claw = await get_claw(session, workspace_id, claw_id)
-    try:
-        return await schedules.create_fresh(
-            runtime, claw, body, f"{claw.id}:{actor.id}:{request_key}", actor
+    async with transaction(runtime.storage) as session:
+        scope = await workspace_scope(session, actor, workspace_id, "write")
+        await prepare_claw_admission(session, runtime, workspace_id, claw_id)
+        claw = await lock_active_claw(session, workspace_id, claw_id)
+        builder = await schedules.fresh_account(session, runtime, claw)
+        result, created = await schedules.create_fresh_in_transaction(
+            session, runtime, claw, body, f"{claw.id}:{actor.id}:{request_key}", builder
         )
-    except inbox.ClawNotFound:
-        raise not_found("claw", claw_id) from None
+        if created:
+            audit_record(
+                session,
+                scope,
+                actor_id=actor.id,
+                action="claw.fresh_schedule.request",
+                target_kind="schedule",
+                target_id=result.id,
+                details={"claw_id": claw.id},
+            )
+        return result
 
 
 class ScheduleState(BaseModel):
@@ -1176,7 +1177,6 @@ class ConnectorInput(BaseModel):
 
 class ConnectorWrite(ConnectorInput):
     credential: pydantic.SecretStr | None = None
-    reply_environment_id: ResourceId | None = None
     egress_environment_id: ResourceId | None = None
 
     @pydantic.field_validator("credential")
@@ -1199,8 +1199,6 @@ class ConnectorView(ConnectorInput):
     last_event_at: datetime | None
     created_at: datetime
     credential_configured: bool = False
-    reply_environment_id: str | None = None
-    reply_reauthorization_required: bool = False
     listener_status: str | None = None
     egress_status: str | None = None
     egress_failure: str | None = None
@@ -1287,8 +1285,6 @@ async def check_egress_primary(
 
 
 def check_reply_environment(claw: Claw, body: ConnectorWrite) -> None:
-    if body.reply_environment_id is not None and body.reply_environment_id != claw.environment_id:
-        raise conflict("claw", claw.id, "reply_environment_changed")
     if body.egress_primary and (
         body.egress_environment_id is None or body.egress_environment_id != claw.environment_id
     ):
@@ -1367,19 +1363,41 @@ async def update_connector(
                 GitHubSettings.model_validate(row.config),
                 GitHubSettings.model_validate(body.config),
             )
+        target_changed = egress.target(row.kind, row.config) != egress.target(row.kind, body.config)
+        credential_changed = "credential" in body.model_fields_set
         egress_changed = (
             row.egress_primary != body.egress_primary
             or row.enabled != body.enabled
-            or row.config != body.config
-            or "credential" in body.model_fields_set
+            or target_changed
+            or (credential_changed and ((row.credential is None) != (body.credential is None)))
+        )
+        rotate = (
+            not egress_changed
+            and row.egress_primary
+            and row.enabled
+            and (
+                (credential_changed and body.credential is not None)
+                or (row.kind == "lark" and row.config.get("app_id") != body.config.get("app_id"))
+            )
         )
         if egress_changed:
             await egress.invalidate_generations(session, row.id)
+        elif rotate:
+            generations = await session.scalars(
+                select(ConnectorEgress)
+                .where(
+                    ConnectorEgress.connector_id == row.id,
+                    ConnectorEgress.state.in_(("ready", "preparing", "pending")),
+                )
+                .with_for_update()
+            )
+            for generation in generations:
+                generation.state = "ready" if generation.credential_id else "pending"
+                generation.refresh_at = await schedules.now(session)
+                generation.attempt_started_at = None
+                generation.failure = None
         row.name, row.enabled, row.config = body.name, body.enabled, body.config
         row.egress_primary = body.egress_primary
-        if "reply_environment_id" in body.model_fields_set:
-            row.reply_environment_id = body.reply_environment_id
-            row.reply_reauthorization_required = False
         if "credential" in body.model_fields_set:
             row.credential = (
                 connectors.protect(

@@ -69,7 +69,6 @@ async def sweep(runtime: Runtime, organization_id: str) -> None:
                 if archived_at is not None:
                     continue
                 await schedules.sweep(runtime, workspace_id, claw_id)
-                await schedules.retry_fresh(runtime, workspace_id, claw_id)
                 if listeners is not None:
                     listeners.queue_cards(workspace_id, claw_id)
                 await main_thread.notify(runtime, workspace_id, claw_id)

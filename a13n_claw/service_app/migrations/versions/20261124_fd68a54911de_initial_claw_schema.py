@@ -1,6 +1,6 @@
-"""initial Claw schema
+"""initial claw schema
 
-Revision ID: 42383697c775
+Revision ID: fd68a54911de
 Revises:
 """
 
@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from a13n_service.app_database import migration_name
 from alembic import op
 
-revision = "42383697c775"
+revision = "fd68a54911de"
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -124,13 +124,6 @@ def upgrade() -> None:
         sa.Column("kind", sa.String(length=32), nullable=False),
         sa.Column("config", sa.JSON(), nullable=False),
         sa.Column("credential", sa.JSON(), nullable=True),
-        sa.Column("reply_environment_id", sa.String(length=64), nullable=True),
-        sa.Column(
-            "reply_reauthorization_required",
-            sa.Boolean(),
-            server_default=sa.text("false"),
-            nullable=False,
-        ),
         sa.Column("egress_primary", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column("enabled", sa.Boolean(), nullable=False),
         sa.Column("last_event_at", sa.DateTime(timezone=True), nullable=True),
@@ -268,41 +261,6 @@ def upgrade() -> None:
         migration_name("lark_retry_card_pending_idx"),
         migration_name("lark_retry_cards"),
         ["claw_id", "state"],
-        unique=False,
-    )
-    op.create_table(
-        migration_name("schedule_requests"),
-        sa.Column("id", sa.String(length=72), nullable=False),
-        sa.Column("claw_id", sa.String(length=64), nullable=False),
-        sa.Column("request", sa.JSON(), nullable=True),
-        sa.Column("schedule_id", sa.String(length=72), nullable=True),
-        sa.Column("failure", sa.String(length=200), nullable=True),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
-        sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(
-            ["claw_id"],
-            [migration_name("claws") + ".id"],
-            name=op.f(migration_name("schedule_requests__fk_claw_id")),
-            ondelete="CASCADE",
-        ),
-        sa.PrimaryKeyConstraint("id", name=op.f(migration_name("schedule_requests__pk"))),
-    )
-    op.create_index(
-        migration_name("schedule_request_pending_idx"),
-        migration_name("schedule_requests"),
-        ["claw_id", "created_at", "id"],
-        unique=False,
-        postgresql_where=sa.text("completed_at IS NULL"),
-    )
-    op.create_index(
-        migration_name("schedule_request_receipt_idx"),
-        migration_name("schedule_requests"),
-        ["claw_id", "completed_at"],
         unique=False,
     )
     op.create_table(
@@ -462,16 +420,6 @@ def downgrade() -> None:
     op.drop_table(migration_name("github_poll_state"))
     op.drop_index(migration_name("schedule_due_idx"), table_name=migration_name("schedules"))
     op.drop_table(migration_name("schedules"))
-    op.drop_index(
-        migration_name("schedule_request_receipt_idx"),
-        table_name=migration_name("schedule_requests"),
-    )
-    op.drop_index(
-        migration_name("schedule_request_pending_idx"),
-        table_name=migration_name("schedule_requests"),
-        postgresql_where=sa.text("completed_at IS NULL"),
-    )
-    op.drop_table(migration_name("schedule_requests"))
     op.drop_index(
         migration_name("lark_retry_card_pending_idx"), table_name=migration_name("lark_retry_cards")
     )

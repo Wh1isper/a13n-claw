@@ -25,6 +25,7 @@ from a13n_service.infra.errors import ServiceError
 from a13n_service.migrations.scratch import scratch_database
 from a13n_service.providers import envd
 from a13n_service.runs.environments import external
+from a13n_service.runs.schedules.tables import ScheduleRow as NativeScheduleRow
 from a13n_service.runs.tables import RunRow, ThreadRow
 from a13n_service.settings import Database, Settings
 from a13n_service.tenancy.tables import PrincipalRow
@@ -38,7 +39,7 @@ from a13n_claw.service_app import (
     project_cli,
     schedules,
 )
-from a13n_claw.service_app.models import InboxItem, Schedule, ScheduleRequest
+from a13n_claw.service_app.models import InboxItem, Schedule
 
 
 @pytest.fixture
@@ -426,7 +427,7 @@ def exercise_lifecycle(
     assert main["status"] == "completed", main.get("failure")
     assert main["agent_revision_id"] == claw["agent_revision_id"]
     (schedule,) = read(f"{path}/fresh-schedules")["items"]
-    assert schedule["name"] == "Fresh follow-up" and schedule["next_at"]
+    assert schedule["name"] == "Fresh follow-up" and schedule["state"] == "enabled"
     schedule_path = f"/schedules/{schedule['id']}"
     native = client.get(f"/api/v1{schedule_path}")
     assert native.status_code == 200, native.text
@@ -452,7 +453,7 @@ def exercise_lifecycle(
         async with short_session(runtime.storage) as session:
             main_run = await session.get_one(RunRow, main["id"])
             fresh_run = await session.get_one(RunRow, scheduled["completion_run_id"])
-            definition = await session.get_one(schedules.NativeScheduleRow, schedule["id"])
+            definition = await session.get_one(NativeScheduleRow, schedule["id"])
             return [
                 (main_run.principal_id, main_run.authority),
                 (fresh_run.principal_id, fresh_run.authority),
@@ -503,14 +504,7 @@ def exercise_lifecycle(
 
         async def pending_receipt():
             async with short_session(runtime.storage) as session:
-                row = await session.scalar(
-                    select(ScheduleRequest).where(
-                        ScheduleRequest.claw_id == claw["id"],
-                        ScheduleRequest.completed_at.is_(None),
-                    )
-                )
-                native = await session.get(schedules.NativeScheduleRow, rolled_back[0])
-                return row and row.schedule_id is None and native is None
+                return await session.get(NativeScheduleRow, rolled_back[0]) is None
 
         assert client.portal.call(pending_receipt)
         operator_schedule = post(fresh_path, fresh_body, headers=fresh_headers)
@@ -540,12 +534,6 @@ def exercise_lifecycle(
     service_headers = {"Authorization": f"Bearer {key['secret']}"}
     operator_path = f"/api/v1/schedules/{operator_schedule['id']}"
     latest = client.get(operator_path)
-    renamed = client.patch(
-        operator_path,
-        json={"labels": {}},
-        headers={**service_headers, "If-Match": latest.headers["ETag"]},
-    )
-    assert renamed.status_code == 200, renamed.text
     assert read(path)["project"]["fresh_schedule_count"] == 2
     assert client.delete(f"/api/v1{path}").status_code == 409
     refused = client.patch(update_url, json={"environment_id": replacement["id"]})
@@ -560,28 +548,24 @@ def exercise_lifecycle(
         update_url, json={"environment_id": replacement["id"]}
     )
     assert blocked_by_operator_schedule.status_code == 409, blocked_by_operator_schedule.text
+    latest_operator = client.get(operator_path)
     archived = client.delete(
-        operator_path, headers={**service_headers, "If-Match": renamed.headers["ETag"]}
+        operator_path, headers={**service_headers, "If-Match": latest_operator.headers["ETag"]}
     )
     assert archived.status_code == 204, archived.text
-    updated = client.patch(update_url, json={"environment_id": replacement["id"]})
+    updated = eventually(
+        lambda: client.patch(update_url, json={"environment_id": replacement["id"]}),
+        lambda response: response.status_code != 409,
+    )
     assert updated.status_code == 200, updated.text
     assert updated.json()["main_thread_id"] == main["thread_id"]
     assert read(path)["project"]["environment_name"] == replacement["name"]
     assert read(path)["project"]["fresh_schedule_count"] == 0
-    rejected = client.put(
-        f"/api/v1{connector_path}", json={**connector_body, "reply_environment_id": shared["id"]}
-    )
-    assert rejected.status_code == 409, rejected.text
     enabled = client.put(
         f"/api/v1{connector_path}",
-        json={
-            **{key: value for key, value in connector_body.items() if key != "credential"},
-            "reply_environment_id": replacement["id"],
-        },
+        json={key: value for key, value in connector_body.items() if key != "credential"},
     )
     assert enabled.status_code == 200 and enabled.json()["credential_configured"], enabled.text
-    assert enabled.json()["reply_environment_id"] == replacement["id"]
     egress_body = {
         **{key: value for key, value in connector_body.items() if key != "credential"},
         "egress_primary": True,
@@ -598,6 +582,33 @@ def exercise_lifecycle(
         json={**egress_body, "egress_environment_id": replacement["id"]},
     )
     assert authorized.status_code == 200 and authorized.json()["egress_primary"], authorized.text
+    clear = client.put(
+        f"/api/v1{connector_path}",
+        json={**egress_body, "egress_environment_id": replacement["id"], "credential": None},
+    )
+    assert clear.status_code == 200 and not clear.json()["credential_configured"], clear.text
+    restored = client.put(
+        f"/api/v1{connector_path}",
+        json={
+            **egress_body,
+            "egress_environment_id": replacement["id"],
+            "credential": "synthetic-github-credential",
+        },
+    )
+    assert restored.status_code == 200 and restored.json()["credential_configured"], restored.text
+
+    async def active_generation():
+        from a13n_claw.service_app.models import ConnectorEgress
+
+        async with short_session(runtime.storage) as session:
+            return await session.scalar(
+                select(ConnectorEgress.id).where(
+                    ConnectorEgress.connector_id == authorized.json()["id"],
+                    ConnectorEgress.state.in_(("pending", "preparing", "ready")),
+                )
+            )
+
+    assert client.portal.call(active_generation) is not None
     disabled = client.put(f"/api/v1{connector_path}", json={**egress_body, "egress_primary": False})
     assert disabled.status_code == 200, disabled.text
     assert post(f"{path}/project/cli-update", {}, 202) == {"state": "queued"}
@@ -629,7 +640,7 @@ def exercise_lifecycle(
     attached = client.patch(update_url, json={"browser_id": browser["id"]})
     assert attached.status_code == 200, attached.text
     assert read(path)["project"]["browser_name"] == browser["name"]
-    assert post(fresh_path, fresh_body, headers=fresh_headers)["id"] == operator_schedule["id"]
+    post(fresh_path, fresh_body, 409, headers=fresh_headers)
     scheduled_browser = post(fresh_path, fresh_body, headers={"Idempotency-Key": uuid4().hex})
     browser_schedule_path = f"/schedules/{scheduled_browser['id']}"
     native_browser_schedule = client.get(f"/api/v1{browser_schedule_path}")
@@ -680,7 +691,6 @@ def exercise_lifecycle(
             "senders": ["ou_operator"],
         },
         "credential": "synthetic-lark-app-secret",
-        "reply_environment_id": replacement["id"],
     }
 
     lark = post(f"{path}/connectors", lark_body)
@@ -690,9 +700,7 @@ def exercise_lifecycle(
     )
     replica = client.portal.call(lambda: connectors.Listeners(runtime))
     eventually(lambda: client.portal.call(subscribers), lambda count: count >= 2, timeout=4)
-    duplicate = post(
-        f"{path}/connectors", {**lark_body, "name": "Duplicate Lark", "reply_environment_id": None}
-    )
+    duplicate = post(f"{path}/connectors", {**lark_body, "name": "Duplicate Lark"})
     duplicate_path = f"{path}/connectors/{duplicate['id']}"
     eventually(
         lambda: read(duplicate_path), lambda row: row["listener_status"] == "conflict", timeout=4
@@ -863,6 +871,30 @@ def exercise_lifecycle(
     assert first_id == duplicate_id == "ct_first"
     assert (first_status, overlap_status) == ("unread", "overlap")
     assert next_at == datetime.fromisoformat(once).isoformat()
+
+    http_schedule = post(scheduled_path, {**body, "name": "HTTP trigger"})
+    notified = []
+
+    async def notified_after_commit(runtime, workspace_id, claw_id):
+        async with short_session(runtime.storage) as session:
+            from a13n_claw.service_app.models import Occurrence
+
+            row = await session.scalar(
+                select(Occurrence).where(Occurrence.schedule_id == http_schedule["id"])
+            )
+            notified.append((workspace_id, claw_id, row.status if row else None))
+
+    trigger_headers = {"Idempotency-Key": uuid4().hex}
+    with monkeypatch.context() as patch:
+        patch.setattr(main_thread, "notify", notified_after_commit)
+        first_http = post(
+            f"{scheduled_path}/{http_schedule['id']}/trigger", {}, 200, headers=trigger_headers
+        )
+        replay_http = post(
+            f"{scheduled_path}/{http_schedule['id']}/trigger", {}, 200, headers=trigger_headers
+        )
+    assert first_http["id"] == replay_http["id"] and first_http["status"] == "unread"
+    assert notified == [(ws, inspectable["id"], "unread")] * 2
 
     # Apply retention after a delivery has already been accepted; do not age its receipt.
     async def mark_read(at):
