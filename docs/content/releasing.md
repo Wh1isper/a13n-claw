@@ -31,6 +31,8 @@ After credentials are configured, set the repository Actions variable `DOCS_DEPL
 
 Publication uses the workflow's automatic `GITHUB_TOKEN` with `packages: write`; no PAT or additional secret is required. The first package can default to private even in a public repository. After the first image publication, open the package settings and set visibility to **Public** so anonymous pulls work. Preserve the source repository association and Actions access.
 
+The main-branch **Development Image** workflow builds `ghcr.io/wh1isper/a13n-claw:dev` against the latest published stable Service patch allowed by the package compatibility range. The `:dev` tag is a development channel, separate from versioned release images.
+
 ## Release checklist
 
 1. Configure the secrets and environment branch/tag policies above.
@@ -43,7 +45,7 @@ git tag release/a13n-claw-vX.Y.Z
 git push origin release/a13n-claw-vX.Y.Z
 ```
 
-Do not commit a version bump. Replace `X.Y.Z` with the new release version. The workflow builds the Console, injects that version, builds and verifies the wheel and sdist, publishes them to PyPI, and builds the GHCR image for Linux AMD64 and ARM64 from the wheel and locked runtime dependencies. It then creates a GitHub Release with generated notes and Python artifacts. A stable image publishes exact version and `latest`; an RC publishes only its exact `X.Y.Z-rc.N` tag.
+Claw and Service share a minor compatibility line with independent patch versions: for example, Claw `0.5.0` targets Service `>=0.5.1,<0.6.0`. PR CI and tagged releases use the locked Service patch and matching digest-pinned base image. Do not commit a version bump. Replace `X.Y.Z` with the new release version. The workflow builds the Console, injects that version, builds and verifies the wheel and sdist, publishes them to PyPI, and builds the GHCR image for Linux AMD64 and ARM64 from the wheel and locked runtime dependencies. It then creates a GitHub Release with generated notes and Python artifacts. A stable image publishes exact version and `latest`; an RC publishes only its exact `X.Y.Z-rc.N` tag.
 
 ## Verify and recover
 

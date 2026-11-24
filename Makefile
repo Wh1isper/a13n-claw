@@ -5,6 +5,7 @@ TEST_ARGS ?=
 .PHONY: install lint format typecheck deps-check test frontend-install console-sdk console-check console-build console-dev db-check build artifact-check image-requirements image-check workflow-check docs-check docs-serve docs-build check check-all
 
 IMAGE_TAG ?= a13n-claw:check
+IMAGE_MODE ?= locked
 
 install: frontend-install ## Install the development toolchain and Git hooks
 	$(UV) sync --locked
@@ -51,14 +52,15 @@ build: console-build
 	$(UV) build --clear
 
 artifact-check:
-	$(UV) run --locked python scripts/check_artifacts.py
+	$(UV) run --locked python scripts/check_artifacts.py --locked-service
 
 image-requirements:
-	mkdir -p build
-	$(UV) export --locked --no-dev --no-emit-project --quiet --output-file build/image-requirements.txt
+	$(UV) run --locked python scripts/service_version.py --mode $(IMAGE_MODE)
 
 image-check: build image-requirements
-	docker build -f deploy/docker/Dockerfile -t $(IMAGE_TAG) .
+	@version=$$(python -c 'import json; print(json.load(open("build/service-selection.json"))["version"])'); \
+	image=$$(python -c 'import json; print(json.load(open("build/service-selection.json"))["image"])'); \
+	docker build -f deploy/docker/Dockerfile -t $(IMAGE_TAG) --build-arg SERVICE_VERSION="$$version" --build-arg SERVICE_IMAGE="$$image" .
 	docker run --rm --entrypoint /app/.venv/bin/python $(IMAGE_TAG) -c 'import os; from a13n_claw.service_app.app import definition; assert os.geteuid() != 0; assert definition().app_id == "a13n.claw"'
 
 workflow-check:
