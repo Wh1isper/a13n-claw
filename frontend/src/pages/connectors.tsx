@@ -812,14 +812,15 @@ function ConnectorEditor({
                     defaultValue={list(config, "groups")}
                   />
                 </FormField>
-                <FormField
-                  label={copy("Event types", "事件类型")}
-                  description={copy(
-                    "Subscribe to these events in the Lark developer console as well.",
-                    "同时在飞书开发者控制台订阅这些事件。",
-                  )}
-                >
-                  <div>
+                <fieldset className={styles.eventField}>
+                  <legend>{copy("Event types", "事件类型")}</legend>
+                  <p className={styles.eventDescription}>
+                    {copy(
+                      "Subscribe to these events in the Lark developer console as well.",
+                      "同时在飞书开发者控制台订阅这些事件。",
+                    )}
+                  </p>
+                  <div className={styles.eventOptions}>
                     {[
                       [defaultEvents[0], copy("Messages", "消息")],
                       [
@@ -832,8 +833,9 @@ function ConnectorEditor({
                       ],
                       [defaultEvents[3], copy("Document comments", "文档评论")],
                     ].map(([value, label]) => (
-                      <FormField key={value} label={label}>
+                      <label key={value} className={styles.eventOption}>
                         <Checkbox
+                          aria-labelledby={`event-label-${value}`}
                           checked={eventTypes.includes(value)}
                           disabled={!allowed}
                           onCheckedChange={(checked) => {
@@ -845,10 +847,11 @@ function ConnectorEditor({
                             setDirty(true);
                           }}
                         />
-                      </FormField>
+                        <span id={`event-label-${value}`}>{label}</span>
+                      </label>
                     ))}
                   </div>
-                </FormField>
+                </fieldset>
                 <FormField
                   label={copy(
                     "Groups that do not require mentioning the bot (optional)",

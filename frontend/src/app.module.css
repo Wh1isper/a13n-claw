@@ -122,6 +122,31 @@
 .picker label {
   font-weight: 500;
 }
+.eventField {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.eventField legend {
+  font-weight: 500;
+}
+.eventDescription {
+  margin: 4px 0 8px;
+  color: var(--a13n-secondary);
+  font-size: 12px;
+}
+.eventOptions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.eventOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+}
 @media (max-width: 500px) {
   .summary section {
     padding: 10px;

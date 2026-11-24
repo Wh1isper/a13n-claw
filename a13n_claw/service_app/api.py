@@ -21,6 +21,8 @@ from a13n_service.runs.browsers.tables import BrowserRow
 from a13n_service.runs.environments.schemas import EnvironmentFailure
 from a13n_service.runs.requests import CurrentRuntime
 from a13n_service.runs.runtime import Runtime
+from a13n_service.runs.schedules.calendar import Calendar
+from a13n_service.runs.schedules.schemas import CronSchedule, OnceSchedule
 from a13n_service.runs.schedules.schemas import Schedule as NativeSchedule
 from a13n_service.runs.schemas import Failure
 from a13n_service.tenancy.access import workspace_scope
@@ -1017,12 +1019,19 @@ async def list_fresh_schedules(
             cursor=cursor,
             limit=limit,
         )
-        return {
-            "items": [
-                dict(id=row.id, name=row.name, state=row.state, next_at=None) for row in page.items
-            ],
-            "next_cursor": page.next_cursor,
-        }
+        current = await now(session)
+        items = []
+        for row in page.items:
+            next_at = None
+            if row.state == "enabled":
+                if isinstance(row.schedule, OnceSchedule):
+                    next_at = row.schedule.run_at
+                elif isinstance(row.schedule, CronSchedule):
+                    next_at = Calendar.parse(row.schedule.expression, row.schedule.timezone).next(
+                        current
+                    )
+            items.append(dict(id=row.id, name=row.name, state=row.state, next_at=next_at))
+        return {"items": items, "next_cursor": page.next_cursor}
 
 
 @router.post("/claws/{claw_id}/fresh-schedules", status_code=201, name="claw_create_fresh_schedule")

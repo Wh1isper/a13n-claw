@@ -1,4 +1,5 @@
 import React from "react";
+import { Checkbox as BaseCheckbox } from "@base-ui/react/checkbox";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
@@ -538,4 +539,58 @@ test("egress authorization uses the Environment captured when the editor opened"
   fireEvent.submit(screen.getByRole("textbox", { name: "Name" }).form);
   await waitFor(() => expect(saved?.egress_primary).toBe(true));
   expect(saved.egress_environment_id).toBe("env");
+});
+
+test("Base UI checkbox is named and toggles from its label text", () => {
+  function Fixture() {
+    const [checked, setChecked] = React.useState(true);
+    return (
+      <label>
+        <BaseCheckbox.Root
+          aria-labelledby="test-event-label"
+          checked={checked}
+          onCheckedChange={setChecked}
+        />
+        <span id="test-event-label">Messages</span>
+      </label>
+    );
+  }
+  render(<Fixture />);
+  const checkbox = screen.getByRole("checkbox", { name: "Messages" });
+  expect(checkbox.getAttribute("aria-checked")).toBe("true");
+  fireEvent.click(screen.getByText("Messages"));
+  expect(checkbox.getAttribute("aria-checked")).toBe("false");
+});
+
+test("Lark event label rows expose selectable names and preserve selected values", async () => {
+  let saved;
+  await mount(pagePath("connectors"), (path, init) => {
+    if (path === "/claws/alpha/connectors" && init?.method === "POST") {
+      saved = JSON.parse(init.body);
+      return response({ ...saved, id: "lark" }, 201);
+    }
+    return defaultReply(path);
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "New connector" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Platform" }), {
+    target: { value: "lark" },
+  });
+  const messages = screen.getByRole("checkbox", { name: "Messages" });
+  expect(messages.checked).toBe(true);
+  expect(
+    screen.getByRole("checkbox", { name: "Document comments" }).checked,
+  ).toBe(true);
+  fireEvent.click(screen.getByText("Messages"));
+  expect(messages.checked).toBe(false);
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: "Lark intake" },
+  });
+  fireEvent.submit(screen.getByRole("textbox", { name: "Name" }).form);
+  await waitFor(() =>
+    expect(saved?.config.event_types).toEqual([
+      "im.chat.member.bot.added_v1",
+      "im.chat.member.user.added_v1",
+      "drive.notice.comment_add_v1",
+    ]),
+  );
 });

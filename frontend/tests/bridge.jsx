@@ -156,8 +156,9 @@ export const SaveBar = ({
   </div>
 );
 export const Confirm = () => null;
-export const Switch = ({ checked, onCheckedChange }) => (
+export const Switch = ({ checked, onCheckedChange, ...props }) => (
   <input
+    {...props}
     type="checkbox"
     checked={checked}
     onChange={(e) => onCheckedChange(e.target.checked)}

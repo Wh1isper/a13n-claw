@@ -6,7 +6,6 @@ import json
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import UTC, datetime
 from hashlib import sha256
 from shlex import quote
 from typing import TYPE_CHECKING, Annotated, Literal
@@ -444,7 +443,8 @@ class ClawCapability(AbstractCapability[AgentContext]):
                             Connector.claw_id == bound.claw.id,
                             Connector.enabled.is_(True),
                             Connector.egress_primary.is_(True),
-                            ConnectorEgress.state == "ready",
+                            ConnectorEgress.state.in_(("ready", "preparing")),
+                            ConnectorEgress.credential_id.is_not(None),
                         )
                     )
                 ).all()
@@ -459,8 +459,6 @@ class ClawCapability(AbstractCapability[AgentContext]):
             configuration = workspace_mount.get("session_configuration") or {}
             references = (configuration.get("egress") or {}).get("secrets") or []
             for connector, generation in active:
-                if generation.refresh_at is not None and generation.refresh_at <= datetime.now(UTC):
-                    continue
                 if egress.target(connector.kind, connector.config) != generation.domain:
                     continue
                 if not any(
