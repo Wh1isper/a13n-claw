@@ -3,6 +3,14 @@
 import argparse
 import re
 from pathlib import Path
+from tomllib import loads
+
+from packaging.version import Version
+
+if __package__:
+    from .service_version import service_line
+else:
+    from service_version import service_line
 
 _PATTERN = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-rc\.([1-9][0-9]*))?")
 
@@ -16,6 +24,10 @@ def python_version(value: str) -> str:
 def prepare(path: Path, value: str) -> None:
     normalized = python_version(value)
     source = path.read_text()
+    _, line = service_line(loads(source))
+    release = Version(normalized)
+    if (release.major, release.minor) != line:
+        raise ValueError(f"Release {value!r} does not match the Service minor line")
     updated, count = re.subn(
         r'^version = "0\.0\.0"$', f'version = "{normalized}"', source, flags=re.M
     )

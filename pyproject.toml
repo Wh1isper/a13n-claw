@@ -8,8 +8,8 @@ license-files = ["LICENSE"]
 authors = [{name = "Wh1isper"}]
 requires-python = ">=3.13"
 dependencies = [
-  "a13n-service==0.5.1",
-  "a13n-harness==0.41.0",
+  "a13n-service>=0.5.1,<0.6.0",
+  "a13n-harness>=0.41.0,<1",
   "a13n-envd-client>=0.8,<0.9",
   "a13n-logging>=0.2,<0.3",
   "alembic>=1.17.1,<2",
@@ -17,7 +17,7 @@ dependencies = [
   "httpx>=0.28,<1",
   "lark-oapi>=1.8,<2",
   "pydantic>=2.12,<3",
-  "pydantic-ai-slim==2.70.*",
+  "pydantic-ai-slim>=2.70,<3",
   "redis>=8.1,<9",
   "sqlalchemy>=2.0.41,<2.1",
   "websockets>=15,<16",
@@ -59,6 +59,7 @@ exclude = ["/frontend/node_modules", "/frontend/.console-sdk"]
 dev = [
   "deptry>=0.24,<1",
   "mdformat>=1.0.0,<2",
+  "packaging>=25,<27",
   "mdformat-frontmatter>=2,<3",
   "mdformat-gfm>=0.4,<2",
   "pre-commit>=4,<5",
@@ -84,6 +85,6 @@ testpaths = ["tests"]
 addopts = "-ra"
 
 [tool.deptry]
-known_first_party = ["a13n_claw"]
-per_rule_ignores = { DEP001 = ["hatchling"] }
+known_first_party = ["a13n_claw", "service_version"]
+per_rule_ignores = { DEP001 = ["hatchling"], DEP004 = ["packaging"] }
 package_module_name_map = { "pydantic-ai-slim" = "pydantic_ai", "lark-oapi" = "lark_oapi" }

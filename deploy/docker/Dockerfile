@@ -1,6 +1,8 @@
-# Match the exact Service dependency in pyproject.toml. Inherit its runtime and health check.
-FROM ghcr.io/converge-ai-labs/a13n-service:0.5.1@sha256:d9a3eab639aef3103f1a8cce9731b00b0405eeb1ccb874085bafcea730888eb2
+# Inherit the selected Service runtime and health check.
+ARG SERVICE_IMAGE=ghcr.io/converge-ai-labs/a13n-service:0.5.1
+FROM ${SERVICE_IMAGE}
 ARG BUILD_VERSION=0.0.0
+ARG SERVICE_VERSION=0.5.1
 ENV A13N_PLUGINS__BOOTSTRAP_ENABLED_APPS='["a13n.claw"]'
 LABEL org.opencontainers.image.title="a13n Claw" \
       org.opencontainers.image.source="https://github.com/Wh1isper/a13n-claw" \
@@ -8,9 +10,11 @@ LABEL org.opencontainers.image.title="a13n Claw" \
 USER root
 COPY dist/*.whl /tmp/claw-wheel/
 COPY build/image-requirements.txt /tmp/image-requirements.txt
-RUN /usr/local/bin/python -m pip --python /app/.venv install --no-cache-dir --require-hashes -r /tmp/image-requirements.txt \
+RUN /app/.venv/bin/python -c 'from importlib.metadata import version; import sys; assert version("a13n-service") == sys.argv[1]' "${SERVICE_VERSION}" \
+    && /app/.venv/bin/python -c 'import re, sys; assert re.search(r"^a13n-service==" + re.escape(sys.argv[1]) + r"(?:\s|\\|$)", open("/tmp/image-requirements.txt").read(), re.M)' "${SERVICE_VERSION}" \
+    && /usr/local/bin/python -m pip --python /app/.venv install --no-cache-dir --require-hashes -r /tmp/image-requirements.txt \
     && /usr/local/bin/python -m pip --python /app/.venv install --no-cache-dir --no-deps /tmp/claw-wheel/*.whl \
     && /usr/local/bin/python -m pip --python /app/.venv check \
-    && /app/.venv/bin/python -c 'from importlib.metadata import version; import sys; assert version("a13n-claw") == sys.argv[1]; assert version("a13n-service") == "0.5.1"' "${BUILD_VERSION}" \
+    && /app/.venv/bin/python -c 'from importlib.metadata import version; import sys; assert version("a13n-claw") == sys.argv[1]; assert version("a13n-service") == sys.argv[2]' "${BUILD_VERSION}" "${SERVICE_VERSION}" \
     && rm -r /tmp/claw-wheel /tmp/image-requirements.txt
 USER app

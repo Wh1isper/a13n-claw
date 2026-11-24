@@ -18,6 +18,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       python-version: ${{ steps.version.outputs.python-version }}
+      service-version: ${{ steps.service.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -44,20 +45,25 @@ jobs:
           node-version: "24"
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-      - name: Verify pinned Service image
-        run: uv run --no-project python scripts/check_artifacts.py --base-image-only
+      - name: Resolve locked Service
+        id: service
+        shell: bash
+        run: |
+          make image-requirements
+          echo "version=$(python -c 'import json; print(json.load(open("build/service-selection.json"))["version"])')" >> "$GITHUB_OUTPUT"
+          uv run --locked python scripts/check_artifacts.py --base-image-only
       - run: make console-build
       - name: Inject release version
         id: version
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#release/a13n-claw-v}"
-          uv run --no-project python scripts/prepare_release.py "$version"
+          uv run --locked python scripts/prepare_release.py "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "python-version=${version/-rc./rc}" >> "$GITHUB_OUTPUT"
       - run: uv build --clear
       - name: Verify the versioned wheel and source distribution
-        run: uv run --no-project python scripts/check_artifacts.py
+        run: .venv/bin/python scripts/check_artifacts.py --service-version '${{ steps.service.outputs.version }}'
       - uses: actions/upload-artifact@v7
         with:
           name: python-dist
@@ -94,7 +100,14 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.13"
-      - run: make image-requirements
+      - name: Resolve locked image
+        id: service
+        shell: bash
+        run: |
+          make image-requirements
+          echo "version=$(python -c 'import json; print(json.load(open("build/service-selection.json"))["version"])')" >> "$GITHUB_OUTPUT"
+          echo "image=$(python -c 'import json; print(json.load(open("build/service-selection.json"))["image"])')" >> "$GITHUB_OUTPUT"
+          test "${{ needs.build.outputs.service-version }}" = "$(python -c 'import json; print(json.load(open("build/service-selection.json"))["version"])')"
       - uses: actions/download-artifact@v8
         with:
           name: python-dist
@@ -120,7 +133,10 @@ jobs:
           file: deploy/docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: BUILD_VERSION=${{ needs.build.outputs.python-version }}
+          build-args: |
+            BUILD_VERSION=${{ needs.build.outputs.python-version }}
+            SERVICE_VERSION=${{ steps.service.outputs.version }}
+            SERVICE_IMAGE=${{ steps.service.outputs.image }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
   github-release:

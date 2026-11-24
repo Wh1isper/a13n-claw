@@ -114,4 +114,4 @@ sequenceDiagram
 
 Claw uses A13n's App scaffold and contributes its frontend directly to A13n Console. It uses Service's supported in-process operations rather than maintaining a separate execution runtime. Shared capabilities belong in their A13n subsystem; Claw owns the messaging and operator workflows that use them.
 
-Claw and Service share a major/minor release line with independent patch numbers. Claw develops and validates against one exact Service version in that line. Its release image derives from that published Service image and includes the Claw App and Console contribution.
+Claw and Service share a major/minor release line with independent patch numbers. Claw declares a bounded Service minor compatibility line. Routine development and CI use a locked Service patch; the main-branch development image validates the latest stable compatible patch. Release images use the locked patch and its matching Service runtime image, and include the Claw App and Console contribution.

@@ -19,7 +19,7 @@ Preserve unrelated work and secrets. An implementation request does not automati
 
 ## Package and release boundaries
 
-Use Python 3.13 and uv. Build against the published Service pin; do not depend on an adjacent checkout. `frontend/` owns the Console contribution and `docs/` owns the separate documentation site. Package the generated App assets in the wheel and sdist. Preserve standalone data. The non-root release image inherits the exact Service image and version-tag publication flow.
+Use Python 3.13 and uv. Claw `0.Y.A` supports the bounded Service `0.Y` line (`>=0.Y.M,<0.(Y+1).0`); do not depend on an adjacent checkout. Routine development and CI use `uv.lock`; main-branch `:dev` images use the latest published stable patch in that line. Release images use the matching locked Service runtime. `frontend/` owns the Console contribution and `docs/` owns the separate documentation site. Package the generated App assets in the wheel and sdist. Preserve standalone data. The non-root release image follows the version-tag publication flow.
 
 ## Validation
 

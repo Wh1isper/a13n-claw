@@ -34,7 +34,7 @@ Only squash merges are enabled, with the PR title as the commit title. Auto-merg
 
 Releases use tags, not a long-lived release branch. The `release` ruleset makes `release/a13n-claw-v*` tags immutable: updates, force pushes, and deletion are blocked, with no bypass actors. The `pypi` environment accepts only those tags; the `docs` environment accepts only the `main` branch. Release automation additionally requires the tagged commit to belong to `main` and have successful CI and Site runs.
 
-Workflow tokens default to read-only and cannot approve pull requests. Publication jobs grant their own narrowly scoped write permissions. Secret scanning, push protection, and dependency alerts are enabled. Do not disable protections to work around a failing check; correct the cause or discuss a deliberate policy change.
+Workflow tokens default to read-only and cannot approve pull requests. Publication jobs grant their own narrowly scoped write permissions. Secret scanning and push protection are enabled. Do not disable protections to work around a failing check; correct the cause or discuss a deliberate policy change.
 
 ## Documentation
 
@@ -42,7 +42,7 @@ Edit the Markdown files under `docs/content/` and keep `meta.json` navigation al
 
 ## Releases
 
-Source version is always `0.0.0`. Stable tags use `release/a13n-claw-vX.Y.Z`; RC tags use `release/a13n-claw-vX.Y.Z-rc.N`, with a positive `N`. Python metadata normalizes RC versions to `X.Y.ZrcN`. Never commit a release-only version bump.
+Claw `0.Y.Z` targets Service `>=0.Y.M,<0.(Y+1).0`. PR CI uses the locked Service patch; the main-branch `:dev` image resolves the latest stable compatible patch. Tagged release images use the locked Service patch and matching digest-pinned runtime. Source version is always `0.0.0`. Stable tags use `release/a13n-claw-vX.Y.Z`; RC tags use `release/a13n-claw-vX.Y.Z-rc.N`, with a positive `N`. Python metadata normalizes RC versions to `X.Y.ZrcN`. Never commit a release-only version bump.
 
 Only tag a commit on `main` with successful **CI** and **Site** workflow runs. Release automation verifies those successful checks for the tagged commit, prepares the version in an ephemeral checkout, builds the wheel and sdist, publishes to PyPI, publishes the same wheel as a non-root GHCR image, and creates a GitHub Release with generated notes and both Python artifacts. Stable images also update `latest`; RC images do not. Publication is not a deployment of an agent service.
 
