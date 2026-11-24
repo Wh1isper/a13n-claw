@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 from test_service_app_lifecycle import FixtureEnvironment
 
-from a13n_claw.service_app import connectors, egress, inbox, lark_retry, project_cli, schedules
+from a13n_claw.service_app import connectors, egress, inbox, lark_retry, main_thread, project_cli
 from a13n_claw.service_app.feishu import LarkSettings
 from a13n_claw.service_app.models import APP_ID, Connector, ConnectorEgress, LarkRetryCard
 
@@ -745,31 +745,15 @@ def exercise_retry(client, model_url, retry_entered, release_retry, scripted, mo
             busy_entry.status = "withdrawn"
             busy_entry.finished_at = datetime.now(UTC)
 
-        # A recurring native Schedule must not freeze this revocable token.
+        # Fresh scheduled Threads use current Project mounts without connector credentials.
         async with transaction(runtime.storage) as session:
             await app_threads.prepare_admission(session, runtime, ws, account["id"], app_id=APP_ID)
             claw_row = await inbox.lock_claw(session, ws, native_claw["id"])
             current = await egress.initial_configuration(session, claw_row)
             assert current.credential_references[0].credential_id == tenant_credential
-            actor = await schedules.fresh_account(session, runtime, claw_row)
-            definition = await schedules.fresh_definition(
-                session,
-                runtime,
-                claw_row,
-                schedules.ScheduleInput.model_validate(
-                    {
-                        "name": "Synthetic recurring work",
-                        "prompt": "Report the result to Main",
-                        "rule": {
-                            "type": "once",
-                            "run_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
-                        },
-                    }
-                ),
-                actor,
-            )
-            assert definition.invocation.environments[0].environment_id == claw_row.environment_id
-            assert definition.invocation.environments[0].session_configuration is None
+            mounts = main_thread.project_mounts(claw_row)
+            assert mounts[0].environment_id == claw_row.environment_id
+            assert mounts[0].session_configuration is None
 
         policies = (
             ({"egress_mode": "deny"}, False),

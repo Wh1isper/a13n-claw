@@ -135,67 +135,18 @@ def test_main_cli_context_survives_refresh_while_captured_reference_is_active(mo
     asyncio.run(run())
 
 
-def test_fresh_schedule_list_exposes_next_times_without_private_rows(monkeypatch):
-    from contextlib import asynccontextmanager
+def test_unified_schedule_rule_calculates_next_occurrences():
     from datetime import UTC, datetime, timedelta
-    from types import SimpleNamespace
 
     from a13n_service.runs.schedules.schemas import CronSchedule, OnceSchedule
 
-    from a13n_claw.service_app import api
+    from a13n_claw.service_app.schedules import schedule_rule
 
-    async def run():
-        current = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
-        once = current + timedelta(hours=3)
-        rows = [
-            SimpleNamespace(
-                id="once",
-                name="Once",
-                state="enabled",
-                schedule=OnceSchedule(type="once", run_at=once),
-            ),
-            SimpleNamespace(
-                id="cron",
-                name="Cron",
-                state="enabled",
-                schedule=CronSchedule(expression="0 * * * *", timezone="UTC"),
-            ),
-            SimpleNamespace(
-                id="paused",
-                name="Paused",
-                state="paused",
-                schedule=OnceSchedule(type="once", run_at=once),
-            ),
-        ]
-
-        @asynccontextmanager
-        async def session(_storage):
-            yield object()
-
-        async def scope(*_args):
-            return None
-
-        async def claw(*_args):
-            return SimpleNamespace(id="claw")
-
-        async def page(*_args, **_kwargs):
-            return SimpleNamespace(items=rows, next_cursor=None)
-
-        async def clock(_session):
-            return current
-
-        monkeypatch.setattr(api, "short_session", session)
-        monkeypatch.setattr(api, "workspace_scope", scope)
-        monkeypatch.setattr(api, "get_claw", claw)
-        monkeypatch.setattr(api.app_schedules, "list_app_schedules", page)
-        monkeypatch.setattr(api, "now", clock)
-        result = await api.list_fresh_schedules(
-            "claw", "ws", object(), SimpleNamespace(storage=object())
-        )
-        assert [item["next_at"] for item in result["items"]] == [
-            once,
-            current + timedelta(hours=1),
-            None,
-        ]
-
-    asyncio.run(run())
+    current = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    once = current + timedelta(hours=3)
+    assert schedule_rule(OnceSchedule(type="once", run_at=once), current) == (None, "UTC", once)
+    assert schedule_rule(CronSchedule(expression="0 * * * *", timezone="UTC"), current) == (
+        "0 * * * *",
+        "UTC",
+        current + timedelta(hours=1),
+    )

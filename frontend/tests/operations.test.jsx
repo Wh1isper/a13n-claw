@@ -164,7 +164,7 @@ test("saving a connector invalidates an otherwise fresh connector list", async (
 test("Fresh Schedule retry preserves the key until the payload changes", async () => {
   const submissions = [];
   const request = (path, init) => {
-    if (path === "/claws/alpha/fresh-schedules" && init?.method === "POST") {
+    if (path === "/claws/alpha/schedules" && init?.method === "POST") {
       submissions.push([
         init.headers["Idempotency-Key"],
         JSON.parse(init.body),
@@ -593,4 +593,41 @@ test("Lark event label rows expose selectable names and preserve selected values
       "drive.notice.comment_add_v1",
     ]),
   );
+});
+
+test("Schedules filter both targets and open Claw-local details", async () => {
+  const requests = [];
+  const schedule = {
+    id: "sch_one",
+    name: "Fresh task",
+    prompt: "Run",
+    target: "fresh",
+    cron: "0 9 * * *",
+    timezone: "UTC",
+    lateness_seconds: 300,
+    enabled: true,
+    next_at: "2027-01-01T09:00:00Z",
+    deleted_at: null,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+  await mount(pagePath("schedules"), (path, init) => {
+    requests.push(path);
+    if (
+      path === "/claws/alpha/schedules" ||
+      path.startsWith("/claws/alpha/schedules?")
+    )
+      return response(collection([schedule]));
+    if (path === "/claws/alpha/schedules/sch_one") return response(schedule);
+    return defaultReply(path, init);
+  });
+  expect(await screen.findByText("Fresh task")).toBeTruthy();
+  expect(screen.getByText("Fresh Thread")).toBeTruthy();
+  fireEvent.change(screen.getByRole("combobox", { name: "Schedule mode" }), {
+    target: { value: "fresh" },
+  });
+  await waitFor(() =>
+    expect(requests.some((path) => path.includes("target=fresh"))).toBe(true),
+  );
+  fireEvent.click(await screen.findByRole("link", { name: "Fresh task" }));
+  expect(await screen.findByText("Target Fresh Thread")).toBeTruthy();
 });

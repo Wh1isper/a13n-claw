@@ -8,8 +8,6 @@ from typing import TYPE_CHECKING, Literal
 from a13n_service.infra.db import lock, now
 from a13n_service.infra.errors import ServiceError
 from a13n_service.runs.attempts import AuthorityRevoked, authorize_execution
-from a13n_service.runs.schedules.origin import origins
-from a13n_service.runs.schedules.tables import ScheduleRow
 from a13n_service.runs.tables import AttemptRow, RunRow
 from a13n_service.tenancy.authorize import (
     Principal,
@@ -17,7 +15,7 @@ from a13n_service.tenancy.authorize import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Claw
+from .models import Claw, Occurrence, Schedule
 
 if TYPE_CHECKING:
     from a13n_service.runs.runtime import Runtime
@@ -51,26 +49,32 @@ async def bind(session: AsyncSession, run_id: str, attempt_id: str) -> Binding |
     if pair is not None:
         run, claw = pair
         return Binding(claw, run, "main", attempt_id)
-    origin = (await origins(session, [run_id])).get(run_id)
-    if origin is None:
+    pair = (
+        await session.execute(
+            select(RunRow, Claw)
+            .join(Occurrence, Occurrence.run_id == RunRow.id)
+            .join(Schedule, Schedule.id == Occurrence.schedule_id)
+            .join(Claw, Claw.id == Schedule.claw_id)
+            .join(AttemptRow, AttemptRow.id == RunRow.current_attempt_id)
+            .where(
+                RunRow.id == run_id,
+                AttemptRow.id == attempt_id,
+                AttemptRow.run_id == RunRow.id,
+                Schedule.target == "fresh",
+                Occurrence.target == "fresh",
+                Occurrence.thread_id == RunRow.thread_id,
+                Occurrence.session_id == RunRow.session_id,
+                AttemptRow.lease_expires_at > await now(session),
+                RunRow.status == "running",
+                Claw.workspace_id == RunRow.workspace_id,
+                Claw.service_account_id == RunRow.principal_id,
+                Claw.archived_at.is_(None),
+            )
+        )
+    ).one_or_none()
+    if pair is None:
         return None
-    schedule = await session.get(ScheduleRow, origin.schedule_id)
-    run = await session.get(RunRow, run_id)
-    if schedule is None or run is None or run.current_attempt_id != attempt_id:
-        return None
-    claw = (
-        await session.get(Claw, schedule.labels.get("claw"))
-        if schedule.labels.get("claw")
-        else None
-    )
-    if (
-        claw is None
-        or claw.archived_at is not None
-        or claw.workspace_id != run.workspace_id
-        or run.principal_id != claw.service_account_id
-        or schedule.principal_id != claw.service_account_id
-    ):
-        return None
+    run, claw = pair
     return Binding(claw, run, "scheduled", attempt_id)
 
 

@@ -67,7 +67,6 @@ export interface Overview {
       permanent: boolean;
     } | null;
     browser_failure: string | null;
-    fresh_schedule_count: number;
     browser_name: string | null;
     browser: string | null;
     automation_account: string;
@@ -116,17 +115,12 @@ export interface Schedule {
   id: string;
   name: string;
   prompt: string;
+  target: "main" | "fresh";
   cron: string | null;
   deleted_at: string | null;
   lateness_seconds: number;
   timezone: string;
   enabled: boolean;
-  next_at: string | null;
-}
-export interface FreshSchedule {
-  id: string;
-  name: string;
-  state: string;
   next_at: string | null;
 }
 export interface Occurrence {
@@ -135,6 +129,8 @@ export interface Occurrence {
   delivery_id: string | null;
   status: string;
   item_id: string | null;
+  session_id: string | null;
+  thread_id: string | null;
   run_id: string | null;
 }
 export interface Collection<T> {

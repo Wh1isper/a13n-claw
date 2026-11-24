@@ -13,7 +13,7 @@ Workspace administrators open **Workspace Settings → Claw settings**. Create a
 
 Choose named Worker Agents and dynamic Worker models in **Claw settings**. The Main Agent's model is also available to dynamic Workers. Enable **Shell review** to choose a review model, risk threshold, and optional instruction; flagged commands and review errors are denied. Source Agent permissions that already deny shell execution remain in force.
 
-Archive blocking Fresh Schedules before changing a binding. Before changing the Environment, finish or cancel active or waiting Main and shared Worker Runs and clear pending native Thread messages, then retry the change. Service updates every dynamic or shared Worker branch, including a Worker whose Environment was independently rebound; dedicated and none-policy branches stay unchanged. Files and browser profiles stay with the original resources. **Sync revision** picks up the Agent's current default revision for subsequent Claw admissions. Existing Run and native Schedule captures are unchanged. **Archive Claw** stops intake and automation without deleting its native Threads, Runs, schedules, or Project resources.
+Before changing the Environment, finish or cancel active or waiting Main and shared Worker Runs and clear pending native Thread messages, then retry the change. Service updates every dynamic or shared Worker branch, including a Worker whose Environment was independently rebound; dedicated and none-policy branches stay unchanged. Files and browser profiles stay with the original resources. **Sync revision** picks up the Agent's current default revision for subsequent Claw admissions. Existing Run captures are unchanged; later fresh occurrences use current Project selections. **Archive Claw** stops intake and automation without deleting its native Threads, Runs, schedules, or Project resources.
 
 ## Deliveries
 
@@ -27,4 +27,4 @@ Save the connector, reopen it, and select **Check saved connection** to verify a
 
 ## Schedules
 
-Main schedules can be edited, triggered immediately, paused, resumed, or deleted. Their occurrence history links to retained deliveries and exact Main Runs. Fresh-Thread schedules link to native Service definitions and occurrence history. See [Schedules and heartbeat](./schedules.md).
+Both Main and Fresh Thread schedules can be edited, triggered immediately, paused, resumed, or deleted. Filter by target and state; occurrence history links to the exact Thread and Run. See [Schedules and heartbeat](./schedules.md).

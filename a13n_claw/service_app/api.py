@@ -6,10 +6,8 @@ from typing import Annotated, Literal
 
 import httpx
 import pydantic
-from a13n_service.app_sdk import schedules as app_schedules
 from a13n_service.app_sdk import threads as app_threads
 from a13n_service.app_sdk.usage import AppModelUsageQuery, app_models
-from a13n_service.infra.audit import record as audit_record
 from a13n_service.infra.cursors import keyset_page
 from a13n_service.infra.db import now, short_session, transaction
 from a13n_service.infra.errors import ServiceError, conflict, not_found
@@ -21,9 +19,6 @@ from a13n_service.runs.browsers.tables import BrowserRow
 from a13n_service.runs.environments.schemas import EnvironmentFailure
 from a13n_service.runs.requests import CurrentRuntime
 from a13n_service.runs.runtime import Runtime
-from a13n_service.runs.schedules.calendar import Calendar
-from a13n_service.runs.schedules.schemas import CronSchedule, OnceSchedule
-from a13n_service.runs.schedules.schemas import Schedule as NativeSchedule
 from a13n_service.runs.schemas import Failure
 from a13n_service.tenancy.access import workspace_scope
 from a13n_service.tenancy.app_plugins import app_router
@@ -48,6 +43,7 @@ from .models import (
     Delivery,
     InboxItem,
     Occurrence,
+    Schedule,
 )
 
 router = app_router(APP_ID)
@@ -148,7 +144,6 @@ class ProjectStatus(BaseModel):
     environment_failure: EnvironmentFailure | None
     browser_name: str | None
     browser_failure: str | None
-    fresh_schedule_count: int
     browser: str | None
     automation_account: str
     cli_versions: dict[str, str] | None
@@ -431,7 +426,7 @@ async def lock_active_claw(session: AsyncSession, workspace_id: str, claw_id: st
 
 async def prepare_claw_admission(
     session: AsyncSession, runtime: Runtime, workspace_id: str, claw_id: str
-) -> None:
+) -> app_threads.Admission:
     # Service App locks precede Claw locks for every SDK write.
     account_id = await session.scalar(
         select(Claw.service_account_id).where(
@@ -440,7 +435,9 @@ async def prepare_claw_admission(
     )
     if account_id is None:
         raise not_found("claw", claw_id)
-    await app_threads.prepare_admission(session, runtime, workspace_id, account_id, app_id=APP_ID)
+    return await app_threads.prepare_admission(
+        session, runtime, workspace_id, account_id, app_id=APP_ID
+    )
 
 
 @router.delete("/claws/{claw_id}", status_code=204, name="claw_archive")
@@ -450,9 +447,6 @@ async def archive_claw(
     async with transaction(runtime.storage) as session:
         scope = await workspace_scope(session, actor, workspace_id, "admin")
         claw = await lock_active_claw(session, workspace_id, claw_id)
-        await schedules.require_no_fresh_work(
-            session, claw, reason="archive_fresh_schedules_before_archiving"
-        )
         await egress.invalidate_claw(session, claw.id)
         claw.archived_at = await now(session)
     await connectors.lark_changed(runtime, scope.organization_id)
@@ -683,7 +677,6 @@ async def overview(
                 environment_name=environment.name if environment else None,
                 environment_failure=environment.failure if environment else None,
                 browser_failure=browser.failure if browser else None,
-                fresh_schedule_count=await schedules.fresh_schedule_count(session, claw),
                 browser_name=browser.name if browser else None,
                 browser=browser.status if browser else ("missing" if claw.browser_id else None),
                 automation_account=account_status,
@@ -942,10 +935,11 @@ async def list_schedules(
     runtime: CurrentRuntime,
     cursor: str | None = None,
     limit: PageSize = 50,
+    target: Literal["main", "fresh"] | None = None,
 ) -> dict:
     async with short_session(runtime.storage) as session:
         claw = await get_claw(session, workspace_id, claw_id)
-        rows, next_cursor = await schedules.list_schedules(session, claw, cursor, limit)
+        rows, next_cursor = await schedules.list_schedules(session, claw, cursor, limit, target)
         return {
             "items": [schedules.ScheduleView.model_validate(row) for row in rows],
             "next_cursor": next_cursor,
@@ -970,11 +964,16 @@ async def create_schedule(
     workspace_id: WorkspaceId,
     actor: Actor,
     runtime: CurrentRuntime,
+    request_key: Annotated[
+        str | None, Header(alias="Idempotency-Key", min_length=1, max_length=128)
+    ] = None,
 ) -> schedules.ScheduleView:
     async with transaction(runtime.storage) as session:
         await workspace_scope(session, actor, workspace_id, "write")
         claw = await lock_active_claw(session, workspace_id, claw_id)
-        return schedules.ScheduleView.model_validate(await schedules.create(session, claw, body))
+        return schedules.ScheduleView.model_validate(
+            await schedules.create(session, claw, body, request_key=request_key)
+        )
 
 
 @router.post("/claws/{claw_id}/schedules/{schedule_id}/trigger", name="claw_trigger_schedule")
@@ -987,81 +986,65 @@ async def trigger_schedule(
     request_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
 ) -> schedules.OccurrenceView:
     occurrence_id = "ct_" + sha256(f"{claw_id}:{actor.id}:{request_key}".encode()).hexdigest()
-    async with transaction(runtime.storage) as session:
-        await workspace_scope(session, actor, workspace_id, "write")
-        claw = await lock_active_claw(session, workspace_id, claw_id)
-        occurrence = await schedules.trigger(
-            session, claw, schedule_id, occurrence_id=occurrence_id
-        )
-        result = schedules.OccurrenceView.model_validate(occurrence)
+    for _ in range(3):
+        preparing = False
+        try:
+            async with transaction(runtime.storage) as session:
+                await workspace_scope(session, actor, workspace_id, "write")
+                target = await session.scalar(
+                    select(Schedule.target).where(
+                        Schedule.claw_id == claw_id, Schedule.id == schedule_id
+                    )
+                )
+                existing = await session.get(Occurrence, occurrence_id)
+                admission = None
+                if target == "fresh" and existing is None:
+                    preparing = True
+                    admission = await prepare_claw_admission(
+                        session, runtime, workspace_id, claw_id
+                    )
+                    preparing = False
+                claw = await lock_active_claw(session, workspace_id, claw_id)
+                schedule = await schedules.find_schedule(
+                    session, claw, schedule_id, include_deleted=True
+                )
+                existing = await session.get(Occurrence, occurrence_id)
+                if schedule.target == "fresh" and admission is None and existing is None:
+                    continue
+                occurrence = await schedules.trigger(
+                    session,
+                    claw,
+                    schedule_id,
+                    occurrence_id=occurrence_id,
+                    runtime=runtime,
+                    admission=admission,
+                )
+                result = schedules.OccurrenceView.model_validate(occurrence)
+                break
+        except ServiceError:
+            if not preparing:
+                raise
+            # Another caller may have committed the same occurrence while admission failed.
+            async with transaction(runtime.storage) as session:
+                await workspace_scope(session, actor, workspace_id, "write")
+                claw = await lock_active_claw(session, workspace_id, claw_id)
+                if await session.get(Occurrence, occurrence_id) is None:
+                    raise
+                occurrence = await schedules.trigger(
+                    session,
+                    claw,
+                    schedule_id,
+                    occurrence_id=occurrence_id,
+                    runtime=runtime,
+                    admission=None,
+                )
+                result = schedules.OccurrenceView.model_validate(occurrence)
+                break
+    else:
+        raise conflict("schedule", schedule_id, "target_changed")
     if result.status == "unread":
         await main_thread.notify(runtime, workspace_id, claw_id)
     return result
-
-
-@router.get("/claws/{claw_id}/fresh-schedules", name="claw_list_fresh_schedules")
-async def list_fresh_schedules(
-    claw_id: ResourceId,
-    workspace_id: WorkspaceId,
-    actor: Actor,
-    runtime: CurrentRuntime,
-    cursor: str | None = None,
-    limit: PageSize = 30,
-) -> dict:
-    async with short_session(runtime.storage) as session:
-        await workspace_scope(session, actor, workspace_id, "read")
-        claw = await get_claw(session, workspace_id, claw_id)
-        page = await app_schedules.list_app_schedules(
-            session,
-            workspace_id,
-            app_id=APP_ID,
-            labels={"claw": claw.id},
-            cursor=cursor,
-            limit=limit,
-        )
-        current = await now(session)
-        items = []
-        for row in page.items:
-            next_at = None
-            if row.state == "enabled":
-                if isinstance(row.schedule, OnceSchedule):
-                    next_at = row.schedule.run_at
-                elif isinstance(row.schedule, CronSchedule):
-                    next_at = Calendar.parse(row.schedule.expression, row.schedule.timezone).next(
-                        current
-                    )
-            items.append(dict(id=row.id, name=row.name, state=row.state, next_at=next_at))
-        return {"items": items, "next_cursor": page.next_cursor}
-
-
-@router.post("/claws/{claw_id}/fresh-schedules", status_code=201, name="claw_create_fresh_schedule")
-async def create_fresh_schedule(
-    claw_id: ResourceId,
-    body: schedules.ScheduleInput,
-    workspace_id: WorkspaceId,
-    actor: Actor,
-    runtime: CurrentRuntime,
-    request_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
-) -> NativeSchedule:
-    async with transaction(runtime.storage) as session:
-        scope = await workspace_scope(session, actor, workspace_id, "write")
-        await prepare_claw_admission(session, runtime, workspace_id, claw_id)
-        claw = await lock_active_claw(session, workspace_id, claw_id)
-        builder = await schedules.fresh_account(session, runtime, claw)
-        result, created = await schedules.create_fresh_in_transaction(
-            session, runtime, claw, body, f"{claw.id}:{actor.id}:{request_key}", builder
-        )
-        if created:
-            audit_record(
-                session,
-                scope,
-                actor_id=actor.id,
-                action="claw.fresh_schedule.request",
-                target_kind="schedule",
-                target_id=result.id,
-                details={"claw_id": claw.id},
-            )
-        return result
 
 
 class ScheduleState(BaseModel):

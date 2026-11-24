@@ -42,7 +42,6 @@ def test_rebind_preserves_busy_project_and_uses_sdk_result(monkeypatch):
             return SimpleNamespace(environment_id="new", browser_id="browser")
 
         monkeypatch.setattr(project.app_projects, "check_resources", check)
-        monkeypatch.setattr(project.schedules, "require_no_fresh_work", check)
         monkeypatch.setattr(project.egress, "revoke_for_rebind", check)
         monkeypatch.setattr(project.app_threads, "update_thread_resources", update)
         scope = SimpleNamespace(workspace_id="ws")
@@ -81,7 +80,6 @@ def test_browser_only_change_omits_environment_sdk_arguments(monkeypatch):
             return SimpleNamespace(environment_id="env", browser_id="new")
 
         monkeypatch.setattr(project.app_projects, "check_resources", noop)
-        monkeypatch.setattr(project.schedules, "require_no_fresh_work", noop)
         monkeypatch.setattr(project.app_threads, "update_thread_resources", update)
         await project.rebind(
             Session(),

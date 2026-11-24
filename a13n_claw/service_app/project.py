@@ -10,7 +10,7 @@ from a13n_service.tenancy.authorize import Principal, WorkspaceScope
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import egress, schedules
+from . import egress
 from .models import APP_ID, Claw, Connector
 
 
@@ -86,9 +86,6 @@ async def rebind(
         if environment_changed and environment_template_id is None
         else None,
         browser_id=browser_id if browser_changed else None,
-    )
-    await schedules.require_no_fresh_work(
-        session, claw, reason="archive_fresh_schedules_before_rebinding"
     )
     if environment_changed:
         await egress.revoke_for_rebind(session, runtime, claw)

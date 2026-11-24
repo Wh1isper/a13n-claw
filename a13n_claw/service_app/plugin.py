@@ -19,7 +19,7 @@ from a13n_harness.usage import RunUsageSummary
 from a13n_logging import get_logger
 from a13n_service.app_sdk import threads as app_threads
 from a13n_service.infra.db import short_session, transaction
-from a13n_service.infra.errors import ServiceError
+from a13n_service.infra.errors import ServiceError, conflict
 from a13n_service.runs.dynamic_subagents import CapabilitySelection
 from a13n_service.runs.tables import RunRow
 from a13n_service.tenancy.authorize import (
@@ -41,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import connectors, egress, inbox, main_thread, project_cli, schedules, workers
 from .main_thread import PLUGIN_KEY
-from .models import APP_ID, Claw, Connector, ConnectorEgress
+from .models import APP_ID, Claw, Connector, ConnectorEgress, Occurrence, Schedule
 
 if TYPE_CHECKING:
     from a13n_service.runs.runtime import Runtime
@@ -221,6 +221,25 @@ async def claw_open(ctx: RunContext[AgentContext], item_id: str) -> dict | None:
         return {"id": item.id, "kind": item.kind, "source": item.source, "content": item.content}
 
 
+def require_captured_authority(run: RunRow, actor) -> None:
+    authority = ExecutionAuthority.model_validate(run.authority)
+    authorize(
+        actor,
+        WorkspaceScope(run.organization_id, run.workspace_id),
+        "write",
+        authority=authority,
+    )
+    assert actor.confinement is not None
+    current = execution_authority(actor, actor.confinement)
+    if (
+        current.principal_id != authority.principal_id
+        or current.organization_id != authority.organization_id
+        or current.workspace_id != authority.workspace_id
+        or not current.verbs <= authority.verbs
+    ):
+        raise ServiceError("conflict", "Automation authority changed")
+
+
 @main_tools.tool
 async def claw_schedule(
     ctx: RunContext[AgentContext],
@@ -239,37 +258,28 @@ async def claw_schedule(
             )
         claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
         run, actor = await workers.fence(session, runtime, claw, bound)
-        request_id = call_key(ctx)
+        request_id = call_key(ctx)[:64]
         if target == "main":
-            row = await schedules.create(session, claw, body, schedule_id=request_id)
+            row = await schedules.create(
+                session, claw, body.model_copy(update={"target": target}), schedule_id=request_id
+            )
             return schedules.ScheduleView.model_validate(row).model_dump(mode="json")
-        authority = ExecutionAuthority.model_validate(run.authority)
-        authorize(
-            actor,
-            WorkspaceScope(run.organization_id, run.workspace_id),
-            "write",
-            authority=authority,
+        require_captured_authority(run, actor)
+        row = await schedules.create(
+            session, claw, body.model_copy(update={"target": target}), schedule_id=request_id
         )
-        assert actor.confinement is not None
-        current = execution_authority(actor, actor.confinement)
-        if (
-            current.principal_id != authority.principal_id
-            or current.organization_id != authority.organization_id
-            or current.workspace_id != authority.workspace_id
-            or not current.verbs <= authority.verbs
-        ):
-            raise ServiceError("conflict", "Automation authority changed")
-        schedule, _ = await schedules.create_fresh_in_transaction(
-            session, runtime, claw, body, request_id, actor
-        )
-        return schedule.model_dump(mode="json")
+        return schedules.ScheduleView.model_validate(row).model_dump(mode="json")
 
 
 @main_tools.tool
-async def claw_schedules(ctx: RunContext[AgentContext], cursor: str | None = None) -> dict:
-    """List this Claw's Main-mode schedules and their next fire time."""
+async def claw_schedules(
+    ctx: RunContext[AgentContext],
+    cursor: str | None = None,
+    target: Literal["main", "fresh"] | None = None,
+) -> dict:
+    """List this Claw's schedules and their next fire time."""
     async with scope(ctx, "main") as (runtime, bound), short_session(runtime.storage) as session:
-        rows, next_cursor = await schedules.list_schedules(session, bound.claw, cursor, 30)
+        rows, next_cursor = await schedules.list_schedules(session, bound.claw, cursor, 30, target)
         return {
             "items": [
                 schedules.ScheduleView.model_validate(row).model_dump(mode="json") for row in rows
@@ -282,7 +292,7 @@ async def claw_schedules(ctx: RunContext[AgentContext], cursor: str | None = Non
 async def claw_schedule_enabled(
     ctx: RunContext[AgentContext], schedule_id: str, enabled: bool
 ) -> dict:
-    """Pause or resume a Main-mode schedule."""
+    """Pause or resume a schedule."""
     async with scope(ctx, "main") as (runtime, bound), transaction(runtime.storage) as session:
         claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
         await workers.fence(session, runtime, claw, bound)
@@ -294,17 +304,19 @@ async def claw_schedule_enabled(
 async def claw_schedule_update(
     ctx: RunContext[AgentContext], schedule_id: str, body: schedules.ScheduleEdit
 ) -> dict:
-    """Update a Main-mode schedule without changing recorded occurrences."""
+    """Update a schedule without changing recorded occurrences."""
     async with scope(ctx, "main") as (runtime, bound), transaction(runtime.storage) as session:
         claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
-        await workers.fence(session, runtime, claw, bound)
+        run, actor = await workers.fence(session, runtime, claw, bound)
+        if body.target == "fresh":
+            require_captured_authority(run, actor)
         row = await schedules.edit(session, claw, schedule_id, body)
         return schedules.ScheduleView.model_validate(row).model_dump(mode="json")
 
 
 @main_tools.tool
 async def claw_schedule_delete(ctx: RunContext[AgentContext], schedule_id: str) -> dict:
-    """Stop a Main-mode schedule while retaining its recorded history."""
+    """Stop a schedule while retaining its recorded history."""
     async with scope(ctx, "main") as (runtime, bound), transaction(runtime.storage) as session:
         claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
         await workers.fence(session, runtime, claw, bound)
@@ -314,12 +326,67 @@ async def claw_schedule_delete(ctx: RunContext[AgentContext], schedule_id: str) 
 
 @main_tools.tool
 async def claw_schedule_trigger(ctx: RunContext[AgentContext], schedule_id: str) -> dict:
-    """Trigger a Main-mode schedule now without moving its future rule."""
-    async with scope(ctx, "main") as (runtime, bound), transaction(runtime.storage) as session:
-        claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
-        await workers.fence(session, runtime, claw, bound)
-        row = await schedules.trigger(session, claw, schedule_id, occurrence_id=call_key(ctx))
-        return schedules.OccurrenceView.model_validate(row).model_dump(mode="json")
+    """Trigger a schedule now without moving its future rule."""
+    async with scope(ctx, "main") as (runtime, bound):
+        occurrence_id = call_key(ctx)
+        for _ in range(3):
+            preparing = False
+            try:
+                async with transaction(runtime.storage) as session:
+                    target = await session.scalar(
+                        select(Schedule.target).where(
+                            Schedule.claw_id == bound.claw.id, Schedule.id == schedule_id
+                        )
+                    )
+                    existing = await session.get(Occurrence, occurrence_id)
+                    admission = None
+                    if target == "fresh" and existing is None:
+                        preparing = True
+                        admission = await app_threads.prepare_admission(
+                            session,
+                            runtime,
+                            bound.claw.workspace_id,
+                            bound.claw.service_account_id,
+                            app_id=APP_ID,
+                        )
+                        preparing = False
+                    claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
+                    run, actor = await workers.fence(session, runtime, claw, bound)
+                    schedule = await schedules.find_schedule(
+                        session, claw, schedule_id, include_deleted=True
+                    )
+                    existing = await session.get(Occurrence, occurrence_id)
+                    if schedule.target == "fresh" and admission is None and existing is None:
+                        continue
+                    if schedule.target == "fresh" and existing is None:
+                        require_captured_authority(run, actor)
+                    row = await schedules.trigger(
+                        session,
+                        claw,
+                        schedule_id,
+                        occurrence_id=occurrence_id,
+                        runtime=runtime,
+                        admission=admission,
+                    )
+                    return schedules.OccurrenceView.model_validate(row).model_dump(mode="json")
+            except ServiceError:
+                if not preparing:
+                    raise
+                async with transaction(runtime.storage) as session:
+                    claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
+                    await workers.fence(session, runtime, claw, bound)
+                    if await session.get(Occurrence, occurrence_id) is None:
+                        raise
+                    row = await schedules.trigger(
+                        session,
+                        claw,
+                        schedule_id,
+                        occurrence_id=occurrence_id,
+                        runtime=runtime,
+                        admission=None,
+                    )
+                    return schedules.OccurrenceView.model_validate(row).model_dump(mode="json")
+        raise conflict("schedule", schedule_id, "target_changed")
 
 
 @worker_tools.tool

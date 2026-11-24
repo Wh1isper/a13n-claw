@@ -34,7 +34,6 @@ import {
   Textarea,
   useAccess,
   useApp,
-  useNavigate,
   useQuery,
   useToast,
 } from "@a13n/console";
@@ -50,7 +49,6 @@ import {
   type Claw,
   type Collection,
   type Connector,
-  type FreshSchedule,
   type Occurrence,
   type Overview,
   type ResourceKind,
@@ -62,7 +60,6 @@ import {
   DateTime,
   InputValue,
   Pager,
-  ResourceLink,
   Status,
   ThreadLink,
 } from "../primitives";
@@ -99,47 +96,39 @@ function ScheduleList({
   const { can } = useAccess();
   const { params, select } = useSelection();
   const app = useApp();
-  const navigate = useNavigate();
   const [stateFilter, setStateFilter] = React.useState("all");
   const [localPage, setLocalPage] = React.useState(0);
-  const fresh = params.get("mode") === "fresh";
+  const modeFilter = params.get("mode") ?? "all";
   const [pages, setPages] = React.useState<string[]>([]);
-  const query = useRead<Collection<Schedule | FreshSchedule>>(
+  const query = useRead<Collection<Schedule>>(
     stateFilter !== "all"
       ? null
-      : url(`${clawPath(claw.id)}/${fresh ? "fresh-schedules" : "schedules"}`, {
+      : url(`${clawPath(claw.id)}/schedules`, {
+          target: modeFilter === "all" ? null : modeFilter,
           cursor: pages.at(-1),
         }),
     stateFilter === "all" ? 10000 : undefined,
   );
   const filtered = useQuery({
-    queryKey: app.queryKey(
-      "schedule-state",
-      claw.id,
-      fresh ? "fresh" : "main",
-      stateFilter,
-    ),
+    queryKey: app.queryKey("schedule-state", claw.id, modeFilter, stateFilter),
     enabled: stateFilter !== "all",
     queryFn: async ({ signal }) => {
       let cursor: string | null = null;
-      const rows: (Schedule | FreshSchedule)[] = [];
+      const rows: Schedule[] = [];
       do {
-        const page: Collection<Schedule | FreshSchedule> = await json(
+        const page: Collection<Schedule> = await json(
           await app.request(
-            url(
-              `${clawPath(claw.id)}/${fresh ? "fresh-schedules" : "schedules"}`,
-              { cursor, limit: "100" },
-            ),
+            url(`${clawPath(claw.id)}/schedules`, {
+              cursor,
+              limit: "100",
+              target: modeFilter === "all" ? null : modeFilter,
+            }),
             { signal },
           ),
         );
         rows.push(
-          ...page.items.filter((row) =>
-            "state" in row
-              ? stateFilter === "active"
-                ? ["active", "enabled"].includes(row.state)
-                : row.state === "paused"
-              : row.enabled === (stateFilter === "active"),
+          ...page.items.filter(
+            (row) => row.enabled === (stateFilter === "active"),
           ),
         );
         cursor = page.next_cursor;
@@ -153,10 +142,7 @@ function ScheduleList({
       ? query.data?.items
       : filtered.data?.slice(localPage * 30, (localPage + 1) * 30);
   const add = can("write") && (
-    <Button
-      disabled={fresh && !claw.environment_id}
-      onClick={() => select({ schedule: "new" })}
-    >
+    <Button onClick={() => select({ schedule: "new" })}>
       {copy("New schedule", "新建排程")}
     </Button>
   );
@@ -177,13 +163,14 @@ function ScheduleList({
         <div className={styles.actions}>
           <SegmentedControl
             label={copy("Schedule mode", "排程模式")}
-            value={fresh ? "fresh" : "main"}
+            value={modeFilter}
             onValueChange={(value) => {
               setPages([]);
               setLocalPage(0);
-              select({ mode: value === "fresh" ? value : null });
+              select({ mode: value === "all" ? null : value });
             }}
             options={[
+              { value: "all", label: copy("All", "全部") },
               { value: "main", label: copy("Main", "主线程") },
               { value: "fresh", label: copy("Fresh Threads", "新线程") },
             ]}
@@ -205,14 +192,6 @@ function ScheduleList({
         </div>
       }
     >
-      {fresh && !claw.environment_id && (
-        <p className={styles.muted}>
-          {copy(
-            "Bind a Project Environment before creating a Fresh Schedule.",
-            "创建新线程排程前，请先绑定项目环境。",
-          )}
-        </p>
-      )}
       {listQuery.isPending ? (
         <Loading />
       ) : listQuery.isError ? (
@@ -231,47 +210,37 @@ function ScheduleList({
           <ResourceTable
             caption={copy("Schedules", "排程")}
             items={rows}
-            onRowActivate={(row) =>
-              "state" in row
-                ? navigate(`/workspace/${app.workspaceId}/schedules/${row.id}`)
-                : select({ schedule: row.id })
-            }
+            onRowActivate={(row) => select({ schedule: row.id })}
             columns={[
               {
                 label: copy("Name", "名称"),
                 tone: "primary",
-                render: (row) =>
-                  "state" in row ? (
-                    <ResourceLink path={`schedules/${row.id}`}>
+                render: (row) => (
+                  <span>
+                    <ClawLink
+                      id={claw.id}
+                      page="schedules"
+                      query={{ schedule: row.id }}
+                    >
                       {row.name}
-                    </ResourceLink>
-                  ) : (
-                    <span>
-                      <ClawLink
-                        id={claw.id}
-                        page="schedules"
-                        query={{ schedule: row.id }}
-                      >
-                        {row.name}
-                      </ClawLink>
-                      <span className={styles.subtitle}>
-                        {row.cron ?? copy("One time", "单次")}
-                      </span>
+                    </ClawLink>
+                    <span className={styles.subtitle}>
+                      {row.cron ?? copy("One time", "单次")}
                     </span>
-                  ),
+                  </span>
+                ),
+              },
+              {
+                label: copy("Target", "目标"),
+                render: (row) =>
+                  row.target === "fresh"
+                    ? copy("Fresh Thread", "新线程")
+                    : copy("Main", "主线程"),
               },
               {
                 label: copy("State", "状态"),
                 render: (row) => (
-                  <Status
-                    state={
-                      "state" in row
-                        ? row.state
-                        : row.enabled
-                          ? "enabled"
-                          : "paused"
-                    }
-                  />
+                  <Status state={row.enabled ? "enabled" : "paused"} />
                 ),
               },
               {
@@ -343,7 +312,7 @@ function ScheduleRoute({ claw, id }: { claw: Claw; id: string }) {
       <ScheduleEditor
         claw={claw}
         row={query.data}
-        fresh={false}
+        fresh={query.data.target === "fresh"}
         close={close}
       />
     );
@@ -381,6 +350,9 @@ function ScheduleEditor({
   const { copy } = useCopy();
   const { workspaceId } = useApp();
   const [mode, setMode] = React.useState(row && !row.cron ? "once" : "cron");
+  const [target, setTarget] = React.useState(
+    row?.target ?? (fresh && claw.environment_id ? "fresh" : "main"),
+  );
   const [changeRule, setChangeRule] = React.useState(!row);
   const write = useWrite<Schedule>();
   const request = React.useRef<{ payload: string; key: string } | null>(null);
@@ -393,10 +365,8 @@ function ScheduleEditor({
     <Page
       title={
         row
-          ? copy("Edit Main schedule", "编辑主线程排程")
-          : fresh
-            ? copy("New Fresh Schedule", "新建新线程排程")
-            : copy("New Main schedule", "新建主线程排程")
+          ? copy("Edit schedule", "编辑排程")
+          : copy("New schedule", "新建排程")
       }
       back={back}
       backLabel={copy("Schedules", "排程")}
@@ -405,10 +375,12 @@ function ScheduleEditor({
         className={styles.form}
         onSubmit={(event) => {
           event.preventDefault();
+          if (target === "fresh" && !claw.environment_id) return;
           const form = new FormData(event.currentTarget);
           const body = {
             name: field(form, "name"),
             prompt: field(form, "prompt"),
+            target,
             lateness_seconds: Number(field(form, "lateness")),
             ...(changeRule
               ? {
@@ -426,7 +398,7 @@ function ScheduleEditor({
                 }
               : {}),
           };
-          const path = `${clawPath(claw.id)}/${fresh ? "fresh-schedules" : `schedules${row ? `/${row.id}` : ""}`}`;
+          const path = `${clawPath(claw.id)}/schedules${row ? `/${row.id}` : ""}`;
           request.current = requestForPayload(
             request.current,
             JSON.stringify([path, body]),
@@ -443,6 +415,29 @@ function ScheduleEditor({
         }}
       >
         <FormSection title={copy("Task", "任务")}>
+          <ChoiceField
+            label={copy("Target", "目标")}
+            value={target}
+            onValueChange={(value) =>
+              setTarget(value === "fresh" ? "fresh" : "main")
+            }
+            options={[
+              { value: "main", label: copy("Main", "主线程") },
+              {
+                value: "fresh",
+                label: copy("Fresh Thread", "新线程"),
+                disabled: !claw.environment_id,
+              },
+            ]}
+            description={
+              !claw.environment_id
+                ? copy(
+                    "Bind a Project Environment to use a Fresh Thread.",
+                    "绑定项目环境后可使用新线程。",
+                  )
+                : undefined
+            }
+          />
           <FormField label={copy("Name", "名称")}>
             <InputValue name="name" value={row?.name} maxLength={128} />
           </FormField>
@@ -609,7 +604,7 @@ function ScheduleDetails({ claw, row }: { claw: Claw; row: Schedule }) {
                   {row.enabled ? copy("Pause", "暂停") : copy("Resume", "恢复")}
                 </Button>
                 <Confirm
-                  title={copy("Delete Main schedule?", "删除主线程排程？")}
+                  title={copy("Delete schedule?", "删除排程？")}
                   subject={row.name}
                   danger
                   trigger={copy("Delete", "删除")}
@@ -631,6 +626,11 @@ function ScheduleDetails({ claw, row }: { claw: Claw; row: Schedule }) {
         rail={
           <Rail>
             <RailSection title={copy("Timing", "时间设置")}>
+              <RailRow label={copy("Target", "目标")}>
+                {row.target === "fresh"
+                  ? copy("Fresh Thread", "新线程")
+                  : copy("Main", "主线程")}
+              </RailRow>
               <RailRow label={copy("Next occurrence", "下次触发")}>
                 <DateTime value={row.next_at} />
               </RailRow>
@@ -700,12 +700,12 @@ function ScheduleDetails({ claw, row }: { claw: Claw; row: Schedule }) {
                         ),
                     },
                     {
-                      label: copy("Main Run", "主线程运行"),
+                      label: copy("Execution", "执行"),
                       render: (item) =>
                         item.run_id ? (
                           <ThreadLink
-                            thread={claw.main_thread_id}
-                            session={claw.main_session_id}
+                            thread={item.thread_id ?? claw.main_thread_id}
+                            session={item.session_id ?? claw.main_session_id}
                             run={item.run_id}
                           >
                             {copy("Open Run", "打开运行")}

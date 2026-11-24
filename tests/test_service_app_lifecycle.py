@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import time
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -19,27 +20,28 @@ from a13n_harness.environment.models import (
 )
 from a13n_harness.environment.operations import EnvironmentOperations
 from a13n_service.app import build_app
-from a13n_service.infra.audit import AuditEventRow
 from a13n_service.infra.db import short_session, transaction
 from a13n_service.infra.errors import ServiceError
 from a13n_service.migrations.scratch import scratch_database
 from a13n_service.providers import envd
 from a13n_service.runs.environments import external
-from a13n_service.runs.schedules.tables import ScheduleRow as NativeScheduleRow
 from a13n_service.runs.tables import RunRow, ThreadRow
 from a13n_service.settings import Database, Settings
-from a13n_service.tenancy.tables import PrincipalRow
 from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 
 from a13n_claw.service_app import (
+    api,
     connectors,
     inbox,
     main_thread,
     project_cli,
     schedules,
 )
-from a13n_claw.service_app.models import InboxItem, Schedule
+from a13n_claw.service_app import (
+    app as claw_app,
+)
+from a13n_claw.service_app.models import InboxItem, Occurrence, Schedule
 
 
 @pytest.fixture
@@ -64,7 +66,9 @@ def model_server():
                 for message in body["messages"]
                 for call in message.get("tool_calls", [])
             }
-            if "claw_schedule" in tools - used:
+            if "claw_report" in tools - used:
+                tool, args = "claw_report", {"message": "Scheduled result for Main"}
+            elif "claw_schedule" in tools - used:
                 tool, args = (
                     "claw_schedule",
                     {
@@ -426,38 +430,41 @@ def exercise_lifecycle(
     assert main["session_id"] == overview["claw"]["main_session_id"]
     assert main["status"] == "completed", main.get("failure")
     assert main["agent_revision_id"] == claw["agent_revision_id"]
-    (schedule,) = read(f"{path}/fresh-schedules")["items"]
-    assert schedule["name"] == "Fresh follow-up" and schedule["state"] == "enabled"
-    schedule_path = f"/schedules/{schedule['id']}"
-    native = client.get(f"/api/v1{schedule_path}")
-    assert native.status_code == 200, native.text
-    assert native.json()["invocation"]["agent_revision_id"] == claw["agent_revision_id"]
-    occ = post(
-        f"{schedule_path}/dispatch",
-        {},
-        202,
-        headers={
-            "Idempotency-Key": uuid4().hex,
-            "Authorization": f"Bearer {key['secret']}",
-            "If-Match": native.headers["ETag"],
-        },
-    )
+    (schedule,) = read(f"{path}/schedules?target=fresh")["items"]
+    assert schedule["name"] == "Fresh follow-up" and schedule["enabled"]
+    schedule_path = f"{path}/schedules/{schedule['id']}"
+    trigger_key = {"Idempotency-Key": uuid4().hex}
+    occ = post(f"{schedule_path}/trigger", {}, 200, headers=trigger_key)
+
+    async def refused_admission(*_args, **_kwargs):
+        raise ServiceError("unavailable", "synthetic account refusal")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(api, "prepare_claw_admission", refused_admission)
+        replay = post(f"{schedule_path}/trigger", {}, 200, headers=trigger_key)
+        assert replay["id"] == occ["id"] and replay["run_id"] == occ["run_id"]
+        post(f"{schedule_path}/trigger", {}, 503, headers={"Idempotency-Key": uuid4().hex})
     scheduled = eventually(
-        lambda: read(f"{schedule_path}/occurrences/{occ['id']}"),
-        lambda row: row["execution_outcome"],
+        lambda: read(f"{schedule_path}/occurrences"),
+        lambda page: page["items"] and page["items"][0]["status"] == "completed",
+    )["items"][0]
+    assert scheduled["id"] == occ["id"]
+    assert scheduled["thread_id"] != main["thread_id"]
+    assert scheduled["session_id"]
+    assert scheduled["run_id"] != main["id"]
+    reports = eventually(
+        lambda: read(f"{path}/deliveries"),
+        lambda page: any(item.get("origin") == "worker" for item in page["items"]),
     )
-    assert scheduled["execution_outcome"] == "succeeded", scheduled
-    assert scheduled["completion_run_id"] != main["id"]
+    assert any(item.get("origin") == "worker" for item in reports["items"])
 
     async def captured_execution():
         async with short_session(runtime.storage) as session:
             main_run = await session.get_one(RunRow, main["id"])
-            fresh_run = await session.get_one(RunRow, scheduled["completion_run_id"])
-            definition = await session.get_one(NativeScheduleRow, schedule["id"])
+            fresh_run = await session.get_one(RunRow, scheduled["run_id"])
             return [
                 (main_run.principal_id, main_run.authority),
                 (fresh_run.principal_id, fresh_run.authority),
-                (definition.principal_id, definition.authority),
             ]
 
     for principal_id, authority in client.portal.call(captured_execution):
@@ -483,76 +490,14 @@ def exercise_lifecycle(
     fresh_body = {
         "name": "Operator schedule",
         "prompt": "Later work",
+        "target": "fresh",
         "rule": {"type": "once", "run_at": (datetime.now(UTC) + timedelta(minutes=15)).isoformat()},
     }
     fresh_headers = {"Idempotency-Key": uuid4().hex}
-    fresh_path = f"{path}/fresh-schedules"
-    # A failed App writeback rolls back the native Schedule in the same transaction.
-    original_create = schedules.app_schedules.create_fresh_schedule
-    rolled_back = []
-
-    async def fail_after_create(*args, **kwargs):
-        native, created = await original_create(*args, **kwargs)
-        if not rolled_back:
-            rolled_back.append(native.id)
-            raise ServiceError("unavailable", "Fixture failed before the receipt")
-        return native, created
-
-    with monkeypatch.context() as patch:
-        patch.setattr(schedules.app_schedules, "create_fresh_schedule", fail_after_create)
-        post(fresh_path, fresh_body, 503, headers=fresh_headers)
-
-        async def pending_receipt():
-            async with short_session(runtime.storage) as session:
-                return await session.get(NativeScheduleRow, rolled_back[0]) is None
-
-        assert client.portal.call(pending_receipt)
-        operator_schedule = post(fresh_path, fresh_body, headers=fresh_headers)
-        assert operator_schedule["id"] != rolled_back[0]
+    fresh_path = f"{path}/schedules"
+    operator_schedule = post(fresh_path, fresh_body, headers=fresh_headers)
     assert post(fresh_path, fresh_body, headers=fresh_headers)["id"] == operator_schedule["id"]
-
-    async def audit_fresh_request():
-        async with short_session(runtime.storage) as session:
-            events = (
-                await session.scalars(
-                    select(AuditEventRow).where(
-                        AuditEventRow.action == "claw.fresh_schedule.request",
-                        AuditEventRow.workspace_id == ws,
-                    )
-                )
-            ).all()
-            actors = [await session.get_one(PrincipalRow, event.actor_id) for event in events]
-            return [
-                (event.details, actor.kind, actor.email)
-                for event, actor in zip(events, actors, strict=True)
-            ]
-
-    assert client.portal.call(audit_fresh_request) == [
-        ({"claw_id": claw["id"]}, "user", "admin@example.com")
-    ]
     post(fresh_path, {**fresh_body, "prompt": "Different work"}, 409, headers=fresh_headers)
-    service_headers = {"Authorization": f"Bearer {key['secret']}"}
-    operator_path = f"/api/v1/schedules/{operator_schedule['id']}"
-    latest = client.get(operator_path)
-    assert read(path)["project"]["fresh_schedule_count"] == 2
-    assert client.delete(f"/api/v1{path}").status_code == 409
-    refused = client.patch(update_url, json={"environment_id": replacement["id"]})
-    assert refused.status_code == 409, refused.text
-    latest = client.get(f"/api/v1{schedule_path}")
-    archived = client.delete(
-        f"/api/v1{schedule_path}",
-        headers={"Authorization": f"Bearer {key['secret']}", "If-Match": latest.headers["ETag"]},
-    )
-    assert archived.status_code == 204, archived.text
-    blocked_by_operator_schedule = client.patch(
-        update_url, json={"environment_id": replacement["id"]}
-    )
-    assert blocked_by_operator_schedule.status_code == 409, blocked_by_operator_schedule.text
-    latest_operator = client.get(operator_path)
-    archived = client.delete(
-        operator_path, headers={**service_headers, "If-Match": latest_operator.headers["ETag"]}
-    )
-    assert archived.status_code == 204, archived.text
     updated = eventually(
         lambda: client.patch(update_url, json={"environment_id": replacement["id"]}),
         lambda response: response.status_code != 409,
@@ -560,7 +505,6 @@ def exercise_lifecycle(
     assert updated.status_code == 200, updated.text
     assert updated.json()["main_thread_id"] == main["thread_id"]
     assert read(path)["project"]["environment_name"] == replacement["name"]
-    assert read(path)["project"]["fresh_schedule_count"] == 0
     enabled = client.put(
         f"/api/v1{connector_path}",
         json={key: value for key, value in connector_body.items() if key != "credential"},
@@ -640,42 +584,171 @@ def exercise_lifecycle(
     attached = client.patch(update_url, json={"browser_id": browser["id"]})
     assert attached.status_code == 200, attached.text
     assert read(path)["project"]["browser_name"] == browser["name"]
-    post(fresh_path, fresh_body, 409, headers=fresh_headers)
+    assert post(fresh_path, fresh_body, headers=fresh_headers)["id"] == operator_schedule["id"]
     scheduled_browser = post(fresh_path, fresh_body, headers={"Idempotency-Key": uuid4().hex})
-    browser_schedule_path = f"/schedules/{scheduled_browser['id']}"
-    native_browser_schedule = client.get(f"/api/v1{browser_schedule_path}")
-    assert native_browser_schedule.status_code == 200, native_browser_schedule.text
-    invocation = native_browser_schedule.json()["invocation"]
-    assert invocation["browser_binding"]["browser_id"] == browser["id"]
-    assert invocation["environments"][0]["environment_id"] == replacement["id"]
+    browser_schedule_path = f"{fresh_path}/{scheduled_browser['id']}"
     browser_occurrence = post(
-        f"{browser_schedule_path}/dispatch",
+        f"{browser_schedule_path}/trigger",
         {},
-        202,
-        headers={
-            **service_headers,
-            "Idempotency-Key": uuid4().hex,
-            "If-Match": native_browser_schedule.headers["ETag"],
-        },
+        200,
+        headers={"Idempotency-Key": uuid4().hex},
     )
-    browser_result = eventually(
-        lambda: read(f"{browser_schedule_path}/occurrences/{browser_occurrence['id']}"),
-        lambda row: row["execution_outcome"],
+    browser_run = eventually(
+        lambda: read(f"/runs/{browser_occurrence['run_id']}"),
+        lambda run: run["sealed_at"],
     )
-    assert browser_result["execution_outcome"] == "succeeded", browser_result
-    browser_run = read(f"/runs/{browser_result['completion_run_id']}")
     assert browser_run["browser_binding"]["browser_id"] == browser["id"]
     assert browser_run["environment_mounts"][0]["environment_id"] == replacement["id"]
-    native_browser_schedule = client.get(f"/api/v1{browser_schedule_path}")
-    blocked_detach = client.patch(update_url, json={"browser_id": None})
-    assert blocked_detach.status_code == 409, blocked_detach.text
-    archived = client.delete(
-        f"/api/v1{browser_schedule_path}",
-        headers={**service_headers, "If-Match": native_browser_schedule.headers["ETag"]},
-    )
-    assert archived.status_code == 204, archived.text
     for thread_id in (main["thread_id"],):
         assert read(f"/threads/{thread_id}/browser")["browser_id"] == browser["id"]
+    detached = client.patch(update_url, json={"browser_id": None})
+    assert detached.status_code == 200, detached.text
+    reattached = client.patch(update_url, json={"browser_id": browser["id"]})
+    assert reattached.status_code == 200, reattached.text
+
+    overlapping = post(fresh_path, {**fresh_body, "name": "Overlap guard"})
+
+    async def make_outstanding():
+        async with transaction(runtime.storage) as session:
+            session.add(
+                Occurrence(
+                    id="occ_pending_test",
+                    schedule_id=overlapping["id"],
+                    scheduled_at=datetime.now(UTC) - timedelta(seconds=1),
+                    target="fresh",
+                    status="processing",
+                )
+            )
+
+    client.portal.call(make_outstanding)
+    overlap_result = post(
+        f"{fresh_path}/{overlapping['id']}/trigger",
+        {},
+        200,
+        headers={"Idempotency-Key": uuid4().hex},
+    )
+    assert overlap_result["status"] == "overlap" and overlap_result["thread_id"] is None
+    refused_switch = client.put(
+        f"/api/v1{fresh_path}/{overlapping['id']}",
+        json={
+            "name": "Overlap guard",
+            "prompt": "Later work",
+            "target": "main",
+            "lateness_seconds": 300,
+        },
+    )
+    assert refused_switch.status_code == 409, refused_switch.text
+
+    async def verify_seal():
+        async with transaction(runtime.storage) as session:
+            session.add(
+                Occurrence(
+                    id="occ_seal_test",
+                    schedule_id=overlapping["id"],
+                    scheduled_at=datetime.now(UTC),
+                    target="fresh",
+                    status="processing",
+                    run_id="run_seal_test",
+                    thread_id="thread_seal_test",
+                    session_id="sess_seal_test",
+                )
+            )
+        event = SimpleNamespace(
+            labels={"claw": claw["id"], "claw_role": "scheduled"},
+            workspace_id=ws,
+            principal_id=account["id"],
+            run_id="run_seal_test",
+            thread_id="thread_seal_test",
+            session_id="sess_seal_test",
+            status="completed",
+        )
+        await claw_app.on_run_seal(runtime, event)
+        async with short_session(runtime.storage) as session:
+            assert (await session.get_one(Occurrence, "occ_seal_test")).status == "completed"
+
+    client.portal.call(verify_seal)
+
+    # A refused native admission rolls its writes back, then advances the exact due slot.
+    failed_schedule = post(fresh_path, {**fresh_body, "name": "Admission failure"})
+    failed_threads = []
+    original_native_create = schedules.app_threads.create_thread_in_transaction
+
+    async def fail_after_native_write(*args, **kwargs):
+        thread, _receipt = await original_native_create(*args, **kwargs)
+        failed_threads.append(thread.id)
+        raise ServiceError("unavailable", "synthetic admission failure")
+
+    async def make_due():
+        async with transaction(runtime.storage) as session:
+            row = await session.get_one(Schedule, failed_schedule["id"])
+            row.next_at = datetime.now(UTC) - timedelta(seconds=2)
+
+    client.portal.call(make_due)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            schedules.app_threads, "create_thread_in_transaction", fail_after_native_write
+        )
+        client.portal.call(lambda: schedules.sweep(runtime, ws, claw["id"]))
+    failure = read(f"{fresh_path}/{failed_schedule['id']}/occurrences")["items"][0]
+    assert failure["status"] == "unavailable" and failure["error"] == "unavailable"
+    assert failed_threads and client.get(f"/api/v1/threads/{failed_threads[0]}").status_code == 404
+    stopped = read(f"{fresh_path}/{failed_schedule['id']}")
+    assert not stopped["enabled"] and stopped["next_at"] is None
+
+    unavailable_schedule = post(fresh_path, {**fresh_body, "name": "Unavailable account"})
+
+    async def make_account_due():
+        async with transaction(runtime.storage) as session:
+            row = await session.get_one(Schedule, unavailable_schedule["id"])
+            row.next_at = datetime.now(UTC) - timedelta(seconds=2)
+
+    client.portal.call(make_account_due)
+    with monkeypatch.context() as patch:
+        patch.setattr(schedules.app_threads, "prepare_admission", refused_admission)
+        client.portal.call(lambda: schedules.sweep(runtime, ws, claw["id"]))
+    unavailable = read(f"{fresh_path}/{unavailable_schedule['id']}/occurrences")["items"][0]
+    assert unavailable["status"] == "unavailable" and unavailable["error"] == "unavailable"
+    unavailable_row = read(f"{fresh_path}/{unavailable_schedule['id']}")
+    assert not unavailable_row["enabled"] and unavailable_row["next_at"] is None
+
+    stale_schedule = post(fresh_path, {**fresh_body, "name": "Changed during failure"})
+
+    async def make_stale_due():
+        async with transaction(runtime.storage) as session:
+            row = await session.get_one(Schedule, stale_schedule["id"])
+            row.next_at = datetime.now(UTC) - timedelta(seconds=2)
+
+    client.portal.call(make_stale_due)
+    original_transaction = schedules.transaction
+    transaction_calls = 0
+
+    @asynccontextmanager
+    async def edit_before_fallback(storage):
+        nonlocal transaction_calls
+        transaction_calls += 1
+        if transaction_calls == 2:
+            async with original_transaction(storage) as session:
+                row = await session.get_one(Schedule, stale_schedule["id"])
+                row.prompt = "Edited after the failed admission"
+        async with original_transaction(storage) as session:
+            yield session
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            schedules.app_threads, "create_thread_in_transaction", fail_after_native_write
+        )
+        patch.setattr(schedules, "transaction", edit_before_fallback)
+        client.portal.call(lambda: schedules.sweep(runtime, ws, claw["id"]))
+    stale = read(f"{fresh_path}/{stale_schedule['id']}")
+    assert stale["prompt"] == "Edited after the failed admission" and stale["enabled"]
+    assert read(f"{fresh_path}/{stale_schedule['id']}/occurrences")["items"] == []
+    # Disable this still-due test schedule before the periodic sweep can fire it.
+    assert (
+        client.patch(
+            f"/api/v1{fresh_path}/{stale_schedule['id']}", json={"enabled": False}
+        ).status_code
+        == 200
+    )
 
     async def subscribers():
         return (await runtime.redis.pubsub_numsub(connectors.LARK_CHANGES))[0][1]
@@ -855,12 +928,29 @@ def exercise_lifecycle(
     async def trigger_manual():
         async with transaction(runtime.storage) as session:
             locked = await inbox.lock_claw(session, ws, inspectable["id"])
-            first = await schedules.trigger(session, locked, manual["id"], occurrence_id="ct_first")
+            first = await schedules.trigger(
+                session,
+                locked,
+                manual["id"],
+                occurrence_id="ct_first",
+                runtime=runtime,
+                admission=None,
+            )
             duplicate = await schedules.trigger(
-                session, locked, manual["id"], occurrence_id="ct_first"
+                session,
+                locked,
+                manual["id"],
+                occurrence_id="ct_first",
+                runtime=runtime,
+                admission=None,
             )
             overlap = await schedules.trigger(
-                session, locked, manual["id"], occurrence_id="ct_second"
+                session,
+                locked,
+                manual["id"],
+                occurrence_id="ct_second",
+                runtime=runtime,
+                admission=None,
             )
             row = await schedules.find_schedule(session, locked, manual["id"])
             return first.id, duplicate.id, first.status, overlap.status, row.next_at.isoformat()
@@ -916,7 +1006,51 @@ def exercise_lifecycle(
             return await session.get(InboxItem, delivery["item_id"])
 
     assert client.portal.call(retained) is None
+
+    # Reproduce two missed terminal updates from real Fresh Runs across archive:
+    # one is repaired by its seal hint, the other by the organization sweep.
+    async def pending_at_archive():
+        async with transaction(runtime.storage) as session:
+            for oid in (occ["id"], browser_occurrence["id"]):
+                (await session.get_one(Occurrence, oid)).status = "processing"
+            due = await session.get_one(Schedule, operator_schedule["id"])
+            due.next_at = datetime.now(UTC) - timedelta(seconds=1)
+            return due.next_at
+
+    archived_due = client.portal.call(pending_at_archive)
     assert client.delete(f"/api/v1{path}").status_code == 204
+
+    async def reconcile_after_archive():
+        event = SimpleNamespace(
+            labels={"claw": claw["id"], "claw_role": "scheduled"},
+            workspace_id=ws,
+            principal_id=account["id"],
+            run_id=occ["run_id"],
+            thread_id=occ["thread_id"],
+            session_id=occ["session_id"],
+            status="completed",
+        )
+        await claw_app.on_run_seal(runtime, event)
+        async with short_session(runtime.storage) as session:
+            sealed = await session.get_one(Occurrence, occ["id"])
+            awaiting_sweep = await session.get_one(Occurrence, browser_occurrence["id"])
+            assert sealed.status == "completed" and awaiting_sweep.status == "processing"
+        await claw_app.sweep(runtime, org)
+        async with short_session(runtime.storage) as session:
+            sealed = await session.get_one(Occurrence, occ["id"])
+            recovered = await session.get_one(Occurrence, browser_occurrence["id"])
+            native = await session.get_one(RunRow, browser_occurrence["run_id"])
+            due = await session.get_one(Schedule, operator_schedule["id"])
+            recorded = (
+                await session.scalars(select(Occurrence.id).where(Occurrence.schedule_id == due.id))
+            ).all()
+            return sealed.status, recovered.status, native.status, due.next_at, recorded
+
+    sealed, recovered, native_status, after_archive_due, recorded = client.portal.call(
+        reconcile_after_archive
+    )
+    assert sealed == "completed" and recovered == native_status
+    assert after_archive_due == archived_due and not recorded
     assert read(f"{base}/claws")["items"] == []
     assert client.get(f"/api/v1{path}").status_code == 404
     post(f"{path}/input", message, 404, headers=headers)

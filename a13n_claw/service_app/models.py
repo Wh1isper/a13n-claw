@@ -138,7 +138,10 @@ class Delivery(Base):
 
 class Schedule(Base):
     __tablename__ = database.name("schedules")
-    __table_args__ = (Index(database.name("schedule_due_idx"), "claw_id", "next_at", "id"),)
+    __table_args__ = (
+        Index(database.name("schedule_due_idx"), "claw_id", "next_at", "id"),
+        UniqueConstraint("claw_id", "request_key", name=database.name("schedule_request_uq")),
+    )
 
     id: Mapped[str] = mapped_column(String(72), primary_key=True)
     claw_id: Mapped[str] = mapped_column(
@@ -146,6 +149,9 @@ class Schedule(Base):
     )
     name: Mapped[str] = mapped_column(String(200))
     prompt: Mapped[str] = mapped_column(Text)
+    target: Mapped[str] = mapped_column(String(16), server_default=text("'main'"))
+    request_key: Mapped[str | None] = mapped_column(String(128))
+    request_digest: Mapped[str | None] = mapped_column(String(64))
     cron: Mapped[str | None] = mapped_column(String(128))
     timezone: Mapped[str] = mapped_column(String(100), default="UTC")
     lateness_seconds: Mapped[int] = mapped_column(default=300)
@@ -171,8 +177,12 @@ class Occurrence(Base):
         ForeignKey(f"{database.name('schedules')}.id", ondelete="CASCADE")
     )
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    target: Mapped[str] = mapped_column(String(16), server_default=text("'main'"))
+    error: Mapped[str | None] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(32))
     item_id: Mapped[str | None] = mapped_column(String(72), unique=True)
+    session_id: Mapped[str | None] = mapped_column(String(64))
+    thread_id: Mapped[str | None] = mapped_column(String(64))
     run_id: Mapped[str | None] = mapped_column(String(72), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

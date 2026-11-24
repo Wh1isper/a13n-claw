@@ -1,6 +1,6 @@
 # Repository Guide
 
-A13n Claw is a Service App that owns durable Inbox, delivery history, managed worker associations, and Main-mode scheduled work. Service owns execution, resources and Console. Read [the accepted specification](spec/README.md) before changing those boundaries.
+A13n Claw is a Service App that owns durable Inbox, delivery history, managed worker associations, and scheduled work. Service owns execution, resources and Console. Read [the accepted specification](spec/README.md) before changing those boundaries.
 
 ## Sources of truth
 

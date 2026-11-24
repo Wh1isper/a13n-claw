@@ -50,7 +50,6 @@ import {
   type Claw,
   type Collection,
   type Connector,
-  type FreshSchedule,
   type Occurrence,
   type Overview,
   type ResourceKind,
@@ -667,12 +666,6 @@ function ProjectResources({
     );
   const project = snapshot.project;
   const linked = edit === "environment" ? claw.environment_id : claw.browser_id;
-  const fresh = project.fresh_schedule_count > 0;
-  const freshLink = (
-    <ClawLink id={claw.id} page="schedules" query={{ mode: "fresh" }}>
-      {copy("Open Fresh Schedules", "打开新线程排程")}
-    </ClawLink>
-  );
   const rebind = () =>
     write.mutateAsync({
       path: `${path}/project`,
@@ -801,15 +794,6 @@ function ProjectResources({
         </ListRows>
         {edit && (
           <div className={styles.stack}>
-            {fresh && (
-              <p role="status">
-                {copy(
-                  "Archive the Fresh Schedules that still reference this Project before changing bindings.",
-                  "更改绑定前，请先归档仍引用此项目的新线程排程。 ",
-                )}{" "}
-                {freshLink}
-              </p>
-            )}
             {edit === "environment" && (
               <ChoiceField
                 label={copy("Environment source", "环境来源")}
@@ -848,8 +832,7 @@ function ProjectResources({
               <Button variant="ghost" onClick={() => setEdit(null)}>
                 {copy("Cancel", "取消")}
               </Button>
-              {!fresh &&
-                (selection || (edit === "browser" && linked)) &&
+              {(selection || (edit === "browser" && linked)) &&
                 (source === "template" || selection !== (linked ?? "")) &&
                 (linked ? (
                   <Confirm
@@ -895,8 +878,8 @@ function ProjectResources({
               title={copy("Sync Agent revision?", "同步智能体修订版？")}
               subject={claw.name}
               description={copy(
-                "Future Claw admissions use the new revision. Existing Runs and native schedules keep their captures.",
-                "后续 Claw 工作将使用新修订版。已有运行和原生排程不受影响。",
+                "Future Claw admissions use the new revision. Existing Runs keep their captures.",
+                "后续 Claw 工作将使用新修订版。已有运行不受影响。",
               )}
               trigger={copy("Sync revision", "同步修订版")}
               action={() =>
@@ -955,30 +938,20 @@ function ProjectResources({
           "停止新的 Claw 工作，不删除原生资源或已有记录。 ",
         )}
       >
-        {fresh ? (
-          <p>
-            {copy(
-              "Archive the associated Fresh Schedules first.",
-              "请先归档关联的新线程排程。 ",
-            )}{" "}
-            {freshLink}
-          </p>
-        ) : (
-          <Confirm
-            title={copy("Archive this Claw?", "归档此 Claw？")}
-            subject={claw.name}
-            danger
-            description={copy(
-              "Intake and Claw automation stop. Native Threads, Runs, and Project resources remain in Console.",
-              "消息接收和 Claw 自动化将停止。原生线程、运行和项目资源仍保留在控制台。 ",
-            )}
-            trigger={copy("Archive Claw", "归档 Claw")}
-            action={() =>
-              write.mutateAsync({ path, method: "DELETE", body: null })
-            }
-            onSuccess={archived}
-          />
-        )}
+        <Confirm
+          title={copy("Archive this Claw?", "归档此 Claw？")}
+          subject={claw.name}
+          danger
+          description={copy(
+            "Intake and Claw automation stop. Native Threads, Runs, and Project resources remain in Console.",
+            "消息接收和 Claw 自动化将停止。原生线程、运行和项目资源仍保留在控制台。 ",
+          )}
+          trigger={copy("Archive Claw", "归档 Claw")}
+          action={() =>
+            write.mutateAsync({ path, method: "DELETE", body: null })
+          }
+          onSuccess={archived}
+        />
       </Section>
     </div>
   );

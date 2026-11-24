@@ -44,13 +44,14 @@ class ClawNotFound(LookupError):
     """The selected Claw is outside the scoped workspace or does not exist."""
 
 
-async def lock_claw(session: AsyncSession, workspace_id: str, claw_id: str) -> Claw:
+async def lock_claw(
+    session: AsyncSession, workspace_id: str, claw_id: str, *, include_archived: bool = False
+) -> Claw:
     # One short row lock orders count + insert, open + prune, and configuration changes.
-    claw = await session.scalar(
-        select(Claw)
-        .where(Claw.workspace_id == workspace_id, Claw.id == claw_id, Claw.archived_at.is_(None))
-        .with_for_update()
-    )
+    query = select(Claw).where(Claw.workspace_id == workspace_id, Claw.id == claw_id)
+    if not include_archived:
+        query = query.where(Claw.archived_at.is_(None))
+    claw = await session.scalar(query.with_for_update())
     if claw is None:
         raise ClawNotFound(claw_id)
     return claw

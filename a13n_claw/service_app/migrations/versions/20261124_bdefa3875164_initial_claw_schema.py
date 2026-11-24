@@ -1,6 +1,6 @@
 """initial claw schema
 
-Revision ID: fd68a54911de
+Revision ID: bdefa3875164
 Revises:
 """
 
@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from a13n_service.app_database import migration_name
 from alembic import op
 
-revision = "fd68a54911de"
+revision = "bdefa3875164"
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -269,6 +269,9 @@ def upgrade() -> None:
         sa.Column("claw_id", sa.String(length=64), nullable=False),
         sa.Column("name", sa.String(length=200), nullable=False),
         sa.Column("prompt", sa.Text(), nullable=False),
+        sa.Column("target", sa.String(length=16), server_default=sa.text("'main'"), nullable=False),
+        sa.Column("request_key", sa.String(length=128), nullable=True),
+        sa.Column("request_digest", sa.String(length=64), nullable=True),
         sa.Column("cron", sa.String(length=128), nullable=True),
         sa.Column("timezone", sa.String(length=100), nullable=False),
         sa.Column("lateness_seconds", sa.Integer(), nullable=False),
@@ -288,6 +291,7 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f(migration_name("schedules__pk"))),
+        sa.UniqueConstraint("claw_id", "request_key", name=migration_name("schedule_request_uq")),
     )
     op.create_index(
         migration_name("schedule_due_idx"),
@@ -363,8 +367,12 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=72), nullable=False),
         sa.Column("schedule_id", sa.String(length=72), nullable=False),
         sa.Column("scheduled_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("target", sa.String(length=16), server_default=sa.text("'main'"), nullable=False),
+        sa.Column("error", sa.String(length=128), nullable=True),
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("item_id", sa.String(length=72), nullable=True),
+        sa.Column("session_id", sa.String(length=64), nullable=True),
+        sa.Column("thread_id", sa.String(length=64), nullable=True),
         sa.Column("run_id", sa.String(length=72), nullable=True),
         sa.Column(
             "created_at",
