@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import time
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -24,23 +25,23 @@ from a13n_service.infra.errors import ServiceError
 from a13n_service.migrations.scratch import scratch_database
 from a13n_service.providers import envd
 from a13n_service.runs.environments import external
-from a13n_service.runs.inbox import find_request
-from a13n_service.runs.seal_events import RunSealEvent
-from a13n_service.runs.tables import InboxEntryRow, RunRow, ThreadRow
+from a13n_service.runs.tables import RunRow, ThreadRow
 from a13n_service.settings import Database, Settings
 from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 
 from a13n_claw.service_app import (
-    app,
+    api,
     connectors,
     inbox,
     main_thread,
     project_cli,
     schedules,
-    workers,
 )
-from a13n_claw.service_app.models import Claw, InboxItem, Schedule, ScheduleRequest, Worker
+from a13n_claw.service_app import (
+    app as claw_app,
+)
+from a13n_claw.service_app.models import InboxItem, Occurrence, Schedule
 
 
 @pytest.fixture
@@ -65,10 +66,8 @@ def model_server():
                 for message in body["messages"]
                 for call in message.get("tool_calls", [])
             }
-            if reply and "claw_connector_reply" in tools:
-                tool, args = "claw_connector_reply", reply.pop(0)
-            elif "claw_assign" in tools - used:
-                tool, args = "claw_assign", {"task": "Collect a result", "name": "Test Worker"}
+            if "claw_report" in tools - used:
+                tool, args = "claw_report", {"message": "Scheduled result for Main"}
             elif "claw_schedule" in tools - used:
                 tool, args = (
                     "claw_schedule",
@@ -84,8 +83,6 @@ def model_server():
                         },
                     },
                 )
-            elif "claw_report" in tools - used:
-                tool, args = "claw_report", {"message": "Worker result"}
             else:
                 tool, args = None, None
             delta = {"role": "assistant", "content": "Done"}
@@ -261,7 +258,8 @@ def test_first_setup_and_native_runs(monkeypatch, tmp_path, model_server):
                 unbound_tools,
                 monkeypatch,
             )
-        assert maintenance == [False, True]
+        assert maintenance[0] is False and maintenance[-1] is True
+        assert maintenance.count(True) == 1
 
 
 def exercise_lifecycle(
@@ -332,6 +330,10 @@ def exercise_lifecycle(
         "heartbeat_seconds": 0,
     }
     post(f"{base}/claws", {**config, "environment_id": private["id"]}, 403)
+    for role in ("runner", "admin"):
+        wrong_account = post(accounts, {"name": f"Wrong {role}", "role": role})
+        refused = post(f"{base}/claws", {**config, "service_account_id": wrong_account["id"]}, 409)
+        assert refused["error"]["details"]["reason"] == "claw_builder_required"
     claw = post(f"{base}/claws", config)
     assert claw["environment_id"] is None
     path = f"{base}/claws/{claw['id']}"
@@ -414,72 +416,6 @@ def exercise_lifecycle(
     assert client.get(f"/api/v1/threads/{rejected_threads[0]}").status_code == 404
     assert read(f"{path}/deliveries/{received['delivery_id']}")["run_id"] is None
 
-    original_assign = workers.assign
-    replayed_assignments = []
-
-    async def replay_assign(run_runtime, binding, task, call_key, **kwargs):
-        original_accept = workers.accept
-        rolled_back = []
-
-        async def fail_worker_writeback(session, service, thread, *, explicit):
-            await original_accept(session, service, thread, explicit=explicit)
-            assert explicit.entry is not None and explicit.entry.assigned_run_id is not None
-            assert await session.get(Worker, thread.id) is not None
-            rolled_back.append(thread.id)
-            raise WritebackFailed
-
-        with monkeypatch.context() as patch:
-            patch.setattr(workers, "accept", fail_worker_writeback)
-            with pytest.raises(WritebackFailed):
-                await original_assign(run_runtime, binding, task, call_key, **kwargs)
-        async with short_session(run_runtime.storage) as session:
-            (rejected_worker,) = rolled_back
-            assert await session.get(Worker, rejected_worker) is None
-            assert await session.get(ThreadRow, rejected_worker) is None
-            assert await find_request(session, ws, account["id"], call_key) is None
-        first = await original_assign(run_runtime, binding, task, call_key, **kwargs)
-        async with transaction(run_runtime.storage) as session:
-            row = await session.get_one(Claw, binding.claw.id)
-            pinned = row.agent_revision_id
-            row.agent_revision_id = agent["default_revision_id"]
-        try:
-            replay = await original_assign(run_runtime, binding, task, call_key, **kwargs)
-            assert replay["entry_id"] == first["entry_id"]
-            assert replay["thread_id"] == first["thread_id"]
-            async with short_session(run_runtime.storage) as session:
-                entry = await find_request(session, ws, account["id"], call_key)
-                assert entry is not None and entry.id == replay["entry_id"]
-            replayed_assignments.append(replay["entry_id"])
-        finally:
-            async with transaction(run_runtime.storage) as session:
-                row = await session.get_one(Claw, binding.claw.id)
-                row.agent_revision_id = pinned
-        return replay
-
-    monkeypatch.setattr(workers, "assign", replay_assign)
-    recorded = workers._record_notices
-    notify = main_thread.notify
-    worker_seals = []
-
-    async def notify_from_seal(runtime, workspace_id, claw_id, **kwargs):
-        if claw_id == claw["id"] and not (
-            kwargs.get("delivery_id") == received["delivery_id"] or kwargs.get("completed_run_id")
-        ):
-            # Worker reports, terminal notices, and the sweep can win the idle slot first.
-            return
-        await notify(runtime, workspace_id, claw_id, **kwargs)
-
-    monkeypatch.setattr(main_thread, "notify", notify_from_seal)
-
-    async def record_from_seal(runtime, workspace_id, claw_id, thread_id, *, event=None):
-        if claw_id == claw["id"] and event is None:
-            return False  # The real Redis callback, not reconciliation, must record this fixture.
-        admitted = await recorded(runtime, workspace_id, claw_id, thread_id, event=event)
-        if claw_id == claw["id"] and event is not None and admitted:
-            worker_seals.append(event)
-        return admitted
-
-    monkeypatch.setattr(workers, "_record_notices", record_from_seal)
     client.portal.call(
         lambda: main_thread.notify(runtime, ws, claw["id"], delivery_id=received["delivery_id"])
     )
@@ -494,94 +430,56 @@ def exercise_lifecycle(
     assert main["session_id"] == overview["claw"]["main_session_id"]
     assert main["status"] == "completed", main.get("failure")
     assert main["agent_revision_id"] == claw["agent_revision_id"]
-    assert len(replayed_assignments) == 1
-    (schedule,) = read(f"{path}/fresh-schedules")["items"]
-    assert schedule["name"] == "Fresh follow-up" and schedule["next_at"]
-    schedule_path = f"/schedules/{schedule['id']}"
-    native = client.get(f"/api/v1{schedule_path}")
-    assert native.status_code == 200, native.text
-    assert native.json()["invocation"]["agent_revision_id"] == claw["agent_revision_id"]
-    occ = post(
-        f"{schedule_path}/dispatch",
-        {},
-        202,
-        headers={
-            "Idempotency-Key": uuid4().hex,
-            "Authorization": f"Bearer {key['secret']}",
-            "If-Match": native.headers["ETag"],
-        },
-    )
+    (schedule,) = read(f"{path}/schedules?target=fresh")["items"]
+    assert schedule["name"] == "Fresh follow-up" and schedule["enabled"]
+    schedule_path = f"{path}/schedules/{schedule['id']}"
+    trigger_key = {"Idempotency-Key": uuid4().hex}
+    occ = post(f"{schedule_path}/trigger", {}, 200, headers=trigger_key)
+
+    async def refused_admission(*_args, **_kwargs):
+        raise ServiceError("unavailable", "synthetic account refusal")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(api, "prepare_claw_admission", refused_admission)
+        replay = post(f"{schedule_path}/trigger", {}, 200, headers=trigger_key)
+        assert replay["id"] == occ["id"] and replay["run_id"] == occ["run_id"]
+        post(f"{schedule_path}/trigger", {}, 503, headers={"Idempotency-Key": uuid4().hex})
     scheduled = eventually(
-        lambda: read(f"{schedule_path}/occurrences/{occ['id']}"),
-        lambda row: row["execution_outcome"],
+        lambda: read(f"{schedule_path}/occurrences"),
+        lambda page: page["items"] and page["items"][0]["status"] == "completed",
+    )["items"][0]
+    assert scheduled["id"] == occ["id"]
+    assert scheduled["thread_id"] != main["thread_id"]
+    assert scheduled["session_id"]
+    assert scheduled["run_id"] != main["id"]
+    reports = eventually(
+        lambda: read(f"{path}/deliveries"),
+        lambda page: any(item.get("origin") == "worker" for item in page["items"]),
     )
-    assert scheduled["execution_outcome"] == "succeeded", scheduled
-    assert scheduled["completion_run_id"] != main["id"]
+    assert any(item.get("origin") == "worker" for item in reports["items"])
+
+    async def captured_execution():
+        async with short_session(runtime.storage) as session:
+            main_run = await session.get_one(RunRow, main["id"])
+            fresh_run = await session.get_one(RunRow, scheduled["run_id"])
+            return [
+                (main_run.principal_id, main_run.authority),
+                (fresh_run.principal_id, fresh_run.authority),
+            ]
+
+    for principal_id, authority in client.portal.call(captured_execution):
+        assert principal_id == account["id"]
+        assert authority["principal_id"] == account["id"]
+        assert set(authority["verbs"]) == {"read", "run", "write"}
     observed = read(path)["project"]
     assert observed["environment"] == "ready"
     assert observed["automation_account"] == "active"
     assert observed["cli_versions"] == {"gh": "2.105.0", "lark-cli": "1.0.100"}
     assert observed["cli_update_state"] is None
-    worker_rows = eventually(
-        lambda: read(f"{path}/workers")["items"],
-        lambda items: items and items[0]["activity"]["last_status"] in {"completed", "failed"},
-    )
-    (worker,) = worker_rows
-    assert worker["thread_id"] != main["thread_id"]
-    assert worker["activity"]["last_status"] == "completed"
-    worker_run = read(f"/runs/{worker['activity']['last_run_id']}")
-    assert worker_run["agent_revision_id"] == claw["agent_revision_id"]
-    worker_seal = eventually(lambda: list(worker_seals), bool)[0]
-    assert worker_seal.run_id == worker_run["id"]
-    main_seal = RunSealEvent(
-        organization_id=worker_seal.organization_id,
-        workspace_id=ws,
-        session_id=main["session_id"],
-        thread_id=main["thread_id"],
-        run_id=main_id,
-        principal_id=account["id"],
-        status="completed",
-        labels={"claw": claw["id"], "claw_role": "main"},
-    )
-
-    async def followups():
-        async with short_session(runtime.storage) as session:
-            return list(
-                await session.scalars(
-                    select(InboxEntryRow.request_key).where(
-                        InboxEntryRow.thread_id == main["thread_id"],
-                        InboxEntryRow.request_key.startswith(f"claw:seal:{main_id}:"),
-                    )
-                )
-            )
-
-    # Both subscriptions came through the real Redis consumer. Replaying older
-    # or duplicate events cannot start an additional Run or duplicate a notice.
-    assert len(eventually(lambda: client.portal.call(followups), bool)) == 1
-    client.portal.call(app.on_run_seal, runtime, main_seal)
-    client.portal.call(app.on_run_seal, runtime, worker_seal)
-    assert len(client.portal.call(followups)) == 1
-
-    async def terminal_notices():
-        async with short_session(runtime.storage) as session:
-            return list(
-                await session.scalars(
-                    select(InboxItem.id).where(
-                        InboxItem.source_key == f"terminal:{worker_seal.run_id}"
-                    )
-                )
-            )
-
-    assert len(client.portal.call(terminal_notices)) == 1
-    monkeypatch.setattr(workers, "_record_notices", recorded)
-    monkeypatch.setattr(main_thread, "notify", notify)
-    reports = [item for item in read(f"{path}/deliveries")["items"] if item["origin"] == "worker"]
-    assert any(
-        read(f"{path}/deliveries/{item['id']}")["content"] == "Worker result" for item in reports
-    )
     assert read(f"{path}/usage")[0]["usage"]["requests"] > 0
-    assert any("ask_user_question" in tools for tools in requests if "claw_assign" in tools)
-    assert all("ask_user_question" not in tools for tools in requests if "claw_report" in tools)
+    assert all(
+        "claw_assign" not in tools and "claw_connector_reply" not in tools for tools in requests
+    )
 
     replacement = post(
         "/environments",
@@ -592,92 +490,75 @@ def exercise_lifecycle(
     fresh_body = {
         "name": "Operator schedule",
         "prompt": "Later work",
+        "target": "fresh",
         "rule": {"type": "once", "run_at": (datetime.now(UTC) + timedelta(minutes=15)).isoformat()},
     }
     fresh_headers = {"Idempotency-Key": uuid4().hex}
-    fresh_path = f"{path}/fresh-schedules"
-    # Fail after native creation commits, then force the recovery by exact native_key.
-    original_create = schedules.native_service.create
-    committed = []
-
-    async def lose_receipt(*args, **kwargs):
-        if not committed:
-            native, _ = await original_create(*args, **kwargs)
-            committed.append(native.id)
-            raise ServiceError("unavailable", "Fixture lost the creation response")
-        raise ServiceError("conflict", "Fixture refuses native replay; reconcile the receipt")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(schedules.native_service, "create", lose_receipt)
-        post(fresh_path, fresh_body, 503, headers=fresh_headers)
-
-        async def pending_receipt():
-            async with short_session(runtime.storage) as session:
-                row = await session.scalar(
-                    select(ScheduleRequest).where(
-                        ScheduleRequest.claw_id == claw["id"],
-                        ScheduleRequest.completed_at.is_(None),
-                    )
-                )
-                return row and row.schedule_id is None
-
-        assert client.portal.call(pending_receipt)
-        operator_schedule = post(fresh_path, fresh_body, headers=fresh_headers)
-        assert operator_schedule["id"] == committed[0]
+    fresh_path = f"{path}/schedules"
+    operator_schedule = post(fresh_path, fresh_body, headers=fresh_headers)
     assert post(fresh_path, fresh_body, headers=fresh_headers)["id"] == operator_schedule["id"]
     post(fresh_path, {**fresh_body, "prompt": "Different work"}, 409, headers=fresh_headers)
-    service_headers = {"Authorization": f"Bearer {key['secret']}"}
-    operator_path = f"/api/v1/schedules/{operator_schedule['id']}"
-    latest = client.get(operator_path)
-    renamed = client.patch(
-        operator_path,
-        json={"labels": {}},
-        headers={**service_headers, "If-Match": latest.headers["ETag"]},
+    updated = eventually(
+        lambda: client.patch(update_url, json={"environment_id": replacement["id"]}),
+        lambda response: response.status_code != 409,
     )
-    assert renamed.status_code == 200, renamed.text
-    assert read(path)["project"]["fresh_schedule_count"] == 2
-    assert client.delete(f"/api/v1{path}").status_code == 409
-    refused = client.patch(update_url, json={"environment_id": replacement["id"]})
-    assert refused.status_code == 409, refused.text
-    latest = client.get(f"/api/v1{schedule_path}")
-    archived = client.delete(
-        f"/api/v1{schedule_path}",
-        headers={"Authorization": f"Bearer {key['secret']}", "If-Match": latest.headers["ETag"]},
-    )
-    assert archived.status_code == 204, archived.text
-    blocked_by_operator_schedule = client.patch(
-        update_url, json={"environment_id": replacement["id"]}
-    )
-    assert blocked_by_operator_schedule.status_code == 409, blocked_by_operator_schedule.text
-    archived = client.delete(
-        operator_path, headers={**service_headers, "If-Match": renamed.headers["ETag"]}
-    )
-    assert archived.status_code == 204, archived.text
-    updated = client.patch(update_url, json={"environment_id": replacement["id"]})
     assert updated.status_code == 200, updated.text
     assert updated.json()["main_thread_id"] == main["thread_id"]
     assert read(path)["project"]["environment_name"] == replacement["name"]
-    assert read(path)["project"]["fresh_schedule_count"] == 0
-    rejected = client.put(
-        f"/api/v1{connector_path}", json={**connector_body, "reply_environment_id": shared["id"]}
-    )
-    assert rejected.status_code == 409, rejected.text
     enabled = client.put(
         f"/api/v1{connector_path}",
-        json={
-            **{key: value for key, value in connector_body.items() if key != "credential"},
-            "reply_environment_id": replacement["id"],
-        },
+        json={key: value for key, value in connector_body.items() if key != "credential"},
     )
     assert enabled.status_code == 200 and enabled.json()["credential_configured"], enabled.text
-    assert enabled.json()["reply_environment_id"] == replacement["id"]
+    egress_body = {
+        **{key: value for key, value in connector_body.items() if key != "credential"},
+        "egress_primary": True,
+    }
+    for stale_environment in (None, shared["id"]):
+        rejected = client.put(
+            f"/api/v1{connector_path}",
+            json={**egress_body, "egress_environment_id": stale_environment},
+        )
+        assert rejected.status_code == 409, rejected.text
+        assert rejected.json()["error"]["details"]["reason"] == "egress_environment_changed"
+    authorized = client.put(
+        f"/api/v1{connector_path}",
+        json={**egress_body, "egress_environment_id": replacement["id"]},
+    )
+    assert authorized.status_code == 200 and authorized.json()["egress_primary"], authorized.text
+    clear = client.put(
+        f"/api/v1{connector_path}",
+        json={**egress_body, "egress_environment_id": replacement["id"], "credential": None},
+    )
+    assert clear.status_code == 200 and not clear.json()["credential_configured"], clear.text
+    restored = client.put(
+        f"/api/v1{connector_path}",
+        json={
+            **egress_body,
+            "egress_environment_id": replacement["id"],
+            "credential": "synthetic-github-credential",
+        },
+    )
+    assert restored.status_code == 200 and restored.json()["credential_configured"], restored.text
+
+    async def active_generation():
+        from a13n_claw.service_app.models import ConnectorEgress
+
+        async with short_session(runtime.storage) as session:
+            return await session.scalar(
+                select(ConnectorEgress.id).where(
+                    ConnectorEgress.connector_id == authorized.json()["id"],
+                    ConnectorEgress.state.in_(("pending", "preparing", "ready")),
+                )
+            )
+
+    assert client.portal.call(active_generation) is not None
+    disabled = client.put(f"/api/v1{connector_path}", json={**egress_body, "egress_primary": False})
+    assert disabled.status_code == 200, disabled.text
     assert post(f"{path}/project/cli-update", {}, 202) == {"state": "queued"}
     assert read(path)["project"]["cli_update_state"] == "queued"
 
-    for thread_id, run_id in (
-        (main["thread_id"], main["id"]),
-        (worker["thread_id"], worker_run["id"]),
-    ):
+    for thread_id, run_id in ((main["thread_id"], main["id"]),):
         mounts = read(f"/threads/{thread_id}/environments")["items"]
         assert (
             next(m["environment_id"] for m in mounts if m["name"] == "workspace")
@@ -705,40 +586,169 @@ def exercise_lifecycle(
     assert read(path)["project"]["browser_name"] == browser["name"]
     assert post(fresh_path, fresh_body, headers=fresh_headers)["id"] == operator_schedule["id"]
     scheduled_browser = post(fresh_path, fresh_body, headers={"Idempotency-Key": uuid4().hex})
-    browser_schedule_path = f"/schedules/{scheduled_browser['id']}"
-    native_browser_schedule = client.get(f"/api/v1{browser_schedule_path}")
-    assert native_browser_schedule.status_code == 200, native_browser_schedule.text
-    invocation = native_browser_schedule.json()["invocation"]
-    assert invocation["browser_binding"]["browser_id"] == browser["id"]
-    assert invocation["environments"][0]["environment_id"] == replacement["id"]
+    browser_schedule_path = f"{fresh_path}/{scheduled_browser['id']}"
     browser_occurrence = post(
-        f"{browser_schedule_path}/dispatch",
+        f"{browser_schedule_path}/trigger",
         {},
-        202,
-        headers={
-            **service_headers,
-            "Idempotency-Key": uuid4().hex,
-            "If-Match": native_browser_schedule.headers["ETag"],
-        },
+        200,
+        headers={"Idempotency-Key": uuid4().hex},
     )
-    browser_result = eventually(
-        lambda: read(f"{browser_schedule_path}/occurrences/{browser_occurrence['id']}"),
-        lambda row: row["execution_outcome"],
+    browser_run = eventually(
+        lambda: read(f"/runs/{browser_occurrence['run_id']}"),
+        lambda run: run["sealed_at"],
     )
-    assert browser_result["execution_outcome"] == "succeeded", browser_result
-    browser_run = read(f"/runs/{browser_result['completion_run_id']}")
     assert browser_run["browser_binding"]["browser_id"] == browser["id"]
     assert browser_run["environment_mounts"][0]["environment_id"] == replacement["id"]
-    native_browser_schedule = client.get(f"/api/v1{browser_schedule_path}")
-    blocked_detach = client.patch(update_url, json={"browser_id": None})
-    assert blocked_detach.status_code == 409, blocked_detach.text
-    archived = client.delete(
-        f"/api/v1{browser_schedule_path}",
-        headers={**service_headers, "If-Match": native_browser_schedule.headers["ETag"]},
-    )
-    assert archived.status_code == 204, archived.text
-    for thread_id in (main["thread_id"], worker["thread_id"]):
+    for thread_id in (main["thread_id"],):
         assert read(f"/threads/{thread_id}/browser")["browser_id"] == browser["id"]
+    detached = client.patch(update_url, json={"browser_id": None})
+    assert detached.status_code == 200, detached.text
+    reattached = client.patch(update_url, json={"browser_id": browser["id"]})
+    assert reattached.status_code == 200, reattached.text
+
+    overlapping = post(fresh_path, {**fresh_body, "name": "Overlap guard"})
+
+    async def make_outstanding():
+        async with transaction(runtime.storage) as session:
+            session.add(
+                Occurrence(
+                    id="occ_pending_test",
+                    schedule_id=overlapping["id"],
+                    scheduled_at=datetime.now(UTC) - timedelta(seconds=1),
+                    target="fresh",
+                    status="processing",
+                )
+            )
+
+    client.portal.call(make_outstanding)
+    overlap_result = post(
+        f"{fresh_path}/{overlapping['id']}/trigger",
+        {},
+        200,
+        headers={"Idempotency-Key": uuid4().hex},
+    )
+    assert overlap_result["status"] == "overlap" and overlap_result["thread_id"] is None
+    refused_switch = client.put(
+        f"/api/v1{fresh_path}/{overlapping['id']}",
+        json={
+            "name": "Overlap guard",
+            "prompt": "Later work",
+            "target": "main",
+            "lateness_seconds": 300,
+        },
+    )
+    assert refused_switch.status_code == 409, refused_switch.text
+
+    async def verify_seal():
+        async with transaction(runtime.storage) as session:
+            session.add(
+                Occurrence(
+                    id="occ_seal_test",
+                    schedule_id=overlapping["id"],
+                    scheduled_at=datetime.now(UTC),
+                    target="fresh",
+                    status="processing",
+                    run_id="run_seal_test",
+                    thread_id="thread_seal_test",
+                    session_id="sess_seal_test",
+                )
+            )
+        event = SimpleNamespace(
+            labels={"claw": claw["id"], "claw_role": "scheduled"},
+            workspace_id=ws,
+            principal_id=account["id"],
+            run_id="run_seal_test",
+            thread_id="thread_seal_test",
+            session_id="sess_seal_test",
+            status="completed",
+        )
+        await claw_app.on_run_seal(runtime, event)
+        async with short_session(runtime.storage) as session:
+            assert (await session.get_one(Occurrence, "occ_seal_test")).status == "completed"
+
+    client.portal.call(verify_seal)
+
+    # A refused native admission rolls its writes back, then advances the exact due slot.
+    failed_schedule = post(fresh_path, {**fresh_body, "name": "Admission failure"})
+    failed_threads = []
+    original_native_create = schedules.app_threads.create_thread_in_transaction
+
+    async def fail_after_native_write(*args, **kwargs):
+        thread, _receipt = await original_native_create(*args, **kwargs)
+        failed_threads.append(thread.id)
+        raise ServiceError("unavailable", "synthetic admission failure")
+
+    async def make_due():
+        async with transaction(runtime.storage) as session:
+            row = await session.get_one(Schedule, failed_schedule["id"])
+            row.next_at = datetime.now(UTC) - timedelta(seconds=2)
+
+    client.portal.call(make_due)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            schedules.app_threads, "create_thread_in_transaction", fail_after_native_write
+        )
+        client.portal.call(lambda: schedules.sweep(runtime, ws, claw["id"]))
+    failure = read(f"{fresh_path}/{failed_schedule['id']}/occurrences")["items"][0]
+    assert failure["status"] == "unavailable" and failure["error"] == "unavailable"
+    assert failed_threads and client.get(f"/api/v1/threads/{failed_threads[0]}").status_code == 404
+    stopped = read(f"{fresh_path}/{failed_schedule['id']}")
+    assert not stopped["enabled"] and stopped["next_at"] is None
+
+    unavailable_schedule = post(fresh_path, {**fresh_body, "name": "Unavailable account"})
+
+    async def make_account_due():
+        async with transaction(runtime.storage) as session:
+            row = await session.get_one(Schedule, unavailable_schedule["id"])
+            row.next_at = datetime.now(UTC) - timedelta(seconds=2)
+
+    client.portal.call(make_account_due)
+    with monkeypatch.context() as patch:
+        patch.setattr(schedules.app_threads, "prepare_admission", refused_admission)
+        client.portal.call(lambda: schedules.sweep(runtime, ws, claw["id"]))
+    unavailable = read(f"{fresh_path}/{unavailable_schedule['id']}/occurrences")["items"][0]
+    assert unavailable["status"] == "unavailable" and unavailable["error"] == "unavailable"
+    unavailable_row = read(f"{fresh_path}/{unavailable_schedule['id']}")
+    assert not unavailable_row["enabled"] and unavailable_row["next_at"] is None
+
+    stale_schedule = post(fresh_path, {**fresh_body, "name": "Changed during failure"})
+
+    async def make_stale_due():
+        async with transaction(runtime.storage) as session:
+            row = await session.get_one(Schedule, stale_schedule["id"])
+            row.next_at = datetime.now(UTC) - timedelta(seconds=2)
+
+    client.portal.call(make_stale_due)
+    original_transaction = schedules.transaction
+    transaction_calls = 0
+
+    @asynccontextmanager
+    async def edit_before_fallback(storage):
+        nonlocal transaction_calls
+        transaction_calls += 1
+        if transaction_calls == 2:
+            async with original_transaction(storage) as session:
+                row = await session.get_one(Schedule, stale_schedule["id"])
+                row.prompt = "Edited after the failed admission"
+        async with original_transaction(storage) as session:
+            yield session
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            schedules.app_threads, "create_thread_in_transaction", fail_after_native_write
+        )
+        patch.setattr(schedules, "transaction", edit_before_fallback)
+        client.portal.call(lambda: schedules.sweep(runtime, ws, claw["id"]))
+    stale = read(f"{fresh_path}/{stale_schedule['id']}")
+    assert stale["prompt"] == "Edited after the failed admission" and stale["enabled"]
+    assert read(f"{fresh_path}/{stale_schedule['id']}/occurrences")["items"] == []
+    # Disable this still-due test schedule before the periodic sweep can fire it.
+    assert (
+        client.patch(
+            f"/api/v1{fresh_path}/{stale_schedule['id']}", json={"enabled": False}
+        ).status_code
+        == 200
+    )
 
     async def subscribers():
         return (await runtime.redis.pubsub_numsub(connectors.LARK_CHANGES))[0][1]
@@ -754,7 +764,6 @@ def exercise_lifecycle(
             "senders": ["ou_operator"],
         },
         "credential": "synthetic-lark-app-secret",
-        "reply_environment_id": replacement["id"],
     }
 
     lark = post(f"{path}/connectors", lark_body)
@@ -764,9 +773,7 @@ def exercise_lifecycle(
     )
     replica = client.portal.call(lambda: connectors.Listeners(runtime))
     eventually(lambda: client.portal.call(subscribers), lambda count: count >= 2, timeout=4)
-    duplicate = post(
-        f"{path}/connectors", {**lark_body, "name": "Duplicate Lark", "reply_environment_id": None}
-    )
+    duplicate = post(f"{path}/connectors", {**lark_body, "name": "Duplicate Lark"})
     duplicate_path = f"{path}/connectors/{duplicate['id']}"
     eventually(
         lambda: read(duplicate_path), lambda row: row["listener_status"] == "conflict", timeout=4
@@ -774,70 +781,6 @@ def exercise_lifecycle(
     assert read(lark_path)["listener_status"] == "connected"
     assert duplicate["credential_configured"]
     client.portal.call(replica.close)
-
-    async def admit_opened_lark():
-        async with transaction(client.app.state.runtime.storage) as session:
-            row = await inbox.lock_claw(session, ws, claw["id"])
-            admission = await inbox.admit(
-                session,
-                row,
-                inbox.Offer(
-                    "user",
-                    "lark",
-                    connectors.event_key(lark["id"], "evt-fixture"),
-                    {
-                        "platform": "lark",
-                        "message_id": "om_fixture",
-                        "attachments": [
-                            {"key": "file_fixture", "kind": "file", "name": "fixture.txt"}
-                        ],
-                    },
-                    "Fixture source",
-                    "Fixture source",
-                ),
-            )
-            item = await session.get(InboxItem, admission.item_id)
-            item.read_at = datetime.now(UTC)
-            return item.id
-
-    item_id = client.portal.call(admit_opened_lark)
-    reply.extend(
-        [
-            dict(
-                connector_id=duplicate["id"],
-                destination="ou_operator",
-                content="refuse",
-                operation="lark_send",
-            ),
-            dict(
-                connector_id=connector["id"],
-                destination="team/repo#123",
-                content="Fixture reply",
-                operation="issue_comment",
-            ),
-            dict(
-                connector_id=lark["id"],
-                destination="om_fixture",
-                content="Fixture reply",
-                operation="lark_reply",
-                source_item_id=item_id,
-            ),
-            dict(
-                connector_id=lark["id"],
-                destination="om_fixture",
-                content="file_fixture",
-                content_type="file",
-                operation="lark_download",
-                source_item_id=item_id,
-            ),
-            dict(
-                connector_id=lark["id"],
-                destination="ou_operator",
-                content="fail",
-                operation="lark_send",
-            ),
-        ]
-    )
 
     followup = post(
         f"{path}/input",
@@ -852,25 +795,7 @@ def exercise_lifecycle(
         lambda: read(f"/runs/{next_delivery['run_id']}"), lambda run: run["sealed_at"]
     )
     assert next_run["status"] == "completed", next_run.get("failure")
-    assert outbound[0] == (
-        "gh",
-        "issue",
-        "comment",
-        "123",
-        "--repo",
-        "github.com/team/repo",
-        "--body=Fixture reply",
-    )
-    assert [argv[2] for argv in outbound[1:]] == [
-        "+messages-reply",
-        "+messages-resources-download",
-        "+messages-send",
-    ]
-    diagnostics = " ".join(str(value) for value in tool_results)
-    assert "auth rejected [redacted] and [redacted]" in diagnostics
-    assert "synthetic-lark-" not in diagnostics
-    assert "An admin must authorize replies in this Project Environment" in diagnostics
-    assert '"unknown"' in diagnostics
+    assert outbound == []  # Connector-managed Main replies are not exposed.
 
     cleared = client.put(f"/api/v1{lark_path}", json={**lark_body, "credential": None})
     assert cleared.status_code == 200, cleared.text
@@ -895,7 +820,7 @@ def exercise_lifecycle(
     detached = client.patch(update_url, json={"browser_id": None})
     assert detached.status_code == 200, detached.text
     assert read(path)["project"]["browser"] is None
-    for thread_id in (main["thread_id"], worker["thread_id"]):
+    for thread_id in (main["thread_id"],):
         assert read(f"/threads/{thread_id}/browser") is None
     assert read(f"/runs/{main['id']}")["browser_binding"] is None
     assert read(f"/runs/{next_run['id']}")["browser_binding"]["browser_id"] == browser["id"]
@@ -998,6 +923,69 @@ def exercise_lifecycle(
     assert read(f"{scheduled_path}/{tick['id']}/occurrences")["items"] == [occurrence]
     assert client.patch(tick_url, json={"enabled": True}).status_code == 404
 
+    manual = post(scheduled_path, {**body, "name": "Manual"})
+
+    async def trigger_manual():
+        async with transaction(runtime.storage) as session:
+            locked = await inbox.lock_claw(session, ws, inspectable["id"])
+            first = await schedules.trigger(
+                session,
+                locked,
+                manual["id"],
+                occurrence_id="ct_first",
+                runtime=runtime,
+                admission=None,
+            )
+            duplicate = await schedules.trigger(
+                session,
+                locked,
+                manual["id"],
+                occurrence_id="ct_first",
+                runtime=runtime,
+                admission=None,
+            )
+            overlap = await schedules.trigger(
+                session,
+                locked,
+                manual["id"],
+                occurrence_id="ct_second",
+                runtime=runtime,
+                admission=None,
+            )
+            row = await schedules.find_schedule(session, locked, manual["id"])
+            return first.id, duplicate.id, first.status, overlap.status, row.next_at.isoformat()
+
+    first_id, duplicate_id, first_status, overlap_status, next_at = client.portal.call(
+        trigger_manual
+    )
+    assert first_id == duplicate_id == "ct_first"
+    assert (first_status, overlap_status) == ("unread", "overlap")
+    assert next_at == datetime.fromisoformat(once).isoformat()
+
+    http_schedule = post(scheduled_path, {**body, "name": "HTTP trigger"})
+    notified = []
+
+    async def notified_after_commit(runtime, workspace_id, claw_id):
+        async with short_session(runtime.storage) as session:
+            from a13n_claw.service_app.models import Occurrence
+
+            row = await session.scalar(
+                select(Occurrence).where(Occurrence.schedule_id == http_schedule["id"])
+            )
+            notified.append((workspace_id, claw_id, row.status if row else None))
+
+    trigger_headers = {"Idempotency-Key": uuid4().hex}
+    with monkeypatch.context() as patch:
+        patch.setattr(main_thread, "notify", notified_after_commit)
+        first_http = post(
+            f"{scheduled_path}/{http_schedule['id']}/trigger", {}, 200, headers=trigger_headers
+        )
+        replay_http = post(
+            f"{scheduled_path}/{http_schedule['id']}/trigger", {}, 200, headers=trigger_headers
+        )
+    assert first_http["id"] == replay_http["id"] and first_http["status"] == "unread"
+    assert notified == [(ws, inspectable["id"], "unread")] * 2
+
     # Apply retention after a delivery has already been accepted; do not age its receipt.
     async def mark_read(at):
         async with transaction(runtime.storage) as session:
@@ -1018,7 +1006,51 @@ def exercise_lifecycle(
             return await session.get(InboxItem, delivery["item_id"])
 
     assert client.portal.call(retained) is None
+
+    # Reproduce two missed terminal updates from real Fresh Runs across archive:
+    # one is repaired by its seal hint, the other by the organization sweep.
+    async def pending_at_archive():
+        async with transaction(runtime.storage) as session:
+            for oid in (occ["id"], browser_occurrence["id"]):
+                (await session.get_one(Occurrence, oid)).status = "processing"
+            due = await session.get_one(Schedule, operator_schedule["id"])
+            due.next_at = datetime.now(UTC) - timedelta(seconds=1)
+            return due.next_at
+
+    archived_due = client.portal.call(pending_at_archive)
     assert client.delete(f"/api/v1{path}").status_code == 204
+
+    async def reconcile_after_archive():
+        event = SimpleNamespace(
+            labels={"claw": claw["id"], "claw_role": "scheduled"},
+            workspace_id=ws,
+            principal_id=account["id"],
+            run_id=occ["run_id"],
+            thread_id=occ["thread_id"],
+            session_id=occ["session_id"],
+            status="completed",
+        )
+        await claw_app.on_run_seal(runtime, event)
+        async with short_session(runtime.storage) as session:
+            sealed = await session.get_one(Occurrence, occ["id"])
+            awaiting_sweep = await session.get_one(Occurrence, browser_occurrence["id"])
+            assert sealed.status == "completed" and awaiting_sweep.status == "processing"
+        await claw_app.sweep(runtime, org)
+        async with short_session(runtime.storage) as session:
+            sealed = await session.get_one(Occurrence, occ["id"])
+            recovered = await session.get_one(Occurrence, browser_occurrence["id"])
+            native = await session.get_one(RunRow, browser_occurrence["run_id"])
+            due = await session.get_one(Schedule, operator_schedule["id"])
+            recorded = (
+                await session.scalars(select(Occurrence.id).where(Occurrence.schedule_id == due.id))
+            ).all()
+            return sealed.status, recovered.status, native.status, due.next_at, recorded
+
+    sealed, recovered, native_status, after_archive_due, recorded = client.portal.call(
+        reconcile_after_archive
+    )
+    assert sealed == "completed" and recovered == native_status
+    assert after_archive_due == archived_due and not recorded
     assert read(f"{base}/claws")["items"] == []
     assert client.get(f"/api/v1{path}").status_code == 404
     post(f"{path}/input", message, 404, headers=headers)

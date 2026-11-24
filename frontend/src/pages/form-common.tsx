@@ -47,7 +47,6 @@ import {
   type Claw,
   type Collection,
   type Connector,
-  type FreshSchedule,
   type Occurrence,
   type Overview,
   type ResourceKind,

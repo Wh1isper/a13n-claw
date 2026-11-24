@@ -50,7 +50,6 @@ import {
   type Claw,
   type Collection,
   type Connector,
-  type FreshSchedule,
   type Occurrence,
   type Overview,
   type ResourceKind,
@@ -148,13 +147,35 @@ function ClawEditor({
   const [models, setModels] = React.useState(
     (claw?.worker_models ?? []).map((model, key) => ({ ...model, key })),
   );
-  const sequence = React.useRef(models.length);
+  const [agents, setAgents] = React.useState(
+    (claw?.worker_agents ?? []).map((item, key) => ({ ...item, key })),
+  );
+  const [review, setReview] = React.useState<Claw["shell_review"]>(
+    claw?.shell_review ?? {
+      enabled: false,
+      model: null,
+      risk_threshold: "high",
+      instruction: null,
+    },
+  );
+  const sequence = React.useRef(Math.max(models.length, agents.length));
   const [dirty, setDirty] = React.useState(false);
   const form = React.useRef<HTMLFormElement>(null);
   const discard = () => {
     form.current?.reset();
     setModels(
       (claw?.worker_models ?? []).map((model, key) => ({ ...model, key })),
+    );
+    setAgents(
+      (claw?.worker_agents ?? []).map((item, key) => ({ ...item, key })),
+    );
+    setReview(
+      claw?.shell_review ?? {
+        enabled: false,
+        model: null,
+        risk_threshold: "high",
+        instruction: null,
+      },
     );
     setDirty(false);
     save.reset();
@@ -176,6 +197,12 @@ function ClawEditor({
             model,
             description: description.trim(),
           })),
+          worker_agents: agents.map(({ agent_id, alias, description }) => ({
+            agent_id,
+            alias: alias.trim(),
+            description: description?.trim() || null,
+          })),
+          shell_review: review,
           ...(!claw
             ? {
                 agent_id: agent,
@@ -253,8 +280,8 @@ function ClawEditor({
         <FormSection
           title={copy("Project resources", "项目资源")}
           description={copy(
-            "Bind resources now or configure them later.",
-            "现在绑定资源，或在创建后配置。 ",
+            "Bind resources now or configure them later. Connector egress initializes unconfigured Threads as controlled public; explicit policies remain unchanged.",
+            "现在绑定资源，或在创建后配置。连接器网络凭据将未配置的线程初始化为受控公共策略；已有策略保持不变。",
           )}
         >
           <ChoiceField
@@ -347,8 +374,8 @@ function ClawEditor({
       <FormSection
         title={copy("Worker model guidance", "工作线程模型指引")}
         description={copy(
-          "Describe when Main should select an alternative model for a worker.",
-          "说明主线程何时应为工作线程选择其他模型。",
+          "Dynamic Workers may use these models or Main's own model, which is always allowed. Describe when to use each alternative.",
+          "动态工作线程可使用这里的模型或主线程自身的模型（始终允许）。请说明其他模型的适用场景。",
         )}
       >
         {models.map((row) => (
@@ -410,6 +437,161 @@ function ClawEditor({
           {copy("Add model guidance", "添加模型指引")}
         </Button>
       </FormSection>
+      <FormSection
+        title={copy("Named Workers", "具名工作线程")}
+        description={copy(
+          "Select Agents Main can delegate to by name.",
+          "选择主线程可按名称委派的智能体。",
+        )}
+      >
+        {agents.map((row) => (
+          <div className={styles.stack} key={row.key}>
+            <ResourcePicker
+              label={copy("Worker Agent", "工作线程智能体")}
+              kind="agent"
+              value={row.agent_id}
+              onChange={(value) => {
+                setAgents(
+                  agents.map((item) =>
+                    item.key === row.key ? { ...item, agent_id: value } : item,
+                  ),
+                );
+                setDirty(true);
+              }}
+            />
+            <FormField label={copy("Delegation name", "委派名称")}>
+              <Input
+                required
+                maxLength={128}
+                pattern="[A-Za-z_][A-Za-z0-9_.:-]*"
+                value={row.alias}
+                onChange={(event) =>
+                  setAgents(
+                    agents.map((item) =>
+                      item.key === row.key
+                        ? { ...item, alias: event.target.value }
+                        : item,
+                    ),
+                  )
+                }
+              />
+            </FormField>
+            <FormField label={copy("Description (optional)", "说明（可选）")}>
+              <Textarea
+                rows={2}
+                maxLength={4096}
+                value={row.description ?? ""}
+                onChange={(event) =>
+                  setAgents(
+                    agents.map((item) =>
+                      item.key === row.key
+                        ? { ...item, description: event.target.value }
+                        : item,
+                    ),
+                  )
+                }
+              />
+            </FormField>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setAgents(agents.filter((item) => item.key !== row.key));
+                setDirty(true);
+              }}
+            >
+              {copy("Remove Worker", "移除工作线程")}
+            </Button>
+          </div>
+        ))}
+        <Button
+          type="button"
+          variant="outline"
+          disabled={agents.length >= 20}
+          onClick={() => {
+            setAgents([
+              ...agents,
+              {
+                key: sequence.current++,
+                agent_id: "",
+                alias: "",
+                description: null,
+              },
+            ]);
+            setDirty(true);
+          }}
+        >
+          {copy("Add Worker", "添加工作线程")}
+        </Button>
+      </FormSection>
+      <FormSection
+        title={copy("Shell Review", "Shell 审查")}
+        description={copy(
+          "Review allowed shell commands with a Workspace Model. Denied commands remain denied; flagged calls and review errors are denied without waiting for approval.",
+          "使用工作区模型审查允许的 Shell 命令。禁止的命令仍然禁止；被标记的调用和审查错误直接拒绝，不等待审批。",
+        )}
+      >
+        <FormField
+          label={copy("Enable Shell Review", "启用 Shell 审查")}
+          data-field-layout="setting"
+        >
+          <Switch
+            checked={review.enabled}
+            onCheckedChange={(enabled) => {
+              setReview({ ...review, enabled });
+              setDirty(true);
+            }}
+          />
+        </FormField>
+        {review.enabled && (
+          <>
+            <ResourcePicker
+              label={copy("Reviewer model", "审查模型")}
+              kind="model"
+              value={review.model ?? ""}
+              onChange={(model) => {
+                setReview({ ...review, model });
+                setDirty(true);
+              }}
+            />
+            <FormField label={copy("Risk threshold", "风险阈值")}>
+              <SegmentedControl
+                label={copy("Risk threshold", "风险阈值")}
+                value={review.risk_threshold}
+                onValueChange={(value) => {
+                  setReview({
+                    ...review,
+                    risk_threshold:
+                      value as Claw["shell_review"]["risk_threshold"],
+                  });
+                  setDirty(true);
+                }}
+                options={[
+                  { value: "low", label: copy("Low", "低") },
+                  { value: "medium", label: copy("Medium", "中") },
+                  { value: "high", label: copy("High", "高") },
+                  { value: "extra_high", label: copy("Extra high", "极高") },
+                ]}
+              />
+            </FormField>
+            <FormField
+              label={copy("Review instruction (optional)", "审查指令（可选）")}
+            >
+              <Textarea
+                rows={3}
+                maxLength={32768}
+                value={review.instruction ?? ""}
+                onChange={(event) =>
+                  setReview({
+                    ...review,
+                    instruction: event.target.value || null,
+                  })
+                }
+              />
+            </FormField>
+          </>
+        )}
+      </FormSection>
       {save.isError && <ErrorNotice error={save.error} />}
       {claw ? (
         dirty && (
@@ -418,14 +600,24 @@ function ClawEditor({
             saveLabel={copy("Save settings", "保存设置")}
             discardLabel={copy("Discard", "放弃更改")}
             pending={save.isPending}
-            disabled={models.some((m) => !m.model)}
+            disabled={
+              models.some((m) => !m.model) ||
+              agents.some((a) => !a.agent_id || !a.alias.trim()) ||
+              (review.enabled && !review.model)
+            }
             onDiscard={discard}
           />
         )
       ) : (
         <FormActions
           pending={save.isPending}
-          disabled={!agent || !account || models.some((m) => !m.model)}
+          disabled={
+            !agent ||
+            !account ||
+            models.some((m) => !m.model) ||
+            agents.some((a) => !a.agent_id || !a.alias.trim()) ||
+            (review.enabled && !review.model)
+          }
           onCancel={cancel}
           label={copy("Create Claw", "创建 Claw")}
         />
@@ -465,7 +657,6 @@ function ProjectResources({
   );
   const [source, setSource] = React.useState("environment");
   const [selection, setSelection] = React.useState("");
-  const [environmentChanged, setEnvironmentChanged] = React.useState(false);
   const snapshot = overview.data;
   if (!snapshot)
     return overview.isError ? (
@@ -475,12 +666,6 @@ function ProjectResources({
     );
   const project = snapshot.project;
   const linked = edit === "environment" ? claw.environment_id : claw.browser_id;
-  const fresh = project.fresh_schedule_count > 0;
-  const freshLink = (
-    <ClawLink id={claw.id} page="schedules" query={{ mode: "fresh" }}>
-      {copy("Open Fresh Schedules", "打开新线程排程")}
-    </ClawLink>
-  );
   const rebind = () =>
     write.mutateAsync({
       path: `${path}/project`,
@@ -495,14 +680,7 @@ function ProjectResources({
     });
   const changed = () => {
     if (edit === "environment") {
-      setEnvironmentChanged(true);
-      toast.add({
-        title: copy("Environment changed", "环境已更换"),
-        description: copy(
-          "Reauthorize connector replies in the new Environment.",
-          "请为新环境重新授权连接器回复。",
-        ),
-      });
+      toast.add({ title: copy("Environment changed", "环境已更换") });
     } else
       toast.add({ title: copy("Browser binding saved", "浏览器绑定已保存") });
     setEdit(null);
@@ -616,15 +794,6 @@ function ProjectResources({
         </ListRows>
         {edit && (
           <div className={styles.stack}>
-            {fresh && (
-              <p role="status">
-                {copy(
-                  "Archive the Fresh Schedules that still reference this Project before changing bindings.",
-                  "更改绑定前，请先归档仍引用此项目的新线程排程。 ",
-                )}{" "}
-                {freshLink}
-              </p>
-            )}
             {edit === "environment" && (
               <ChoiceField
                 label={copy("Environment source", "环境来源")}
@@ -663,8 +832,7 @@ function ProjectResources({
               <Button variant="ghost" onClick={() => setEdit(null)}>
                 {copy("Cancel", "取消")}
               </Button>
-              {!fresh &&
-                (selection || (edit === "browser" && linked)) &&
+              {(selection || (edit === "browser" && linked)) &&
                 (source === "template" || selection !== (linked ?? "")) &&
                 (linked ? (
                   <Confirm
@@ -690,17 +858,6 @@ function ProjectResources({
             {write.isError && <ErrorNotice error={write.error} />}
           </div>
         )}
-        {(environmentChanged || project.unauthorized_reply_connectors > 0) && (
-          <p role="status">
-            {copy(
-              "Reauthorize connector replies for the current Environment.",
-              "请为当前环境重新授权连接器回复。 ",
-            )}{" "}
-            <ClawLink id={claw.id} page="connectors">
-              {copy("Open Connectors", "打开连接器")}
-            </ClawLink>
-          </p>
-        )}
       </Section>
       <Section title={copy("Agent revision", "智能体修订版")}>
         <p>
@@ -721,8 +878,8 @@ function ProjectResources({
               title={copy("Sync Agent revision?", "同步智能体修订版？")}
               subject={claw.name}
               description={copy(
-                "Future Claw admissions use the new revision. Existing Runs and native schedules keep their captures.",
-                "后续 Claw 工作将使用新修订版。已有运行和原生排程不受影响。",
+                "Future Claw admissions use the new revision. Existing Runs keep their captures.",
+                "后续 Claw 工作将使用新修订版。已有运行不受影响。",
               )}
               trigger={copy("Sync revision", "同步修订版")}
               action={() =>
@@ -781,30 +938,20 @@ function ProjectResources({
           "停止新的 Claw 工作，不删除原生资源或已有记录。 ",
         )}
       >
-        {fresh ? (
-          <p>
-            {copy(
-              "Archive the associated Fresh Schedules first.",
-              "请先归档关联的新线程排程。 ",
-            )}{" "}
-            {freshLink}
-          </p>
-        ) : (
-          <Confirm
-            title={copy("Archive this Claw?", "归档此 Claw？")}
-            subject={claw.name}
-            danger
-            description={copy(
-              "Intake and Claw automation stop. Native Threads, Runs, and Project resources remain in Console.",
-              "消息接收和 Claw 自动化将停止。原生线程、运行和项目资源仍保留在控制台。 ",
-            )}
-            trigger={copy("Archive Claw", "归档 Claw")}
-            action={() =>
-              write.mutateAsync({ path, method: "DELETE", body: null })
-            }
-            onSuccess={archived}
-          />
-        )}
+        <Confirm
+          title={copy("Archive this Claw?", "归档此 Claw？")}
+          subject={claw.name}
+          danger
+          description={copy(
+            "Intake and Claw automation stop. Native Threads, Runs, and Project resources remain in Console.",
+            "消息接收和 Claw 自动化将停止。原生线程、运行和项目资源仍保留在控制台。 ",
+          )}
+          trigger={copy("Archive Claw", "归档 Claw")}
+          action={() =>
+            write.mutateAsync({ path, method: "DELETE", body: null })
+          }
+          onSuccess={archived}
+        />
       </Section>
     </div>
   );

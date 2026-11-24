@@ -20,22 +20,20 @@ flowchart TB
             Inbox[Inbox]
             Main[Main Thread]
             Workers[Worker Threads]
-            Notices[Worker terminal notifier]
+            ThreadInbox[Service Thread Inbox]
             Heartbeat[Idle heartbeat]
-            ClawSchedule[Claw Main-mode schedules]
+            ClawSchedule[Claw schedules]
             Connector --> Inbox
             Inbox -->|Wake or steer with unread preview| Main
             Main -->|Open a selected message| Inbox
             Main -->|Delegate or continue| Workers
-            Workers -->|Messages| Inbox
-            Workers -->|Terminal status| Notices
-            Notices -->|Attempt notice| Inbox
+            Workers -->|Messages and results| ThreadInbox
+            ThreadInbox --> Main
             Heartbeat -->|Wake Main| Main
             ClawSchedule -->|Admit occurrence| Inbox
         end
         B[Other Claws]
         Service[Service execution and resources]
-        Scheduler[Service schedules: fresh Thread]
         Project[Claw Project]
         Work[Service Environment and optional Browser]
         Console --> App
@@ -43,7 +41,7 @@ flowchart TB
         App --> B
         App -->|In-process operations| Service
         Service -->|OrganizationSweep cadence| ClawSchedule
-        Scheduler -->|Fresh Thread occurrence| Service
+        ClawSchedule -->|Create fresh Thread| Service
         Main -->|Use reply CLIs| Work
         Main --> Project
         Workers --> Project
@@ -56,7 +54,7 @@ flowchart TB
     Clients --> Connector
 ```
 
-Service owns Agents, Threads, Entries, Runs, fresh-Thread schedules and their occurrences, models and model-provider configuration, along with resource authorization and lifecycles. Main and worker are roles of native Service Threads, not separate Thread or Agent types. Claw owns its Project, connectors, Inbox, Main-mode schedules and their occurrences, Thread associations, and heartbeat condition. Its AppDatabase stores those business facts and references to the native resources; it does not mirror Service definitions or execution state.
+Service owns Agents, Threads, Entries, Runs, models and model-provider configuration, along with resource authorization and lifecycles. Main and worker are roles of native Service Threads, not separate Thread or Agent types. Claw owns its Project, connectors, Inbox, schedules and their occurrences, Thread associations, and heartbeat condition. Its AppDatabase stores those business facts and references to the native resources; it does not mirror Service definitions or execution state.
 
 ## Project
 
@@ -64,7 +62,7 @@ Each Claw's [Project](04-project.md) gives Main and its workers a shared persist
 
 ## End-to-End Flow
 
-The connector addresses a specific Claw. The [Inbox](01-inbox.md) owns acceptance, unread previews, and read history. Claw-owned Main-mode scheduled occurrences also enter that Inbox; fresh-Thread schedules and occurrences remain Service-owned. The [Main Thread](02-main-thread.md) owns the choice of what to read, handle, or delegate. Service executes Main and its worker Threads in their Project context. Acceptance, opening an item, completing its work, and sending a reply are separate events.
+The connector addresses a specific Claw. The [Inbox](01-inbox.md) owns acceptance, unread previews, and read history. Claw-owned schedules deliver Main occurrences to that Inbox or create a fresh native Thread for each occurrence. The [Main Thread](02-main-thread.md) owns the choice of what to read, handle, or delegate. Service executes Main and its worker Threads in their Project context. Acceptance, opening an item, completing its work, and sending a reply are separate events.
 
 ```mermaid
 sequenceDiagram
@@ -72,9 +70,9 @@ sequenceDiagram
     participant C as Claw connector
     participant I as Claw Inbox
     participant M as Main Thread
-    participant W as Managed worker Thread
+    participant W as Native worker Thread
+    participant T as Service parent Thread Inbox
     participant S as Service
-    participant N as Claw notifier
     participant X as Reply CLI in the Project
     participant P as Platform API
     U->>C: Send a message
@@ -94,25 +92,14 @@ sequenceDiagram
         opt Main delegates part of the work
             M->>W: Assign work in the Project
             opt Worker sends progress or a question
-                W->>I: Submit message
-                alt Inbox full
-                    I-->>W: Not accepted
-                else Accepted
-                    I-->>W: Stored as unread
-                    I-->>M: Wake or steer with a preview
-                    M->>I: Open the selected message
-                    I-->>M: Worker message
-                end
+                W->>T: Submit message to parent
+                T-->>M: Deliver through Service Thread Inbox
             end
             opt Worker Run reaches a terminal status
                 W-->>S: Run reaches terminal status
-                S-->>N: Terminal status
-                N->>I: Attempt lightweight terminal notice
-                opt Notice accepted and opened
-                    M->>I: Open notice
-                    I-->>M: Thread, Run and status
-                    M->>S: Inspect saved worker outcome
-                end
+                S->>T: Record child result
+                T-->>M: Deliver child result
+                M->>S: Inspect saved worker outcome
             end
         end
         opt Main chooses to reply

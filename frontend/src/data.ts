@@ -23,6 +23,17 @@ export interface Claw {
   unread_limit: number;
   read_limit: number;
   worker_models: { model: string; description: string }[];
+  worker_agents: {
+    agent_id: string;
+    alias: string;
+    description: string | null;
+  }[];
+  shell_review: {
+    enabled: boolean;
+    model: string | null;
+    risk_threshold: "low" | "medium" | "high" | "extra_high";
+    instruction: string | null;
+  };
 }
 export interface Admission {
   status: "accepted" | "duplicate";
@@ -56,8 +67,6 @@ export interface Overview {
       permanent: boolean;
     } | null;
     browser_failure: string | null;
-    fresh_schedule_count: number;
-    unauthorized_reply_connectors: number;
     browser_name: string | null;
     browser: string | null;
     automation_account: string;
@@ -70,7 +79,6 @@ export interface Worker {
   thread_id: string;
   session_id: string;
   name: string;
-  model: string | null;
   activity: Activity | null;
 }
 export interface Delivery {
@@ -91,6 +99,7 @@ export interface DeliveryDetail extends Delivery {
   source: Record<string, unknown> | null;
 }
 export interface Connector {
+  egress_primary: boolean;
   id: string;
   name: string;
   kind: "github" | "lark";
@@ -98,25 +107,20 @@ export interface Connector {
   last_event_at: string | null;
   credential_configured: boolean;
   listener_status: string | null;
-  reply_environment_id: string | null;
-  reply_reauthorization_required: boolean;
+  egress_status: string | null;
+  egress_failure: string | null;
   config: Record<string, unknown>;
 }
 export interface Schedule {
   id: string;
   name: string;
   prompt: string;
+  target: "main" | "fresh";
   cron: string | null;
   deleted_at: string | null;
   lateness_seconds: number;
   timezone: string;
   enabled: boolean;
-  next_at: string | null;
-}
-export interface FreshSchedule {
-  id: string;
-  name: string;
-  state: string;
   next_at: string | null;
 }
 export interface Occurrence {
@@ -125,6 +129,8 @@ export interface Occurrence {
   delivery_id: string | null;
   status: string;
   item_id: string | null;
+  session_id: string | null;
+  thread_id: string | null;
   run_id: string | null;
 }
 export interface Collection<T> {

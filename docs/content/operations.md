@@ -5,7 +5,7 @@ description: Inspect delivery state, configure access, and preserve Project reso
 
 ## Access and secrets
 
-Use a workspace service account with grants scoped to the resources each Claw needs. Save built-in connector credentials in Claw. Configure accounts for any other tools separately inside the Project Environment. A Project shares working files, Memory Space and optionally a Browser across Main and its workers. Review grants before using an existing resource.
+Use the dedicated Workspace Claw service account with the `builder` role; its `write` grant is available to Claw Runs through authorized Service operations. Save built-in connector credentials in Claw. Configure accounts for any other tools separately inside the Project Environment. A Project shares working files, Memory Space and optionally a Browser across Main and its workers. Review grants before using an existing resource.
 
 ## Diagnostics and retention
 

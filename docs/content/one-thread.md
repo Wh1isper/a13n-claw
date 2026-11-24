@@ -3,6 +3,8 @@ title: Main and workers
 description: Coordinate Inbox work with one persistent Main Thread and independent workers.
 ---
 
-Main receives a brief preview and opens the items it chooses. Opening marks an item read; processing and any platform reply are separate. Main alone owns user-facing replies. It can delegate longer work to independent worker Threads that share its Project, or continue an existing worker explicitly with another assignment. Workers report progress through Inbox.
+Main receives a brief preview and opens the items it chooses. Opening marks an item read; processing and any platform reply are separate. Main owns user-facing replies and can delegate longer work to native asynchronous child Threads that share the captured Project resources.
 
-For inspection or exact execution controls, follow the native Thread and Run links in [Console](./console.md). Use Service's native decision controls for a Main Run waiting on a decision.
+In **Claw settings**, select named Workspace Agents and dynamic Worker models. Service always permits the Main Agent's own model for dynamic Workers in addition to the configured models. Named Workers retain their configured subagents. Child messages and results enter the parent Service Thread Inbox, not the Claw Inbox.
+
+For inspection or execution controls, follow the native Thread and Run links in [Console](./console.md). Main and Workers deny interactive decisions rather than waiting for approval or user input.

@@ -11,7 +11,7 @@ from a13n_service.infra.errors import ServiceError
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Claw, Delivery, InboxItem, Occurrence, ScheduleRequest
+from .models import Claw, Delivery, InboxItem, Occurrence
 
 HISTORY_AGE = timedelta(days=7)
 DELIVERY_LIMIT = 3000
@@ -29,6 +29,8 @@ class Offer:
     source: dict[str, Any]
     content: str
     preview: str
+    volatile_source_fields: tuple[str, ...] = ()
+    legacy_optional_source_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,13 +44,14 @@ class ClawNotFound(LookupError):
     """The selected Claw is outside the scoped workspace or does not exist."""
 
 
-async def lock_claw(session: AsyncSession, workspace_id: str, claw_id: str) -> Claw:
+async def lock_claw(
+    session: AsyncSession, workspace_id: str, claw_id: str, *, include_archived: bool = False
+) -> Claw:
     # One short row lock orders count + insert, open + prune, and configuration changes.
-    claw = await session.scalar(
-        select(Claw)
-        .where(Claw.workspace_id == workspace_id, Claw.id == claw_id, Claw.archived_at.is_(None))
-        .with_for_update()
-    )
+    query = select(Claw).where(Claw.workspace_id == workspace_id, Claw.id == claw_id)
+    if not include_archived:
+        query = query.where(Claw.archived_at.is_(None))
+    claw = await session.scalar(query.with_for_update())
     if claw is None:
         raise ClawNotFound(claw_id)
     return claw
@@ -62,7 +65,15 @@ async def admit(session: AsyncSession, claw: Claw, offer: Offer) -> Admission:
         )
     )
     if existing is not None:
-        if existing.content != offer.content or existing.source != offer.source:
+        ignored = set(offer.volatile_source_fields)
+        ignored.update(
+            key
+            for key in offer.legacy_optional_source_fields
+            if key not in existing.source or key not in offer.source
+        )
+        existing_source = {k: v for k, v in existing.source.items() if k not in ignored}
+        offered_source = {k: v for k, v in offer.source.items() if k not in ignored}
+        if existing.content != offer.content or existing_source != offered_source:
             raise ServiceError("conflict", "The delivery key identifies a different message")
         delivery_id = await session.scalar(
             select(Delivery.id).where(Delivery.claw_id == claw.id, Delivery.item_id == existing.id)
@@ -204,12 +215,6 @@ async def cleanup(storage: Storage, workspace_id: str, claw_id: str) -> None:
         current = await now(session)
         await prune_read(session, claw, current)
         await _prune_deliveries(session, claw.id, current)
-        await session.execute(
-            delete(ScheduleRequest).where(
-                ScheduleRequest.claw_id == claw_id,
-                ScheduleRequest.completed_at < current - HISTORY_AGE,
-            )
-        )
 
 
 async def unread_previews(
