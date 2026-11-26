@@ -2,12 +2,13 @@
 
 from datetime import datetime
 from typing import Literal
+from unicodedata import category
 
 import httpx
 import pydantic
 from a13n_service.infra.cursors import keyset_page
 from a13n_service.infra.db import short_session, transaction
-from a13n_service.infra.errors import ServiceError, conflict, not_found
+from a13n_service.infra.errors import ServiceError, conflict, invalid, not_found
 from a13n_service.runs.requests import CurrentRuntime
 from a13n_service.tenancy.access import workspace_scope
 from a13n_service.tenancy.app_plugins import app_router
@@ -48,7 +49,23 @@ class ConnectorInput(BaseModel):
 
 class ConnectorWrite(ConnectorInput):
     credential: pydantic.SecretStr | None = None
+    webhook_secret: pydantic.SecretStr | None = None
     egress_environment_id: ResourceId | None = None
+
+    @pydantic.field_validator("webhook_secret")
+    @classmethod
+    def valid_webhook_secret(cls, secret: pydantic.SecretStr | None) -> pydantic.SecretStr | None:
+        if secret is not None:
+            value = secret.get_secret_value()
+            if not 1 <= len(value) <= 8192 or any(category(c) == "Cc" for c in value):
+                raise ValueError("Enter a non-empty webhook secret without control characters")
+        return secret
+
+    @pydantic.model_validator(mode="after")
+    def github_secret_only(self):
+        if self.kind != "github" and self.webhook_secret is not None:
+            raise ValueError("Webhook secrets require a GitHub connector")
+        return self
 
     @pydantic.field_validator("credential")
     @classmethod
@@ -70,6 +87,7 @@ class ConnectorView(ConnectorInput):
     last_event_at: datetime | None
     created_at: datetime
     credential_configured: bool = False
+    webhook_secret_configured: bool = False
     listener_status: str | None = None
     egress_status: str | None = None
     egress_failure: str | None = None
@@ -91,6 +109,7 @@ async def connector_view(runtime: CurrentRuntime, row: Connector) -> ConnectorVi
     return view.model_copy(
         update={
             "credential_configured": row.credential is not None,
+            "webhook_secret_configured": row.webhook_secret is not None,
             "egress_status": generation.state if generation else None,
             "egress_failure": generation.failure if generation else None,
             "listener_status": await connectors.listener_status(runtime, row.id)
@@ -170,6 +189,12 @@ async def create_connector(
     actor: Actor,
     runtime: CurrentRuntime,
 ) -> ConnectorView:
+    if (
+        body.kind == "github"
+        and body.config.get("mode") == "webhook"
+        and body.webhook_secret is None
+    ):
+        raise invalid("webhook_secret", "required for webhook intake")
     async with transaction(runtime.storage) as session:
         scope = await workspace_scope(session, actor, workspace_id, "admin")
         claw = await get_claw(session, workspace_id, claw_id)
@@ -185,11 +210,15 @@ async def create_connector(
         row = Connector(
             id=inbox.new_id("con"),
             claw_id=claw.id,
-            **body.model_dump(exclude={"credential", "egress_environment_id"}),
+            **body.model_dump(exclude={"credential", "webhook_secret", "egress_environment_id"}),
         )
         if body.credential is not None:
             row.credential = connectors.protect(
                 runtime, scope.organization_id, row.id, body.credential.get_secret_value()
+            )
+        if body.webhook_secret is not None:
+            row.webhook_secret = connectors.protect_webhook_secret(
+                runtime, scope.organization_id, row.id, body.webhook_secret.get_secret_value()
             )
         session.add(row)
         await session.flush()
@@ -213,6 +242,13 @@ async def update_connector(
         check_reply_environment(claw, body)
         row = await connectors.find(session, claw.id, connector_id)
         await check_egress_primary(session, claw, body, row.id)
+        secret_present = (
+            body.webhook_secret is not None
+            if "webhook_secret" in body.model_fields_set
+            else row.webhook_secret is not None
+        )
+        if body.kind == "github" and body.config.get("mode") == "webhook" and not secret_present:
+            raise invalid("webhook_secret", "required for webhook intake")
         if row.kind != body.kind:
             raise conflict("connector", connector_id, "connector_kind_is_immutable")
         if body.kind == "github" and body.config.get("principal_id"):
@@ -275,6 +311,14 @@ async def update_connector(
                     runtime, scope.organization_id, row.id, body.credential.get_secret_value()
                 )
                 if body.credential is not None
+                else None
+            )
+        if "webhook_secret" in body.model_fields_set:
+            row.webhook_secret = (
+                connectors.protect_webhook_secret(
+                    runtime, scope.organization_id, row.id, body.webhook_secret.get_secret_value()
+                )
+                if body.webhook_secret is not None
                 else None
             )
         if egress_changed:

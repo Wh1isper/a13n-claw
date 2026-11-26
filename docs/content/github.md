@@ -1,7 +1,13 @@
 ---
 title: GitHub intake
-description: Route GitHub notifications or external events to Claw.
+description: Route GitHub webhooks, notifications, or external events to Claw.
 ---
+
+## Receive GitHub webhooks
+
+In **Claw → Connectors**, choose GitHub and **GitHub webhook**. Enter the bot login, allowed sender logins, and a webhook secret. Use `*` to allow any sender except the bot. Leave repositories empty to allow all repositories, or list `owner/repository` names. Save the connector and copy its webhook URL.
+
+In GitHub, configure a webhook with this URL, JSON content type, and the same secret. Subscribe to issue comments, pull request review comments, issues, pull requests, and pull request reviews. Claw accepts supported events that explicitly mention the bot; repository and sender names match case-insensitively. GitHub redeliveries deduplicate by source event. A configured GitHub token enables best-effort eyes reactions on supported targets.
 
 ## Poll GitHub Notifications
 

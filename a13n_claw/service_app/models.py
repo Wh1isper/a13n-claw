@@ -296,6 +296,7 @@ class Connector(Base):
     kind: Mapped[str] = mapped_column(String(32))
     config: Mapped[dict[str, Any]] = mapped_column(JSON)
     credential: Mapped[dict[str, str] | None] = mapped_column(JSON)
+    webhook_secret: Mapped[dict[str, str] | None] = mapped_column(JSON)
     egress_primary: Mapped[bool] = mapped_column(server_default=text("false"))
     enabled: Mapped[bool] = mapped_column(default=True)
     last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

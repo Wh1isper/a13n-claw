@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from . import (
     api,
+    github_webhook,
     inbox,
     lark_retry,
     main_thread,
@@ -169,6 +170,7 @@ def definition() -> AppDefinition:
         database=database,
         factory_keys=frozenset({main_thread.PLUGIN_KEY}),
         routers=api.ROUTERS,
+        webhook_routers=(github_webhook.router,),
         frontend=Frontend(
             "a13n_claw.service_app", "static", entry="index.js", styles=("index.css",)
         ),

@@ -63,8 +63,8 @@ async def find(session: AsyncSession, claw_id: str, connector_id: str) -> Connec
     return connector
 
 
-def location(organization_id: str, connector_id: str) -> SecretLocation:
-    return SecretLocation(organization_id, Connector.__tablename__, "credential", connector_id)
+def location(organization_id: str, connector_id: str, field: str = "credential") -> SecretLocation:
+    return SecretLocation(organization_id, Connector.__tablename__, field, connector_id)
 
 
 def protect(
@@ -81,6 +81,23 @@ def credential(runtime: Runtime, organization_id: str, row: Connector) -> str | 
             Envelope.model_validate(row.credential), location(organization_id, row.id)
         ).decode()
     return None
+
+
+def protect_webhook_secret(
+    runtime: Runtime, organization_id: str, connector_id: str, value: str
+) -> dict[str, str]:
+    return runtime.keys.protect(
+        value.encode(), location(organization_id, connector_id, "webhook_secret")
+    ).model_dump()
+
+
+def webhook_secret(runtime: Runtime, organization_id: str, row: Connector) -> str | None:
+    if row.webhook_secret is None:
+        return None
+    return runtime.keys.reveal(
+        Envelope.model_validate(row.webhook_secret),
+        location(organization_id, row.id, "webhook_secret"),
+    ).decode()
 
 
 def listener_key(connector_id: str) -> str:
@@ -199,11 +216,16 @@ async def offer_external(
             await main_thread.notify(runtime, workspace_id, claw_id, delivery_id=result.delivery_id)
         finally:
             if kind == "github":
-                await github_eyes(connector_id, body, reply_token)
+                await github_eyes(connector_id, body, reply_token, settings.api_url)
     return result
 
 
-async def github_eyes(connector_id: str, event: ExternalMessage, token: str | None) -> None:
+async def github_eyes(
+    connector_id: str,
+    event: ExternalMessage,
+    token: str | None,
+    api_url: str = "https://api.github.com",
+) -> None:
     owner, sep, repo = event.channel.partition("/")
     if not (sep and owner and repo and "/" not in repo) or not token:
         return
@@ -217,7 +239,7 @@ async def github_eyes(connector_id: str, event: ExternalMessage, token: str | No
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             response = await client.post(
-                f"https://api.github.com/repos/{quote(owner, safe='')}"
+                f"{api_url}/repos/{quote(owner, safe='')}"
                 f"/{quote(repo, safe='')}/{target}/reactions",
                 headers={
                     "Authorization": f"Bearer {token}",

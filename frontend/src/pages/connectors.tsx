@@ -370,6 +370,13 @@ function ConnectorEditor({
         <RailRow label={copy("Credential", "凭据")}>
           <Status state={credentialState(row)} />
         </RailRow>
+        {row.kind === "github" && row.config.mode === "webhook" && (
+          <RailRow label={copy("Webhook secret", "Webhook 密钥")}>
+            <Status
+              state={row.webhook_secret_configured ? "saved" : "not configured"}
+            />
+          </RailRow>
+        )}
         {row.listener_status && (
           <RailRow label={copy("Listener", "监听状态")}>
             <Status state={row.listener_status} />
@@ -514,6 +521,7 @@ function ConnectorEditor({
                 kind === "github"
                   ? {
                       mode: githubMode,
+                      bot_login: field(form, "bot_login") || null,
                       principal_id: account || null,
                       channels: items(form, "channels"),
                       senders: items(form, "senders"),
@@ -541,6 +549,7 @@ function ConnectorEditor({
                       event_types: eventTypes,
                     },
               credential: field(form, "credential") || undefined,
+              webhook_secret: field(form, "webhook_secret") || undefined,
             };
             write.mutate(
               { path, method: row ? "PUT" : "POST", body },
@@ -597,15 +606,20 @@ function ConnectorEditor({
             title={copy("Intake", "消息接收")}
             description={
               kind === "github"
-                ? githubMode === "polling"
+                ? githubMode === "webhook"
                   ? copy(
-                      "Poll GitHub Notifications with a classic token that has notifications and repo access. An empty repository list includes all visible repositories.",
-                      "使用具有 notifications 和 repo 权限的经典令牌轮询 GitHub 通知。仓库列表留空时包含所有可见仓库。",
+                      "Receive signed GitHub webhook events.",
+                      "接收经过签名的 GitHub Webhook 事件。",
                     )
-                  : copy(
-                      "Forward GitHub events through your integration or GitHub Actions. Authenticate with the selected Service account and send the workspace ID in X-Workspace-ID.",
-                      "通过自有集成或 GitHub Actions 转发事件。使用所选服务账号认证，并在 X-Workspace-ID 中发送工作区 ID。",
-                    )
+                  : githubMode === "polling"
+                    ? copy(
+                        "Poll GitHub Notifications with a classic token that has notifications and repo access. An empty repository list includes all visible repositories.",
+                        "使用具有 notifications 和 repo 权限的经典令牌轮询 GitHub 通知。仓库列表留空时包含所有可见仓库。",
+                      )
+                    : copy(
+                        "Forward GitHub events through your integration or GitHub Actions. Authenticate with the selected Service account and send the workspace ID in X-Workspace-ID.",
+                        "通过自有集成或 GitHub Actions 转发事件。使用所选服务账号认证，并在 X-Workspace-ID 中发送工作区 ID。",
+                      )
                 : copy(
                     "Enable long-connection event delivery for im.message.receive_v1 in the Lark / Feishu developer console. Approve the required bot permissions and publish the app.",
                     "在飞书 / Lark 开发者控制台启用长连接并订阅 im.message.receive_v1，批准机器人所需权限后发布应用。",
@@ -631,6 +645,10 @@ function ConnectorEditor({
                       value: "polling",
                       label: copy("Notifications polling", "通知轮询"),
                     },
+                    {
+                      value: "webhook",
+                      label: copy("GitHub webhook", "GitHub Webhook"),
+                    },
                   ]}
                 />
                 {githubMode === "external" && (
@@ -653,6 +671,45 @@ function ConnectorEditor({
                     <EndpointControl value={endpoint} />
                   </FormField>
                 )}
+                {githubMode === "webhook" && (
+                  <>
+                    {row && (
+                      <FormField
+                        data-field-layout="stacked"
+                        label={copy("Webhook URL", "Webhook 地址")}
+                      >
+                        <EndpointControl
+                          value={`${window.location.origin}/api/v1/app-webhooks/a13n.claw/github/${row.id}`}
+                        />
+                      </FormField>
+                    )}
+                    <FormField label={copy("Bot login", "机器人用户名")}>
+                      <Input
+                        name="bot_login"
+                        required
+                        readOnly={!allowed}
+                        defaultValue={String(config?.bot_login ?? "")}
+                      />
+                    </FormField>
+                    {allowed && (
+                      <FormField
+                        label={copy("Webhook secret", "Webhook 密钥")}
+                        description={copy(
+                          "Write-only. Leave blank to keep the saved value.",
+                          "密钥只写。留空保留已保存值。",
+                        )}
+                      >
+                        <Input
+                          type="password"
+                          name="webhook_secret"
+                          autoComplete="new-password"
+                          maxLength={8192}
+                          required={!row?.webhook_secret_configured}
+                        />
+                      </FormField>
+                    )}
+                  </>
+                )}
                 <FormField
                   label={copy(
                     "Allowed repositories (owner/repo)",
@@ -667,21 +724,21 @@ function ConnectorEditor({
                     defaultValue={list(config, "channels")}
                   />
                 </FormField>
+                {(githubMode === "polling" || githubMode === "webhook") && (
+                  <FormField label={copy("GitHub API URL", "GitHub API 地址")}>
+                    <Input
+                      name="api_url"
+                      type="url"
+                      defaultValue={String(
+                        config?.api_url ?? "https://api.github.com",
+                      )}
+                      readOnly={!allowed}
+                      required
+                    />
+                  </FormField>
+                )}
                 {githubMode === "polling" && (
                   <>
-                    <FormField
-                      label={copy("GitHub API URL", "GitHub API 地址")}
-                    >
-                      <Input
-                        name="api_url"
-                        type="url"
-                        defaultValue={String(
-                          config?.api_url ?? "https://api.github.com",
-                        )}
-                        readOnly={!allowed}
-                        required
-                      />
-                    </FormField>
                     <FormField
                       label={copy("Poll interval (seconds)", "轮询间隔（秒）")}
                     >
@@ -873,7 +930,7 @@ function ConnectorEditor({
                   : copy("Allowed sender open IDs", "允许的发送人 Open ID")
               }
               description={
-                kind === "github" && githubMode === "polling"
+                kind === "github" && githubMode !== "external"
                   ? copy(
                       "Separate usernames with spaces or new lines; * allows any sender except the bot itself.",
                       "用空格或换行分隔用户名；* 允许机器人自身以外的所有发送人。",
