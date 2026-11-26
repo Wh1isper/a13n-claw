@@ -24,7 +24,7 @@ from a13n_service.tenancy.authorize import WorkspaceScope
 from a13n_service.tenancy.tables import WorkspaceRow
 from sqlalchemy import select
 
-from . import inbox, main_thread
+from . import connectors, inbox, main_thread
 from .feishu import LarkAdapter, LarkSettings
 from .models import APP_ID, Claw, Connector, Delivery, InboxItem, LarkRetryCard, claw_context
 
@@ -222,7 +222,6 @@ async def retry(
     runtime, intake, card_id: str, token: str, open_id: str, chat_id: str, message_id: str
 ) -> bool:
     """Authorize and commit exactly one native App submission before returning success."""
-    from .connectors import credential, intake_enabled
 
     async with transaction(runtime.storage) as session:
         account_id = await session.scalar(
@@ -248,7 +247,7 @@ async def retry(
             WorkspaceScope(intake.organization_id, intake.workspace_id),
             account_id,
         )
-        if not await intake_enabled(session, intake.workspace_id, lock=True):
+        if not await connectors.intake_enabled(session, intake.workspace_id, lock=True):
             return False
         try:
             claw = await inbox.lock_claw(session, intake.workspace_id, intake.claw_id)
@@ -262,7 +261,7 @@ async def retry(
             or connector.kind != "lark"
             or not connector.enabled
             or LarkSettings.model_validate(connector.config) != intake.settings
-            or credential(runtime, intake.organization_id, connector) != intake.token
+            or connectors.credential(runtime, intake.organization_id, connector) != intake.token
             or open_id not in intake.settings.senders
             or open_id == intake.settings.bot_open_id
             or card is None
@@ -376,10 +375,9 @@ async def reconcile(runtime, workspace_id: str, claw_id: str) -> None:
 
 
 async def deliver(runtime, workspace_id: str, claw_id: str, card_id: str) -> None:
-    from .connectors import credential, intake_enabled
 
     async with transaction(runtime.storage) as session:
-        if not await intake_enabled(session, workspace_id, lock=True):
+        if not await connectors.intake_enabled(session, workspace_id, lock=True):
             return
         try:
             claw = await inbox.lock_claw(session, workspace_id, claw_id)
@@ -407,7 +405,7 @@ async def deliver(runtime, workspace_id: str, claw_id: str, card_id: str) -> Non
         ):
             return
         workspace = await session.get_one(WorkspaceRow, workspace_id)
-        secret = credential(runtime, workspace.organization_id, connector)
+        secret = connectors.credential(runtime, workspace.organization_id, connector)
         if not secret:
             return
         if card.state == "pending":

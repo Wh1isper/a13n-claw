@@ -12,7 +12,7 @@ A connector can reflect the first open on the source platform, for example with 
 
 ## Capacity and Retention
 
-Each Claw can configure its unread and read limits independently. The unread limit defaults to 500 items. At or above that limit, Claw does not evict an accepted unread item. Opening an unread item frees a slot; rejected or dropped items do not produce unread notices.
+Each Claw can configure its unread and read limits independently. The unread limit defaults to 500 items. At or above that limit, Claw does not evict an accepted unread item. Opening an unread item frees a slot; rejected items do not produce unread notices.
 
 | Offered item                      | Full-Inbox behavior                                                                           |
 | --------------------------------- | --------------------------------------------------------------------------------------------- |

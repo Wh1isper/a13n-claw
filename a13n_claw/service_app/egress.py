@@ -1,10 +1,25 @@
 """Claw-owned, host-restricted connector credentials for native Project Sessions."""
 
+import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import urlsplit
 
+from a13n_envd_client.eip.v1 import EgressMode, PublicDestinations
+from a13n_service.app_sdk import egress as sdk_egress
+from a13n_service.app_sdk import threads as sdk_threads
 from a13n_service.app_sdk.threads import SessionConfiguration
+from a13n_service.infra.db import short_session, transaction
+from a13n_service.infra.errors import invalid
+from a13n_service.resources.environment_instances.session_configuration import EgressConfiguration
+from a13n_service.tenancy.tables import WorkspaceRow
+from sqlalchemy import select
+
+from . import connectors
+from .feishu import LarkAdapter, LarkSettings
+from .inbox import new_id
+from .models import APP_ID, Claw, Connector, ConnectorEgress, claw_context
 
 GITHUB_HOSTS = ("api.github.com", "github.com", "uploads.github.com")
 LARK_HOSTS = {
@@ -39,10 +54,6 @@ def session_configuration(
     bindings: tuple[Binding, ...], base: SessionConfiguration | None = None
 ) -> SessionConfiguration:
     """Apply references without widening the selected Agent's policy."""
-    from a13n_envd_client.eip.v1 import EgressMode, PublicDestinations
-    from a13n_service.resources.environment_instances.session_configuration import (
-        EgressConfiguration,
-    )
 
     base = base or SessionConfiguration()
     if base.egress_mode is None and base.egress is None:
@@ -95,11 +106,6 @@ async def commit_generation(session, runtime, claw, generation, value: str, expi
     connector generation after any external token exchange. The supplied value
     must never be persisted in Claw state.
     """
-    from a13n_envd_client.eip.v1 import PublicDestinations
-    from a13n_service.app_sdk import egress as sdk_egress
-    from a13n_service.app_sdk import threads as sdk_threads
-
-    from .models import APP_ID
 
     if generation.state != "preparing":
         raise ValueError("Connector generation is no longer current")
@@ -158,11 +164,6 @@ async def commit_generation(session, runtime, claw, generation, value: str, expi
 
 async def revoke_generation(session, runtime, claw, generation) -> None:
     """Remove the owned reference and revoke its value in one transaction."""
-    from a13n_service.app_sdk import egress as sdk_egress
-    from a13n_service.app_sdk import threads as sdk_threads
-    from sqlalchemy import select
-
-    from .models import APP_ID, ConnectorEgress
 
     if generation.credential_id is None:
         generation.state = "revoked"
@@ -212,9 +213,6 @@ async def invalidate_generations(session, connector_id: str) -> None:
     Caller holds the Claw lock. Credentials are not removed from storage until
     the Service revocation transaction succeeds.
     """
-    from sqlalchemy import select
-
-    from .models import ConnectorEgress
 
     rows = await session.scalars(
         select(ConnectorEgress)
@@ -229,8 +227,6 @@ async def invalidate_generations(session, connector_id: str) -> None:
 
 async def enqueue_generation(session, claw, connector) -> None:
     """Queue a fresh generation only for a selected enabled connector."""
-    from .inbox import new_id
-    from .models import ConnectorEgress
 
     if not connector.enabled or not connector.egress_primary or connector.credential is None:
         return
@@ -251,9 +247,6 @@ async def enqueue_generation(session, claw, connector) -> None:
 
 async def process_generation(runtime, workspace_id: str, claw_id: str, generation_id: str) -> None:
     """Reconcile one generation and retain a non-secret failure diagnostic."""
-    from a13n_service.infra.db import transaction
-
-    from .models import ConnectorEgress
 
     try:
         await _process_generation(runtime, workspace_id, claw_id, generation_id)
@@ -266,18 +259,6 @@ async def process_generation(runtime, workspace_id: str, claw_id: str, generatio
 
 async def _process_generation(runtime, workspace_id: str, claw_id: str, generation_id: str) -> None:
     """Reconcile one generation with a fenced token exchange outside transactions."""
-    import asyncio
-    from datetime import UTC, datetime, timedelta
-
-    from a13n_service.app_sdk import threads as sdk_threads
-    from a13n_service.infra.db import short_session, transaction
-    from a13n_service.tenancy.tables import WorkspaceRow
-    from sqlalchemy import select
-
-    from . import connectors
-    from .feishu import LarkAdapter, LarkSettings
-    from .models import APP_ID, Claw, Connector, ConnectorEgress, claw_context
-
     async with short_session(runtime.storage) as session:
         claw = await session.get(Claw, claw_id)
         if claw is None or claw.workspace_id != workspace_id:
@@ -304,7 +285,6 @@ async def _process_generation(runtime, workspace_id: str, claw_id: str, generati
         if row.state == "revoke_pending":
             # Revoke the Service credential even if a busy or closed Thread
             # prevents removing its reference. Cleanup can then retry safely.
-            from a13n_service.app_sdk import egress as sdk_egress
 
             if row.credential_id is not None:
                 await sdk_egress.revoke_app_credential_in_transaction(
@@ -427,9 +407,6 @@ async def _process_generation(runtime, workspace_id: str, claw_id: str, generati
 
 async def initial_configuration(session, claw, base: SessionConfiguration | None = None):
     """Select ready owned references for a newly created Project mount."""
-    from sqlalchemy import select
-
-    from .models import ConnectorEgress
 
     rows = await session.scalars(
         select(ConnectorEgress).where(
@@ -448,15 +425,10 @@ async def initial_configuration(session, claw, base: SessionConfiguration | None
     try:
         return session_configuration(tuple(bindings), base)
     except ValueError as error:
-        from a13n_service.infra.errors import invalid
-
         raise invalid("session_configuration", "connector_egress_policy_conflict") from error
 
 
 async def invalidate_claw(session, claw_id: str) -> None:
-    from sqlalchemy import select
-
-    from .models import Connector
 
     ids = await session.scalars(select(Connector.id).where(Connector.claw_id == claw_id))
     for connector_id in ids:
@@ -464,9 +436,6 @@ async def invalidate_claw(session, claw_id: str) -> None:
 
 
 async def revoke_for_rebind(session, runtime, claw) -> None:
-    from sqlalchemy import select
-
-    from .models import ConnectorEgress
 
     await invalidate_claw(session, claw.id)
     rows = await session.scalars(

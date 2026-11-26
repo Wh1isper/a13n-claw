@@ -11,7 +11,7 @@ from a13n_service.tenancy.tables import OrganizationRow, WorkspaceRow
 from redis.asyncio import Redis
 from sqlalchemy import delete
 
-from a13n_claw.service_app import connectors, lark_retry
+from a13n_claw.service_app import lark_retry, supervisor
 from a13n_claw.service_app.models import Claw, LarkRetryCard
 
 
@@ -95,7 +95,7 @@ def test_provider_reconciliation_is_background_bounded_and_deduplicated(monkeypa
             await release.wait()
 
         monkeypatch.setattr(lark_retry, "reconcile", reconcile)
-        listeners = connectors.Listeners.__new__(connectors.Listeners)
+        listeners = supervisor.Listeners.__new__(supervisor.Listeners)
         listeners.runtime = object()
         listeners._closing = False
         listeners.card_tasks = {}
