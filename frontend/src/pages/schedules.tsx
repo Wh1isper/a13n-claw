@@ -1,6 +1,5 @@
 import {
   Button,
-  Checkbox,
   ChoiceField,
   Confirm,
   DetailHeader,
@@ -20,38 +19,27 @@ import {
   RailSection,
   React,
   ResourceTable,
-  SaveBar,
-  SearchPicker,
   Section,
-  Sections,
   SegmentedControl,
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
   Switch,
   Textarea,
   useAccess,
   useApp,
   useQuery,
-  useToast,
 } from "@a13n/console";
+import styles from "../app.module.css";
+import { useCopy } from "../copy";
 import {
   appPath,
-  json,
   clawPath,
+  json,
   url,
   useRead,
-  useProjectResources,
   useSelection,
   useWrite,
   type Claw,
   type Collection,
-  type Connector,
   type Occurrence,
-  type Overview,
-  type ResourceKind,
   type Schedule,
 } from "../data";
 import {
@@ -63,12 +51,10 @@ import {
   Status,
   ThreadLink,
 } from "../primitives";
-import { useCopy } from "../copy";
-import styles from "../app.module.css";
-import { Icon } from "../ui/icons";
 import { CopyButton } from "../ui/copy-button";
+import { Icon } from "../ui/icons";
 
-import { field, items, list, ResourcePicker } from "./form-common";
+import { field } from "./form-common";
 
 export function SchedulesPage() {
   const { params } = useSelection();

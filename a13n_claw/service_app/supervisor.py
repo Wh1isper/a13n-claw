@@ -18,7 +18,7 @@ from sqlalchemy import func, or_, select
 
 from . import egress, github_intake, lark_retry
 from .connectors import (
-    LARK_CHANGES,
+    CONNECTOR_CHANGES,
     STATUS_TTL,
     WRITE_STATUS,
     Intake,
@@ -55,7 +55,7 @@ class Listeners:
         while True:
             try:
                 async with self.runtime.redis.pubsub() as pubsub:
-                    await pubsub.subscribe(LARK_CHANGES)
+                    await pubsub.subscribe(CONNECTOR_CHANGES)
                     async for message in pubsub.listen():
                         organization_id = message["data"]
                         if message["type"] != "message" or not isinstance(organization_id, str):
@@ -63,9 +63,9 @@ class Listeners:
                         try:
                             await self.reconcile(organization_id)
                         except Exception:
-                            logger.warning("Lark configuration reconciliation failed")
+                            logger.warning("Connector configuration reconciliation failed")
             except RedisError:
-                logger.warning("Lark reconcile subscription unavailable")
+                logger.warning("Connector reconcile subscription unavailable")
                 await asyncio.sleep(1)
 
     async def close(self) -> None:

@@ -1,24 +1,24 @@
 import {
-  Badge,
   Button,
-  ChoiceField,
-  SearchPicker,
-  useInfiniteQuery,
-  Pagination,
   Empty,
   ErrorPage,
   Input,
   Link,
   Loading,
+  Pagination,
   React,
+  SearchPicker,
   Timestamp,
   useAccess,
   useApp,
+  useInfiniteQuery,
 } from "@a13n/console";
+import styles from "./app.module.css";
+import { useCopy } from "./copy";
 import {
   appPath,
-  json,
   clawPath,
+  json,
   threadPath,
   url,
   useRead,
@@ -27,8 +27,6 @@ import {
   type Collection,
   type Overview,
 } from "./data";
-import { useCopy } from "./copy";
-import styles from "./app.module.css";
 import { Icon } from "./ui/icons";
 
 export function Status({ state }: { state: string }) {

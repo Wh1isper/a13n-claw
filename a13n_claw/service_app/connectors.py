@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from a13n_service.runs.runtime import Runtime
 
 logger = get_logger(__name__)
-LARK_CHANGES = "claw:lark:changes"
+CONNECTOR_CHANGES = "claw:lark:changes"
 STATUS_TTL = 30
 # A replaced listener must neither update nor erase the new holder's status.
 WRITE_STATUS = """
@@ -112,12 +112,12 @@ async def listener_status(runtime: Runtime, connector_id: str) -> str:
     return "not observed"
 
 
-async def lark_changed(runtime: Runtime, organization_id: str) -> None:
+async def connectors_changed(runtime: Runtime, organization_id: str) -> None:
     try:
-        await runtime.redis.publish(LARK_CHANGES, organization_id)
+        await runtime.redis.publish(CONNECTOR_CHANGES, organization_id)
     except RedisError:
         # Configuration is already committed. The sweep will reconcile it.
-        logger.warning("Lark reconcile signal unavailable")
+        logger.warning("Connector reconcile signal unavailable")
 
 
 async def check(kind: str, connector_id: str, config: dict, token: str) -> None:
@@ -181,30 +181,25 @@ async def offer_external(
                 "forbidden", "Sender or channel is not configured for this connector"
             )
         connector.last_event_at = await now(session)
-        kind = connector.kind
         source = {
             **body.source,
             "connector_id": connector_id,
             "channel": body.channel,
             "sender": body.sender,
             "event_id": body.event_id,
-            "platform": kind,
+            "platform": "github",
+            "issue_number": body.github_issue_number,
+            "comment_id": body.github_comment_id,
         }
-        if kind == "github":
-            source |= {
-                "issue_number": body.github_issue_number,
-                "comment_id": body.github_comment_id,
-            }
         reply_token = None
-        if kind == "github":
-            with suppress(ServiceError):
-                reply_token = credential(runtime, scope.organization_id, connector)
+        with suppress(ServiceError):
+            reply_token = credential(runtime, scope.organization_id, connector)
         result = await inbox.admit(
             session,
             claw,
             inbox.Offer(
                 "user",
-                kind,
+                "github",
                 event_key(connector_id, body.event_id),
                 source,
                 body.content,
@@ -215,8 +210,7 @@ async def offer_external(
         try:
             await main_thread.notify(runtime, workspace_id, claw_id, delivery_id=result.delivery_id)
         finally:
-            if kind == "github":
-                await github_eyes(connector_id, body, reply_token, settings.api_url)
+            await github_eyes(connector_id, body, reply_token, settings.api_url)
     return result
 
 

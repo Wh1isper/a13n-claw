@@ -15,13 +15,13 @@ from fastapi import FastAPI
 from sqlalchemy import select
 
 from . import (
-    api,
     github_webhook,
     inbox,
     lark_retry,
     main_thread,
     plugin,
     project_cli,
+    routes,
     schedules,
     supervisor,
 )
@@ -48,7 +48,7 @@ async def control_lifespan(app: FastAPI):
         await listeners.close()
 
 
-api.claws.router.lifespan_context = control_lifespan
+routes.claws.router.lifespan_context = control_lifespan
 
 
 async def sweep(runtime: Runtime, organization_id: str) -> None:
@@ -169,7 +169,7 @@ def definition() -> AppDefinition:
         name="Claw",
         database=database,
         factory_keys=frozenset({main_thread.PLUGIN_KEY}),
-        routers=api.ROUTERS,
+        routers=routes.ROUTERS,
         webhook_routers=(github_webhook.router,),
         frontend=Frontend(
             "a13n_claw.service_app", "static", entry="index.js", styles=("index.css",)

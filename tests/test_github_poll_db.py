@@ -342,3 +342,57 @@ async def exercise_full_poll(url):
             await session.execute(delete(WorkspaceRow).where(WorkspaceRow.id == workspace))
             await session.execute(delete(OrganizationRow).where(OrganizationRow.id == org))
         await storage.close()
+
+
+def test_egress_generation_batch_and_orphan_invalidation():
+    from a13n_claw.service_app import egress
+    from a13n_claw.service_app.models import ConnectorEgress
+    from a13n_claw.service_app.routes.connectors import connector_generations
+
+    url = os.environ.get("CLAW_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Set CLAW_TEST_DATABASE_URL to a disposable Service PostgreSQL database")
+
+    async def exercise():
+        storage = Storage(url, pool_size=2)
+        claw, connector = uuid4().hex, uuid4().hex
+        ids = [uuid4().hex for _ in range(4)]
+        try:
+            async with transaction(storage) as session:
+                for index, (state, failure, credential) in enumerate(
+                    (
+                        ("ready", None, "key"),
+                        ("pending", "failed", None),
+                        ("revoked", "old", None),
+                        ("ready", "orphan", "key"),
+                    )
+                ):
+                    session.add(
+                        ConnectorEgress(
+                            id=ids[index],
+                            workspace_id="workspace",
+                            claw_id=claw,
+                            connector_id=connector if index < 3 else "deleted-" + connector,
+                            kind="github",
+                            actor_id="account",
+                            state=state,
+                            failure=failure,
+                            credential_id=credential,
+                        )
+                    )
+                await session.flush()
+                rows = await connector_generations(session, [connector, "deleted-" + connector])
+                assert rows[connector].id == ids[1]  # failure takes precedence over newer rows
+                assert rows["deleted-" + connector].id == ids[3]
+                await egress.invalidate_claw(session, claw)
+                orphan = await session.get_one(ConnectorEgress, ids[3])
+                assert orphan.state == "revoke_pending" and orphan.failure is None
+                assert (await session.get_one(ConnectorEgress, ids[1])).state == "revoked"
+        finally:
+            async with transaction(storage) as session:
+                await session.execute(
+                    delete(ConnectorEgress).where(ConnectorEgress.claw_id == claw)
+                )
+            await storage.close()
+
+    asyncio.run(exercise())

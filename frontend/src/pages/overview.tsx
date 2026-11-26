@@ -1,60 +1,46 @@
 import {
-  ChoiceField,
   Button,
+  ErrorPage,
   Link,
   ListRow,
   ListRows,
-  SegmentedControl,
-  DetailHeader,
-  DetailLayout,
-  DetailPage,
-  Empty,
-  ErrorPage,
   Loading,
   Page,
-  Rail,
-  RailRow,
-  RailSection,
   React,
   ResourceTable,
   Section,
   Sections,
-  Toolbar,
-  bridgeVersion,
+  SegmentedControl,
   useAccess,
   useApp,
-  type AppContribution,
-  type DetailTab,
 } from "@a13n/console";
 import {
   appPath,
   clawPath,
-  url,
   threadPath,
+  url,
   useRead,
-  useSelection,
   type Claw,
   type Collection,
   type Delivery,
-  type DeliveryDetail,
   type Overview,
   type Worker,
 } from "../data";
 import {
   ClawLink,
   ClawScope,
-  DateTime,
   Pager,
   ResourceLink,
   Status,
   ThreadLink,
 } from "../primitives";
 
-import { useCopy } from "../copy";
 import styles from "../app.module.css";
+import { useCopy } from "../copy";
 import { Icon } from "../ui/icons";
 
 import { DeliveryTable } from "./deliveries";
+import { projectResourceState } from "./settings";
 
 type ModelUsage = {
   model_id: string | null;
@@ -326,11 +312,11 @@ function DashboardBody({
       </Button>
     );
   const missingEnvironment =
-    ["missing", "lost", "failed", "deleted"].includes(project.environment) ||
-    project.environment_failure?.permanent;
-  const missingBrowser =
-    project.browser &&
-    ["missing", "lost", "failed", "deleted"].includes(project.browser);
+    projectResourceState(
+      project.environment,
+      project.environment_failure?.permanent,
+    ) === "replace";
+  const missingBrowser = projectResourceState(project.browser) === "replace";
   const mainState = main?.current_run_id
     ? "active"
     : main?.last_status === "waiting"

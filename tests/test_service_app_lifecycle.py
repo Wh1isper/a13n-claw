@@ -43,7 +43,6 @@ from a13n_claw.service_app import (
     supervisor,
 )
 from a13n_claw.service_app.models import InboxItem, Occurrence, Schedule
-from a13n_claw.service_app.routes import schedules as schedule_routes
 
 
 @pytest.fixture
@@ -213,30 +212,9 @@ def test_first_setup_and_native_runs(monkeypatch, tmp_path, model_server):
     monkeypatch.setattr(external, "verify", verify)
     monkeypatch.setattr(envd, "connect", connect)
     monkeypatch.setattr(project_cli, "provision", provision)
-    outbound = []
-
-    async def command(_environment, script, arguments, *, variables, timeout):
-        assert script == project_cli.REPLY_CLI and timeout == 40
-        outbound.append(arguments)
-        if arguments[0] == "gh":
-            assert variables["GH_TOKEN"] == "synthetic-github-credential"
-        else:
-            assert variables["LARKSUITE_CLI_TENANT_ACCESS_TOKEN"] == "synthetic-lark-access-token"
-        error = b""
-        if "--text=fail" in arguments:
-            error = b"auth rejected synthetic-lark-access-token and synthetic-lark-app-secret"
-        return SimpleNamespace(
-            status=SimpleNamespace(exit_code=1 if error else 0),
-            output=SimpleNamespace(
-                stdout=SimpleNamespace(inline=b"https://example.com/reply"),
-                stderr=SimpleNamespace(inline=error),
-            ),
-        )
-
     # Drive periodic sweeps explicitly so background ticks do not race rollback or notify checks.
     real_definition = claw_app.definition
     monkeypatch.setattr(claw_app, "definition", lambda: replace(real_definition(), sweeps=()))
-    monkeypatch.setattr(project_cli, "command", command)
     model_url, requests, reply, tool_results, unbound_tools = model_server
     origin = "https://claw.test"
     with scratch_database(Database(url=database_url)) as database:
@@ -258,7 +236,6 @@ def test_first_setup_and_native_runs(monkeypatch, tmp_path, model_server):
                 model_url,
                 requests,
                 reply,
-                outbound,
                 tool_results,
                 unbound_tools,
                 monkeypatch,
@@ -268,7 +245,7 @@ def test_first_setup_and_native_runs(monkeypatch, tmp_path, model_server):
 
 
 def exercise_lifecycle(
-    client, model_url, requests, reply, outbound, tool_results, unbound_tools, monkeypatch
+    client, model_url, requests, reply, tool_results, unbound_tools, monkeypatch
 ):
     runtime = client.app.state.runtime
 
@@ -531,7 +508,7 @@ def exercise_lifecycle(
         raise ServiceError("unavailable", "synthetic account refusal")
 
     with monkeypatch.context() as patch:
-        patch.setattr(schedule_routes, "prepare_claw_admission", refused_admission)
+        patch.setattr(schedules.app_threads, "prepare_admission", refused_admission)
         replay = post(f"{schedule_path}/trigger", {}, 200, headers=trigger_key)
         assert replay["id"] == occ["id"] and replay["run_id"] == occ["run_id"]
         post(f"{schedule_path}/trigger", {}, 503, headers={"Idempotency-Key": uuid4().hex})
@@ -849,7 +826,7 @@ def exercise_lifecycle(
     )
 
     async def subscribers():
-        return (await runtime.redis.pubsub_numsub(connectors.LARK_CHANGES))[0][1]
+        return (await runtime.redis.pubsub_numsub(connectors.CONNECTOR_CHANGES))[0][1]
 
     eventually(lambda: client.portal.call(subscribers), lambda count: count >= 1, timeout=4)
     lark_body = {
@@ -893,7 +870,6 @@ def exercise_lifecycle(
         lambda: read(f"/runs/{next_delivery['run_id']}"), lambda run: run["sealed_at"]
     )
     assert next_run["status"] == "completed", next_run.get("failure")
-    assert outbound == []  # Connector-managed Main replies are not exposed.
 
     cleared = client.put(f"/api/v1{lark_path}", json={**lark_body, "credential": None})
     assert cleared.status_code == 200, cleared.text

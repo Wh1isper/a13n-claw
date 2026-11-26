@@ -246,104 +246,94 @@ async def enqueue_generation(session, claw, connector) -> None:
 
 
 async def process_generation(runtime, workspace_id: str, claw_id: str, generation_id: str) -> None:
-    """Reconcile one generation and retain a non-secret failure diagnostic."""
-
-    try:
-        await _process_generation(runtime, workspace_id, claw_id, generation_id)
-    except Exception:
-        async with transaction(runtime.storage) as session:
-            row = await session.get(ConnectorEgress, generation_id, with_for_update=True)
-            if row is not None and row.claw_id == claw_id and row.state != "revoked":
-                row.failure = "credential_sync_failed"
-
-
-async def _process_generation(runtime, workspace_id: str, claw_id: str, generation_id: str) -> None:
     """Reconcile one generation with a fenced token exchange outside transactions."""
-    async with short_session(runtime.storage) as session:
-        claw = await session.get(Claw, claw_id)
-        if claw is None or claw.workspace_id != workspace_id:
-            return
-        account_id = claw.service_account_id
-    now = datetime.now(UTC)
-    async with transaction(runtime.storage) as session:
-        await sdk_threads.prepare_admission(
-            session,
-            runtime,
-            workspace_id,
-            account_id,
-            app_id=APP_ID,
-            app_context=claw_context(claw_id),
-        )
-        claw = await session.scalar(
-            select(Claw)
-            .where(Claw.id == claw_id, Claw.workspace_id == workspace_id)
-            .with_for_update()
-        )
-        row = await session.get(ConnectorEgress, generation_id, with_for_update=True)
-        if claw is None or row is None or row.claw_id != claw_id:
-            return
-        if row.state == "revoke_pending":
-            # Revoke the Service credential even if a busy or closed Thread
-            # prevents removing its reference. Cleanup can then retry safely.
-
-            if row.credential_id is not None:
-                await sdk_egress.revoke_app_credential_in_transaction(
-                    session,
-                    runtime,
-                    claw.workspace_id,
-                    app_id=APP_ID,
-                    actor_id=claw.service_account_id,
-                    credential_id=row.credential_id,
-                )
-                row.state = "unbinding"
-            else:
-                row.state = "revoked"
-            row.failure = None
-            return
-        if row.state == "unbinding":
-            await revoke_generation(session, runtime, claw, row)
-            return
-        if row.state == "ready" and (row.refresh_at is None or row.refresh_at > now):
-            return
-        if (
-            row.state == "preparing"
-            and row.attempt_started_at
-            and row.attempt_started_at > now - timedelta(seconds=45)
-        ):
-            return
-        if row.state not in ("pending", "preparing", "ready"):
-            return
-        previous = await session.scalar(
-            select(ConnectorEgress.id).where(
-                ConnectorEgress.claw_id == claw.id,
-                ConnectorEgress.kind == row.kind,
-                ConnectorEgress.state.in_(("revoke_pending", "unbinding")),
-                ConnectorEgress.id != row.id,
-            )
-        )
-        if previous:
-            return
-        connector = await session.get(Connector, row.connector_id)
-        if (
-            claw.archived_at is not None
-            or connector is None
-            or not connector.enabled
-            or not connector.egress_primary
-            or connector.credential is None
-        ):
-            row.state = "revoke_pending" if row.credential_id else "revoked"
-            return
-        workspace_org = await session.get_one(WorkspaceRow, workspace_id)
-        secret = connectors.credential(runtime, workspace_org.organization_id, connector)
-        if secret is None:
-            row.state = "revoke_pending" if row.credential_id else "revoked"
-            return
-        config = dict(connector.config)
-        encrypted = dict(connector.credential)
-        row.state = "preparing"
-        row.attempt_started_at = now
-        kind = row.kind
+    attempt_started_at = None
     try:
+        async with short_session(runtime.storage) as session:
+            claw = await session.get(Claw, claw_id)
+            if claw is None or claw.workspace_id != workspace_id:
+                return
+            account_id = claw.service_account_id
+        now = datetime.now(UTC)
+        async with transaction(runtime.storage) as session:
+            await sdk_threads.prepare_admission(
+                session,
+                runtime,
+                workspace_id,
+                account_id,
+                app_id=APP_ID,
+                app_context=claw_context(claw_id),
+            )
+            claw = await session.scalar(
+                select(Claw)
+                .where(Claw.id == claw_id, Claw.workspace_id == workspace_id)
+                .with_for_update()
+            )
+            row = await session.get(ConnectorEgress, generation_id, with_for_update=True)
+            if claw is None or row is None or row.claw_id != claw_id:
+                return
+            if row.state == "revoke_pending":
+                # Revoke the Service credential even if a busy or closed Thread
+                # prevents removing its reference. Cleanup can then retry safely.
+
+                if row.credential_id is not None:
+                    await sdk_egress.revoke_app_credential_in_transaction(
+                        session,
+                        runtime,
+                        claw.workspace_id,
+                        app_id=APP_ID,
+                        actor_id=claw.service_account_id,
+                        credential_id=row.credential_id,
+                    )
+                    row.state = "unbinding"
+                else:
+                    row.state = "revoked"
+                row.failure = None
+                return
+            if row.state == "unbinding":
+                await revoke_generation(session, runtime, claw, row)
+                return
+            if row.state == "ready" and (row.refresh_at is None or row.refresh_at > now):
+                return
+            if (
+                row.state == "preparing"
+                and row.attempt_started_at
+                and row.attempt_started_at > now - timedelta(seconds=45)
+            ):
+                return
+            if row.state not in ("pending", "preparing", "ready"):
+                return
+            previous = await session.scalar(
+                select(ConnectorEgress.id).where(
+                    ConnectorEgress.claw_id == claw.id,
+                    ConnectorEgress.kind == row.kind,
+                    ConnectorEgress.state.in_(("revoke_pending", "unbinding")),
+                    ConnectorEgress.id != row.id,
+                )
+            )
+            if previous:
+                return
+            connector = await session.get(Connector, row.connector_id)
+            if (
+                claw.archived_at is not None
+                or connector is None
+                or not connector.enabled
+                or not connector.egress_primary
+                or connector.credential is None
+            ):
+                row.state = "revoke_pending" if row.credential_id else "revoked"
+                return
+            workspace_org = await session.get_one(WorkspaceRow, workspace_id)
+            secret = connectors.credential(runtime, workspace_org.organization_id, connector)
+            if secret is None:
+                row.state = "revoke_pending" if row.credential_id else "revoked"
+                return
+            config = dict(connector.config)
+            encrypted = dict(connector.credential)
+            row.state = "preparing"
+            row.attempt_started_at = now
+            kind = row.kind
+        attempt_started_at = now
         expires_at = None
         refresh_at = None
         value = secret
@@ -398,10 +388,18 @@ async def _process_generation(runtime, workspace_id: str, claw_id: str, generati
             await commit_generation(session, runtime, claw, row, value, expires_at)
             row.refresh_at = refresh_at
     except Exception:
-        # Do not record provider details or credentials. Retry after the lease.
+        # Do not record provider details or credentials; fence exchanged attempts.
         async with transaction(runtime.storage) as session:
             row = await session.get(ConnectorEgress, generation_id, with_for_update=True)
-            if row is not None and row.state == "preparing" and row.attempt_started_at == now:
+            if (
+                row is not None
+                and row.claw_id == claw_id
+                and row.state != "revoked"
+                and (
+                    attempt_started_at is None
+                    or (row.state == "preparing" and row.attempt_started_at == attempt_started_at)
+                )
+            ):
                 row.failure = "credential_sync_failed"
 
 
@@ -430,9 +428,15 @@ async def initial_configuration(session, claw, base: SessionConfiguration | None
 
 async def invalidate_claw(session, claw_id: str) -> None:
 
-    ids = await session.scalars(select(Connector.id).where(Connector.claw_id == claw_id))
-    for connector_id in ids:
-        await invalidate_generations(session, connector_id)
+    rows = await session.scalars(
+        select(ConnectorEgress)
+        .where(ConnectorEgress.claw_id == claw_id, ConnectorEgress.state != "revoked")
+        .with_for_update()
+    )
+    for row in rows:
+        if row.state != "unbinding":
+            row.state = "revoke_pending" if row.credential_id is not None else "revoked"
+        row.failure = None
 
 
 async def revoke_for_rebind(session, runtime, claw) -> None:
