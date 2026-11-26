@@ -5,6 +5,7 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -232,6 +233,9 @@ def test_first_setup_and_native_runs(monkeypatch, tmp_path, model_server):
             ),
         )
 
+    # Drive periodic sweeps explicitly so background ticks do not race rollback or notify checks.
+    real_definition = claw_app.definition
+    monkeypatch.setattr(claw_app, "definition", lambda: replace(real_definition(), sweeps=()))
     monkeypatch.setattr(project_cli, "command", command)
     model_url, requests, reply, tool_results, unbound_tools = model_server
     origin = "https://claw.test"

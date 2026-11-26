@@ -13,7 +13,7 @@ from a13n_claw.service_app.github_poll import GitHubSettings
 
 
 def test_only_one_replica_polls_and_cancellation_releases_lease(monkeypatch):
-    url = os.environ.get("CLAW_TEST_REDIS_URL")
+    url = os.environ.get("CLAW_TEST_REDIS_URL") or os.environ.get("A13N_REDIS__URL")
     if not url:
         pytest.skip("Set CLAW_TEST_REDIS_URL to a disposable Redis instance")
     asyncio.run(exercise_lease(monkeypatch, url))

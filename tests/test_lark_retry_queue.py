@@ -17,7 +17,7 @@ from a13n_claw.service_app.models import Claw, LarkRetryCard
 
 def test_retry_queue_rotates_past_failed_and_disabled_cards(monkeypatch):
     url = os.environ.get("CLAW_TEST_DATABASE_URL")
-    redis_url = os.environ.get("CLAW_TEST_REDIS_URL")
+    redis_url = os.environ.get("CLAW_TEST_REDIS_URL") or os.environ.get("A13N_REDIS__URL")
     if not url or not redis_url:
         pytest.skip("Requires disposable PostgreSQL and Redis")
     seen = []
