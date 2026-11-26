@@ -11,13 +11,13 @@ from a13n_service.tenancy.tables import OrganizationRow, WorkspaceRow
 from redis.asyncio import Redis
 from sqlalchemy import delete
 
-from a13n_claw.service_app import connectors, lark_retry
+from a13n_claw.service_app import lark_retry, supervisor
 from a13n_claw.service_app.models import Claw, LarkRetryCard
 
 
 def test_retry_queue_rotates_past_failed_and_disabled_cards(monkeypatch):
     url = os.environ.get("CLAW_TEST_DATABASE_URL")
-    redis_url = os.environ.get("CLAW_TEST_REDIS_URL")
+    redis_url = os.environ.get("CLAW_TEST_REDIS_URL") or os.environ.get("A13N_REDIS__URL")
     if not url or not redis_url:
         pytest.skip("Requires disposable PostgreSQL and Redis")
     seen = []
@@ -95,7 +95,7 @@ def test_provider_reconciliation_is_background_bounded_and_deduplicated(monkeypa
             await release.wait()
 
         monkeypatch.setattr(lark_retry, "reconcile", reconcile)
-        listeners = connectors.Listeners.__new__(connectors.Listeners)
+        listeners = supervisor.Listeners.__new__(supervisor.Listeners)
         listeners.runtime = object()
         listeners._closing = False
         listeners.card_tasks = {}

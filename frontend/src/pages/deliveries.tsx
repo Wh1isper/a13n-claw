@@ -279,7 +279,6 @@ function DeliveriesBody({
                   all,
                   { value: "accepted", label: copy("Accepted", "已接收") },
                   { value: "full", label: copy("Inbox full", "收件箱已满") },
-                  { value: "dropped", label: copy("Dropped", "已丢弃") },
                 ]}
               />
               <SegmentedControl

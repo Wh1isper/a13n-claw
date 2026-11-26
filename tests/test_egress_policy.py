@@ -207,7 +207,6 @@ def test_background_revoke_commits_before_thread_unbinding(monkeypatch):
 
     from a13n_service.app_sdk import egress as sdk_egress
     from a13n_service.app_sdk import threads as sdk_threads
-    from a13n_service.infra import db
 
     from a13n_claw.service_app import egress
     from a13n_claw.service_app.models import Claw, ConnectorEgress
@@ -240,8 +239,8 @@ def test_background_revoke_commits_before_thread_unbinding(monkeypatch):
         async def unbind(*_args, **_kwargs):
             calls.append("unbind")
 
-        monkeypatch.setattr(db, "transaction", session)
-        monkeypatch.setattr(db, "short_session", session)
+        monkeypatch.setattr(egress, "transaction", session)
+        monkeypatch.setattr(egress, "short_session", session)
         monkeypatch.setattr(sdk_threads, "prepare_admission", admission)
         monkeypatch.setattr(sdk_egress, "revoke_app_credential_in_transaction", revoke)
         monkeypatch.setattr(egress, "revoke_generation", unbind)

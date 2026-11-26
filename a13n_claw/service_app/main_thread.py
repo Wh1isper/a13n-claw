@@ -264,20 +264,8 @@ async def prepare_worker_revision(
     return published.id
 
 
-async def source_matches(session: AsyncSession, claw: Claw, default_id: str) -> bool:
-    if claw.source_agent_revision_id is not None:
-        return claw.source_agent_revision_id == default_id
-    if claw.agent_revision_id is None or claw.agent_revision_id == default_id:
-        return True
-    # Existing rows predate the source pointer. A generated summary revision
-    # still represents the current default if composition gives the same config.
-    pinned = await session.get(AgentRevisionRow, claw.agent_revision_id)
-    if pinned is None or pinned.note != "Claw Project context summary":
-        return False
-    default = await session.get_one(AgentRevisionRow, default_id)
-    return AgentConfig.model_validate(pinned.config) == safe_revision_config(
-        default.config, summarize=True
-    )
+def source_matches(claw: Claw, default_id: str) -> bool:
+    return claw.source_agent_revision_id == default_id
 
 
 def selected_revision(claw: Claw, agent: AgentRow) -> str:

@@ -14,11 +14,21 @@ from a13n_service.tenancy.tables import WorkspaceRow
 from fastapi import FastAPI
 from sqlalchemy import select
 
-from . import api, connectors, inbox, lark_retry, main_thread, plugin, project_cli, schedules
+from . import (
+    api,
+    github_webhook,
+    inbox,
+    lark_retry,
+    main_thread,
+    plugin,
+    project_cli,
+    schedules,
+    supervisor,
+)
 from .models import APP_ID, Claw, Occurrence, Schedule, database
 
 logger = get_logger(__name__)
-_listeners: dict[Storage, connectors.Listeners] = {}
+_listeners: dict[Storage, supervisor.Listeners] = {}
 
 
 async def startup(runtime: Runtime, resources: AsyncExitStack) -> None:
@@ -29,7 +39,7 @@ async def startup(runtime: Runtime, resources: AsyncExitStack) -> None:
 async def control_lifespan(app: FastAPI):
     # Service only mounts the App router in all/control, after installing its final Runtime.
     runtime = app.state.runtime
-    listeners = connectors.Listeners(runtime)
+    listeners = supervisor.Listeners(runtime)
     _listeners[runtime.storage] = listeners
     try:
         yield
@@ -38,7 +48,7 @@ async def control_lifespan(app: FastAPI):
         await listeners.close()
 
 
-api.router.lifespan_context = control_lifespan
+api.claws.router.lifespan_context = control_lifespan
 
 
 async def sweep(runtime: Runtime, organization_id: str) -> None:
@@ -159,7 +169,8 @@ def definition() -> AppDefinition:
         name="Claw",
         database=database,
         factory_keys=frozenset({main_thread.PLUGIN_KEY}),
-        routers=(api.router,),
+        routers=api.ROUTERS,
+        webhook_routers=(github_webhook.router,),
         frontend=Frontend(
             "a13n_claw.service_app", "static", entry="index.js", styles=("index.css",)
         ),

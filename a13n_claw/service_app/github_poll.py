@@ -17,7 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 class GitHubSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    mode: Literal["external", "polling"] = "external"
+    mode: Literal["external", "polling", "webhook"] = "external"
+    bot_login: str | None = Field(default=None, min_length=1, max_length=100)
     principal_id: str | None = Field(default=None, min_length=1, max_length=72)
     channels: tuple[str, ...] = Field(default=(), max_length=500)
     senders: tuple[str, ...] = Field(min_length=1, max_length=500)
@@ -26,6 +27,11 @@ class GitHubSettings(BaseModel):
     max_source_notification_delay_seconds: int = Field(default=86400, ge=0, le=2592000)
     initial_lookback_seconds: int = Field(default=3600, ge=0, le=2592000)
     mark_read: bool = False
+
+    @field_validator("bot_login", mode="before")
+    @classmethod
+    def strip_bot_login(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
     @field_validator("api_url")
     @classmethod
@@ -50,6 +56,8 @@ class GitHubSettings(BaseModel):
     def external_identity(self) -> GitHubSettings:
         if self.mode == "external" and (not self.principal_id or not self.channels):
             raise ValueError("External intake requires a service account and repositories")
+        if self.mode == "webhook" and not self.bot_login:
+            raise ValueError("Webhook intake requires a bot login")
         return self
 
 

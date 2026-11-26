@@ -15,7 +15,7 @@ from a13n_service.infra.errors import ServiceError
 from a13n_service.runs.runtime import Runtime
 from sqlalchemy import or_, select, update
 
-from . import inbox, main_thread
+from . import connectors, inbox, main_thread
 from .github_poll import GitHubClient, GitHubSettings, Scan, same_origin
 from .models import Connector, GitHubPollState, GitHubReceipt
 
@@ -74,10 +74,7 @@ async def reconfigure(session, connector_id: str, old: GitHubSettings, new: GitH
 
 
 async def current(session, runtime: Runtime, intake: Intake) -> Connector | None:
-    # Import here to keep the listener's dependency on this module one-directional.
-    from .connectors import credential, intake_enabled
-
-    if not await intake_enabled(session, intake.workspace_id, lock=True):
+    if not await connectors.intake_enabled(session, intake.workspace_id, lock=True):
         return None
     row = await session.get(Connector, intake.connector_id, populate_existing=True)
     if (
@@ -86,7 +83,7 @@ async def current(session, runtime: Runtime, intake: Intake) -> Connector | None
         or row.kind != "github"
         or not row.enabled
         or GitHubSettings.model_validate(row.config) != intake.settings
-        or credential(runtime, intake.organization_id, row) != intake.token
+        or connectors.credential(runtime, intake.organization_id, row) != intake.token
     ):
         return None
     return row

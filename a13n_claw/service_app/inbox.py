@@ -23,19 +23,18 @@ def new_id(prefix: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Offer:
-    kind: Literal["user", "worker", "worker_terminal", "schedule"]
+    kind: Literal["user", "worker", "schedule"]
     origin: str
     source_key: str
     source: dict[str, Any]
     content: str
     preview: str
     volatile_source_fields: tuple[str, ...] = ()
-    legacy_optional_source_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class Admission:
-    status: Literal["accepted", "duplicate", "full", "dropped"]
+    status: Literal["accepted", "duplicate", "full"]
     item_id: str | None = None
     delivery_id: str | None = None
 
@@ -66,11 +65,6 @@ async def admit(session: AsyncSession, claw: Claw, offer: Offer) -> Admission:
     )
     if existing is not None:
         ignored = set(offer.volatile_source_fields)
-        ignored.update(
-            key
-            for key in offer.legacy_optional_source_fields
-            if key not in existing.source or key not in offer.source
-        )
         existing_source = {k: v for k, v in existing.source.items() if k not in ignored}
         offered_source = {k: v for k, v in offer.source.items() if k not in ignored}
         if existing.content != offer.content or existing_source != offered_source:
@@ -85,9 +79,8 @@ async def admit(session: AsyncSession, claw: Claw, offer: Offer) -> Admission:
         .where(InboxItem.claw_id == claw.id, InboxItem.read_at.is_(None))
     )
     if (unread or 0) >= claw.unread_limit:
-        status = "dropped" if offer.kind == "worker_terminal" else "full"
         return Admission(
-            status, delivery_id=await _record(session, claw, offer.origin, status, None)
+            "full", delivery_id=await _record(session, claw, offer.origin, "full", None)
         )
     item_id = new_id("inb")
     session.add(

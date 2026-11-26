@@ -106,6 +106,7 @@ export interface Connector {
   enabled: boolean;
   last_event_at: string | null;
   credential_configured: boolean;
+  webhook_secret_configured?: boolean;
   listener_status: string | null;
   egress_status: string | null;
   egress_failure: string | null;

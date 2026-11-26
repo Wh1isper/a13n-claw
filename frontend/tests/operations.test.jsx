@@ -631,3 +631,43 @@ test("Schedules filter both targets and open Claw-local details", async () => {
   fireEvent.click(await screen.findByRole("link", { name: "Fresh task" }));
   expect(await screen.findByText("Target Fresh Thread")).toBeTruthy();
 });
+
+test("GitHub webhook editor submits bot login and write-only secret", async () => {
+  let saved;
+  await mount(pagePath("connectors"), (path, init) => {
+    if (path === "/claws/alpha/connectors" && init?.method === "POST") {
+      saved = JSON.parse(init.body);
+      return response({ ...saved, id: "hook" }, 201);
+    }
+    return defaultReply(path);
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "New connector" }));
+  fireEvent.change(
+    screen.getByRole("combobox", { name: "GitHub intake mode" }),
+    {
+      target: { value: "webhook" },
+    },
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: "Hook" },
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: "Bot login" }), {
+    target: { value: "bot" },
+  });
+  fireEvent.change(screen.getByLabelText("Webhook secret"), {
+    target: { value: "secret" },
+  });
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Allowed GitHub usernames" }),
+    {
+      target: { value: "alice" },
+    },
+  );
+  fireEvent.submit(screen.getByRole("textbox", { name: "Name" }).form);
+  await waitFor(() =>
+    expect(saved).toMatchObject({
+      webhook_secret: "secret",
+      config: { mode: "webhook", bot_login: "bot", senders: ["alice"] },
+    }),
+  );
+});

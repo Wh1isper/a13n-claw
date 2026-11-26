@@ -13,13 +13,14 @@ from pydantic_ai import RunContext
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition, ToolDenied
 
-from a13n_claw.service_app.api import router
+from a13n_claw.service_app.api import ROUTERS
 from a13n_claw.service_app.plugin import ClawCapability
 
 
 def test_app_openapi_contract():
     app = FastAPI()
-    app.include_router(router)
+    for router in ROUTERS:
+        app.include_router(router)
     paths = app.openapi()["paths"]
     assert "/api/v1/apps/a13n.claw/claws" in paths
     assert "/api/v1/apps/a13n.claw/claws/{claw_id}/deliveries/{delivery_id}" in paths
@@ -35,23 +36,23 @@ def test_routes_compose_with_native_service():
     assert "/api/v1/apps/a13n.claw/claws/{claw_id}/deliveries/{delivery_id}" in paths
 
 
-def test_worker_filters_decisions_and_denies_late_approval():
+def test_scheduled_filters_decisions_and_denies_late_approval():
     async def exercise():
         ctx = cast(RunContext[AgentContext], None)  # Policies depend on the selected role only.
-        worker = ClawCapability("worker")
+        scheduled = ClawCapability("scheduled")
         candidates = [
             ToolDefinition(name="claw_report"),
             ToolDefinition(name="ask_user_question"),
             ToolDefinition(name="client", kind="external"),
             ToolDefinition(name="mutate", kind="unapproved"),
         ]
-        allowed = await worker.prepare_tools(ctx, candidates)
+        allowed = await scheduled.prepare_tools(ctx, candidates)
         assert [tool.name for tool in allowed] == ["claw_report"]
         requests = DeferredToolRequests(
             approvals=[ToolCallPart("dynamic_approval", {}, "approval")],
             calls=[ToolCallPart("dynamic_defer", {}, "call")],
         )
-        results = await worker.handle_deferred_tool_calls(ctx, requests=requests)
+        results = await scheduled.handle_deferred_tool_calls(ctx, requests=requests)
         assert results is not None
         assert isinstance(results.approvals["approval"], ToolDenied)
         assert requests.remaining(results) is None

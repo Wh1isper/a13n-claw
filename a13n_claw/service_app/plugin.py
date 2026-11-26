@@ -39,7 +39,7 @@ from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import connectors, egress, inbox, main_thread, project_cli, schedules, workers
+from . import connectors, egress, inbox, main_thread, project_cli, run_binding, schedules
 from .main_thread import PLUGIN_KEY
 from .models import APP_ID, Claw, Connector, ConnectorEgress, Occurrence, Schedule, claw_context
 
@@ -73,7 +73,7 @@ If a human decision is needed, report the question instead of requesting a nativ
 
 class Configuration(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    role: Literal["main", "worker", "scheduled", "guard"]
+    role: Literal["main", "scheduled", "guard"]
 
 
 def current_runtime() -> Runtime | None:
@@ -96,15 +96,17 @@ def host_ids(ctx: RunContext[AgentContext]) -> tuple[str, str]:
     return refs.get("run_id", ""), refs.get("attempt_id", "")
 
 
-async def resolve(session: AsyncSession, ctx: RunContext[AgentContext]) -> workers.Binding | None:
+async def resolve(
+    session: AsyncSession, ctx: RunContext[AgentContext]
+) -> run_binding.Binding | None:
     run_id, attempt_id = host_ids(ctx)
-    return await workers.bind(session, run_id, attempt_id) if run_id and attempt_id else None
+    return await run_binding.bind(session, run_id, attempt_id) if run_id and attempt_id else None
 
 
 @asynccontextmanager
 async def scope(
-    ctx: RunContext[AgentContext], role: Literal["main", "worker", "scheduled"]
-) -> AsyncIterator[tuple[Runtime, workers.Binding]]:
+    ctx: RunContext[AgentContext], role: Literal["main", "scheduled"]
+) -> AsyncIterator[tuple[Runtime, run_binding.Binding]]:
     if (runtime := _runtime) is None:
         raise ModelRetry("Claw runtime is unavailable")
     try:
@@ -148,7 +150,7 @@ def cli_is_current(claw: Claw) -> bool:
 
 
 async def maintain_cli(
-    runtime: Runtime, bound: workers.Binding, ctx: RunContext[AgentContext]
+    runtime: Runtime, bound: run_binding.Binding, ctx: RunContext[AgentContext]
 ) -> bool:
     environment_id = captured_workspace(bound.run)
     if environment_id is None or environment_id != bound.claw.environment_id:
@@ -161,7 +163,7 @@ async def maintain_cli(
     async with lock:
         async with transaction(runtime.storage) as session:
             claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
-            await workers.fence(session, runtime, claw, bound)
+            await run_binding.fence(session, runtime, claw, bound)
             if claw.environment_id != environment_id:
                 return False
             if cli_is_current(claw):
@@ -177,7 +179,7 @@ async def maintain_cli(
             return False
         async with transaction(runtime.storage) as session:
             claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
-            await workers.fence(session, runtime, claw, bound)
+            await run_binding.fence(session, runtime, claw, bound)
             if claw.environment_id != environment_id:
                 return False
             # An update queued during an ordinary probe is left for the next Main execution.
@@ -209,7 +211,7 @@ async def claw_open(ctx: RunContext[AgentContext], item_id: str) -> dict | None:
                 )
 
         async def guard(session, claw):
-            await workers.fence(session, runtime, claw, bound)
+            await run_binding.fence(session, runtime, claw, bound)
 
         item = await inbox.pop(
             runtime.storage,
@@ -262,7 +264,7 @@ async def claw_schedule(
                 app_context=claw_context(bound.claw.id),
             )
         claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
-        run, actor = await workers.fence(session, runtime, claw, bound)
+        run, actor = await run_binding.fence(session, runtime, claw, bound)
         request_id = call_key(ctx)[:64]
         if target == "main":
             row = await schedules.create(
@@ -300,7 +302,7 @@ async def claw_schedule_enabled(
     """Pause or resume a schedule."""
     async with scope(ctx, "main") as (runtime, bound), transaction(runtime.storage) as session:
         claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
-        await workers.fence(session, runtime, claw, bound)
+        await run_binding.fence(session, runtime, claw, bound)
         row = await schedules.set_enabled(session, claw, schedule_id, enabled)
         return schedules.ScheduleView.model_validate(row).model_dump(mode="json")
 
@@ -312,7 +314,7 @@ async def claw_schedule_update(
     """Update a schedule without changing recorded occurrences."""
     async with scope(ctx, "main") as (runtime, bound), transaction(runtime.storage) as session:
         claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
-        run, actor = await workers.fence(session, runtime, claw, bound)
+        run, actor = await run_binding.fence(session, runtime, claw, bound)
         if body.target == "fresh":
             require_captured_authority(run, actor)
         row = await schedules.edit(session, claw, schedule_id, body)
@@ -324,7 +326,7 @@ async def claw_schedule_delete(ctx: RunContext[AgentContext], schedule_id: str) 
     """Stop a schedule while retaining its recorded history."""
     async with scope(ctx, "main") as (runtime, bound), transaction(runtime.storage) as session:
         claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
-        await workers.fence(session, runtime, claw, bound)
+        await run_binding.fence(session, runtime, claw, bound)
         await schedules.remove(session, claw, schedule_id)
         return {"schedule_id": schedule_id, "deleted": True}
 
@@ -357,7 +359,7 @@ async def claw_schedule_trigger(ctx: RunContext[AgentContext], schedule_id: str)
                         )
                         preparing = False
                     claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
-                    run, actor = await workers.fence(session, runtime, claw, bound)
+                    run, actor = await run_binding.fence(session, runtime, claw, bound)
                     schedule = await schedules.find_schedule(
                         session, claw, schedule_id, include_deleted=True
                     )
@@ -380,7 +382,7 @@ async def claw_schedule_trigger(ctx: RunContext[AgentContext], schedule_id: str)
                     raise
                 async with transaction(runtime.storage) as session:
                     claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
-                    await workers.fence(session, runtime, claw, bound)
+                    await run_binding.fence(session, runtime, claw, bound)
                     if await session.get(Occurrence, occurrence_id) is None:
                         raise
                     row = await schedules.trigger(
@@ -401,7 +403,7 @@ async def claw_report(ctx: RunContext[AgentContext], message: Text) -> dict:
     async with scope(ctx, "scheduled") as (runtime, bound):
         async with transaction(runtime.storage) as session:
             claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
-            run, _ = await workers.fence(session, runtime, claw, bound)
+            run, _ = await run_binding.fence(session, runtime, claw, bound)
             result = await inbox.admit(
                 session,
                 claw,
@@ -422,7 +424,7 @@ async def claw_report(ctx: RunContext[AgentContext], message: Text) -> dict:
 
 
 class ClawCapability(AbstractCapability[AgentContext]):
-    def __init__(self, role: Literal["main", "worker", "scheduled", "guard"]) -> None:
+    def __init__(self, role: Literal["main", "scheduled", "guard"]) -> None:
         self.role = role
 
     def get_instructions(self) -> str:
@@ -493,11 +495,7 @@ class ClawCapability(AbstractCapability[AgentContext]):
         ctx: RunContext[AgentContext],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        if (
-            self.role in ("guard", "worker")
-            or (runtime := _runtime) is None
-            or not request_context.messages
-        ):
+        if self.role == "guard" or (runtime := _runtime) is None or not request_context.messages:
             return request_context
         async with short_session(runtime.storage) as session:
             bound = await resolve(session, ctx)
@@ -634,7 +632,7 @@ class ClawPlugin(AbstractHarnessPlugin):
             refs = exchange.context.instance.host_refs
             if (run_id := refs.get("run_id")) and (attempt_id := refs.get("attempt_id")):
                 async with short_session(runtime.storage) as session:
-                    bound = await workers.bind(session, run_id, attempt_id)
+                    bound = await run_binding.bind(session, run_id, attempt_id)
                 if bound is not None and not any(
                     mount.get("space_id") == bound.claw.memory_space_id
                     for mount in bound.run.memory_mounts

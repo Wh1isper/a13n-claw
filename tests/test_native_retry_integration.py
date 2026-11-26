@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import time
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Event, Lock, Thread
@@ -17,18 +18,28 @@ from a13n_service.infra.errors import ServiceError
 from a13n_service.migrations.scratch import scratch_database
 from a13n_service.providers import envd
 from a13n_service.resources.egress_credentials.tables import CredentialRow
+from a13n_service.runs import accept, child_messages, children, execute, seal
 from a13n_service.runs.environments import external
 from a13n_service.runs.environments.mounts import adopt_mounts
 from a13n_service.runs.environments.tables import ThreadEnvironmentRow, ThreadSessionBindingRow
 from a13n_service.runs.schemas import EnvironmentMount
 from a13n_service.runs.tables import InboxEntryRow, RunRow, SessionRow, ThreadRow
 from a13n_service.runs.threads import new_thread
+from a13n_service.runs.tool_executions import delivery as tool_delivery
 from a13n_service.settings import Database, Settings
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 from test_service_app_lifecycle import FixtureEnvironment
 
-from a13n_claw.service_app import connectors, egress, inbox, lark_retry, main_thread, project_cli
+from a13n_claw.service_app import (
+    connectors,
+    egress,
+    inbox,
+    lark_retry,
+    main_thread,
+    project_cli,
+    supervisor,
+)
 from a13n_claw.service_app.feishu import LarkSettings
 from a13n_claw.service_app.models import APP_ID, Connector, ConnectorEgress, LarkRetryCard
 
@@ -130,7 +141,7 @@ def test_native_retry_concurrent_admission_and_lineage(monkeypatch, tmp_path):
     monkeypatch.setattr(project_cli, "provision", provision)
     monkeypatch.setattr(connectors.LarkAdapter, "run", listener)
     # Drive credential reconciliation explicitly to make the fixture deterministic.
-    monkeypatch.setattr(connectors.Listeners, "queue_egress", lambda *_args: None)
+    monkeypatch.setattr(supervisor.Listeners, "queue_egress", lambda *_args: None)
     with ThreadingHTTPServer(("127.0.0.1", 0), FailingModel) as server:
         server_thread = Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
@@ -163,6 +174,27 @@ def test_native_retry_concurrent_admission_and_lineage(monkeypatch, tmp_path):
 
 def exercise_retry(client, model_url, retry_entered, release_retry, scripted, monkeypatch):
     runtime = client.app.state.runtime
+
+    # Track native advances from before these fixture Threads exist, so the
+    # synthetic busy windows can drain in-flight calls without disabling them.
+    advance = accept.advance
+    gates = {}
+    inflight = {}
+
+    async def tracked_advance(runtime, thread_id, **kwargs):
+        if gate := gates.get(thread_id):
+            await gate.wait()
+        completed = asyncio.get_running_loop().create_future()
+        active = inflight.setdefault(thread_id, set())
+        active.add(completed)
+        try:
+            return await advance(runtime, thread_id, **kwargs)
+        finally:
+            active.remove(completed)
+            completed.set_result(None)
+
+    for module in (accept, child_messages, children, execute, seal, tool_delivery):
+        monkeypatch.setattr(module, "advance", tracked_advance)
 
     def post(path, body, status=201, headers=None):
         result = client.post("/api/v1" + path, json=body, headers=headers)
@@ -463,19 +495,44 @@ def exercise_retry(client, model_url, retry_entered, release_retry, scripted, mo
         for tools in scripted["tools"]
     )
 
-    async def child_results():
+    async def child_result_settled():
         async with short_session(runtime.storage) as session:
-            return list(
-                await session.scalars(
-                    select(InboxEntryRow.id).where(
-                        InboxEntryRow.thread_id == parent["thread_id"],
-                        InboxEntryRow.kind == "child_result",
-                    )
+            result = await session.scalar(
+                select(InboxEntryRow).where(
+                    InboxEntryRow.thread_id == parent["thread_id"],
+                    InboxEntryRow.kind == "child_result",
+                    InboxEntryRow.child_run_id == child["id"],
                 )
             )
+            if result is None or result.status != "consumed" or result.assigned_run_id is None:
+                return False
+            result_run = await session.get_one(RunRow, result.assigned_run_id)
+            if result_run.sealed_at is None:
+                return False
+            for thread_id in (parent["thread_id"], child["thread_id"]):
+                thread = await session.get_one(ThreadRow, thread_id)
+                pending = await session.scalar(
+                    select(InboxEntryRow.id)
+                    .where(InboxEntryRow.thread_id == thread_id, InboxEntryRow.status == "pending")
+                    .limit(1)
+                )
+                if thread.current_run_id is not None or pending is not None:
+                    return False
+            return True
 
-    assert wait_for(lambda: client.portal.call(child_results), bool)
-    wait_for(lambda: read("/threads/" + parent["thread_id"]), lambda row: not row["current_run_id"])
+    wait_for(lambda: client.portal.call(child_result_settled), bool)
+
+    @asynccontextmanager
+    async def defer_advancer(thread_id):
+        """Drain existing advances and defer new ones until busy work finishes."""
+        gate = asyncio.Event()
+        gates[thread_id] = gate
+        try:
+            await asyncio.gather(*tuple(inflight.get(thread_id, ())))
+            yield
+        finally:
+            gates.pop(thread_id)
+            gate.set()
 
     async def transactional_credential():
         generation_id = "ceg_" + uuid4().hex
@@ -631,39 +688,43 @@ def exercise_retry(client, model_url, retry_entered, release_retry, scripted, mo
             assert (await session.get_one(ConnectorEgress, second_id)).state == "unbinding"
             assert (await session.get_one(CredentialRow, new_credential)).state == "revoked"
 
-        # A real pending native entry makes Service reject an update to the
-        # shared subtree; withdrawing it then permits durable cleanup.
-        busy_id = "entry_" + uuid4().hex
-        async with transaction(runtime.storage) as session:
-            source = await session.get_one(RunRow, parent["id"])
-            session.add(
-                InboxEntryRow(
-                    id=busy_id,
-                    organization_id=org,
-                    workspace_id=ws,
-                    thread_id=parent["thread_id"],
-                    kind="child_message",
-                    delivery="next_run",
-                    position=999999,
-                    principal_id=account["id"],
-                    authority=source.authority,
-                    payload={},
-                    size=0,
-                    options={},
-                    origin_run_id=parent["id"],
-                    status="pending",
+        async with defer_advancer(parent["thread_id"]):
+            # A real pending native entry makes Service reject an update to the
+            # shared subtree; withdrawing it then permits durable cleanup.
+            busy_id = "entry_" + uuid4().hex
+            async with transaction(runtime.storage) as session:
+                source = await session.get_one(RunRow, parent["id"])
+                session.add(
+                    InboxEntryRow(
+                        id=busy_id,
+                        organization_id=org,
+                        workspace_id=ws,
+                        thread_id=parent["thread_id"],
+                        kind="child_message",
+                        delivery="next_run",
+                        position=999999,
+                        principal_id=account["id"],
+                        authority=source.authority,
+                        payload={},
+                        size=0,
+                        options={},
+                        origin_run_id=parent["id"],
+                        status="pending",
+                    )
                 )
-            )
-        await egress.process_generation(runtime, ws, native_claw["id"], second_id)
-        async with transaction(runtime.storage) as session:
-            generation = await session.get_one(ConnectorEgress, second_id)
-            assert (generation.state, generation.failure) == ("unbinding", "credential_sync_failed")
-            busy_entry = await session.get_one(InboxEntryRow, busy_id)
-            busy_entry.status = "withdrawn"
-            busy_entry.finished_at = datetime.now(UTC)
-        await egress.process_generation(runtime, ws, native_claw["id"], second_id)
-        async with short_session(runtime.storage) as session:
-            assert (await session.get_one(ConnectorEgress, second_id)).state == "revoked"
+            await egress.process_generation(runtime, ws, native_claw["id"], second_id)
+            async with transaction(runtime.storage) as session:
+                generation = await session.get_one(ConnectorEgress, second_id)
+                assert (generation.state, generation.failure) == (
+                    "unbinding",
+                    "credential_sync_failed",
+                )
+                busy_entry = await session.get_one(InboxEntryRow, busy_id)
+                busy_entry.status = "withdrawn"
+                busy_entry.finished_at = datetime.now(UTC)
+            await egress.process_generation(runtime, ws, native_claw["id"], second_id)
+            async with short_session(runtime.storage) as session:
+                assert (await session.get_one(ConnectorEgress, second_id)).state == "revoked"
 
         lark_connector, lark_generation = "con_" + uuid4().hex, "ceg_" + uuid4().hex
         async with transaction(runtime.storage) as session:
@@ -701,61 +762,68 @@ def exercise_retry(client, model_url, retry_entered, release_retry, scripted, mo
             exchanges.append(True)
             return f"synthetic-tenant-{len(exchanges)}", 7200
 
-        with monkeypatch.context() as patch:
-            patch.setattr(connectors.LarkAdapter, "exchange_token", exchange)
-            await egress.process_generation(runtime, ws, native_claw["id"], lark_generation)
+        async with defer_advancer(child["thread_id"]):
+            with monkeypatch.context() as patch:
+                patch.setattr(connectors.LarkAdapter, "exchange_token", exchange)
+                await egress.process_generation(runtime, ws, native_claw["id"], lark_generation)
+                async with transaction(runtime.storage) as session:
+                    generation = await session.get_one(ConnectorEgress, lark_generation)
+                    assert generation.state == "ready"
+                    assert (
+                        generation.token_expires_at - generation.refresh_at
+                    ).total_seconds() == 2700
+                    tenant_credential = generation.credential_id
+                    generation.refresh_at = generation.created_at
+                    snapshots = {}
+                    for thread_id in (parent["thread_id"], child["thread_id"]):
+                        mount = await session.get_one(
+                            ThreadEnvironmentRow, (thread_id, "workspace")
+                        )
+                        binding = await session.get_one(
+                            ThreadSessionBindingRow,
+                            (thread_id, mount.environment_id, mount.session_binding),
+                        )
+                        snapshots[thread_id] = (binding.configuration, binding.version)
+                    # The shared child is busy, but value-only rotation must still commit.
+                    source = await session.get_one(RunRow, parent["id"])
+                    rotation_busy_id = "entry_" + uuid4().hex
+                    session.add(
+                        InboxEntryRow(
+                            id=rotation_busy_id,
+                            organization_id=org,
+                            workspace_id=ws,
+                            thread_id=child["thread_id"],
+                            kind="child_message",
+                            delivery="next_run",
+                            position=999998,
+                            principal_id=account["id"],
+                            authority=source.authority,
+                            payload={},
+                            size=0,
+                            options={},
+                            origin_run_id=parent["id"],
+                            status="pending",
+                        )
+                    )
+                await egress.process_generation(runtime, ws, native_claw["id"], lark_generation)
             async with transaction(runtime.storage) as session:
                 generation = await session.get_one(ConnectorEgress, lark_generation)
-                assert generation.state == "ready"
-                assert (generation.token_expires_at - generation.refresh_at).total_seconds() == 2700
-                tenant_credential = generation.credential_id
-                generation.refresh_at = generation.created_at
-                snapshots = {}
+                assert generation.state == "ready" and generation.credential_id == tenant_credential
+                assert (
+                    await session.get_one(CredentialRow, tenant_credential)
+                ).credential_version == 2
+                assert len(exchanges) == 2
                 for thread_id in (parent["thread_id"], child["thread_id"]):
                     mount = await session.get_one(ThreadEnvironmentRow, (thread_id, "workspace"))
                     binding = await session.get_one(
                         ThreadSessionBindingRow,
                         (thread_id, mount.environment_id, mount.session_binding),
                     )
-                    snapshots[thread_id] = (binding.configuration, binding.version)
-                # The shared child is busy, but value-only rotation must still commit.
-                source = await session.get_one(RunRow, parent["id"])
-                rotation_busy_id = "entry_" + uuid4().hex
-                session.add(
-                    InboxEntryRow(
-                        id=rotation_busy_id,
-                        organization_id=org,
-                        workspace_id=ws,
-                        thread_id=child["thread_id"],
-                        kind="child_message",
-                        delivery="next_run",
-                        position=999998,
-                        principal_id=account["id"],
-                        authority=source.authority,
-                        payload={},
-                        size=0,
-                        options={},
-                        origin_run_id=parent["id"],
-                        status="pending",
-                    )
-                )
-            await egress.process_generation(runtime, ws, native_claw["id"], lark_generation)
-        async with transaction(runtime.storage) as session:
-            generation = await session.get_one(ConnectorEgress, lark_generation)
-            assert generation.state == "ready" and generation.credential_id == tenant_credential
-            assert (await session.get_one(CredentialRow, tenant_credential)).credential_version == 2
-            assert len(exchanges) == 2
-            for thread_id in (parent["thread_id"], child["thread_id"]):
-                mount = await session.get_one(ThreadEnvironmentRow, (thread_id, "workspace"))
-                binding = await session.get_one(
-                    ThreadSessionBindingRow,
-                    (thread_id, mount.environment_id, mount.session_binding),
-                )
-                assert (binding.configuration, binding.version) == snapshots[thread_id]
-            busy_entry = await session.get_one(InboxEntryRow, rotation_busy_id)
-            assert busy_entry.status == "pending"
-            busy_entry.status = "withdrawn"
-            busy_entry.finished_at = datetime.now(UTC)
+                    assert (binding.configuration, binding.version) == snapshots[thread_id]
+                busy_entry = await session.get_one(InboxEntryRow, rotation_busy_id)
+                assert busy_entry.status == "pending"
+                busy_entry.status = "withdrawn"
+                busy_entry.finished_at = datetime.now(UTC)
 
         # Fresh scheduled Threads use current Project mounts without connector credentials.
         async with transaction(runtime.storage) as session:

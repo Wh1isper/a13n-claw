@@ -1,4 +1,4 @@
-"""Managed native Worker Threads and exact-Run steering."""
+"""Active Claw Run binding and exact-Attempt lease fencing."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 class Binding:
     claw: Claw
     run: RunRow
-    role: Literal["main", "worker", "scheduled"]
+    role: Literal["main", "scheduled"]
     attempt_id: str
 
 

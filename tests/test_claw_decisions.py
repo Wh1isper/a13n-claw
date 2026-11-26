@@ -16,10 +16,10 @@ from pydantic_ai import ModelRetry
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition, ToolDenied
 
-from a13n_claw.service_app.api import Settings, effective_settings
 from a13n_claw.service_app.main_thread import safe_revision_config
 from a13n_claw.service_app.models import Claw
 from a13n_claw.service_app.plugin import ClawCapability, ClawPlugin, Configuration
+from a13n_claw.service_app.routes.claws import Settings, effective_settings
 
 
 def test_safe_revision_denies_explicit_and_inherited_asks_and_review_fallbacks():
@@ -87,7 +87,7 @@ def test_shell_review_does_not_grant_denied_execution(permission):
     assert safe.toolsets["shell"].tools["exec"].permission == "deny"
 
 
-@pytest.mark.parametrize("role", ["main", "worker", "scheduled", "guard"])
+@pytest.mark.parametrize("role", ["main", "scheduled", "guard"])
 def test_claw_filters_and_denies_deferred_tools(role):
     async def run():
         capability = ClawCapability(role)
@@ -223,7 +223,7 @@ def test_unbound_inherited_main_plugin_hides_main_guidance_and_tools(monkeypatch
     assert asyncio.run(capability.prepare_tools(None, tools)) == tools[1:]
 
 
-@pytest.mark.parametrize("role", ["main", "worker", "scheduled", "guard"])
+@pytest.mark.parametrize("role", ["main", "scheduled", "guard"])
 def test_claw_converts_unexpected_suspension_to_failure(role):
     async def run():
         plugin = ClawPlugin("claw", Configuration(role=role))

@@ -1,6 +1,6 @@
 """initial claw schema
 
-Revision ID: bdefa3875164
+Revision ID: 115363cfcac0
 Revises:
 """
 
@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from a13n_service.app_database import migration_name
 from alembic import op
 
-revision = "bdefa3875164"
+revision = "115363cfcac0"
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -124,6 +124,7 @@ def upgrade() -> None:
         sa.Column("kind", sa.String(length=32), nullable=False),
         sa.Column("config", sa.JSON(), nullable=False),
         sa.Column("credential", sa.JSON(), nullable=True),
+        sa.Column("webhook_secret", sa.JSON(), nullable=True),
         sa.Column("egress_primary", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column("enabled", sa.Boolean(), nullable=False),
         sa.Column("last_event_at", sa.DateTime(timezone=True), nullable=True),

@@ -5,6 +5,7 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -31,17 +32,18 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 
 from a13n_claw.service_app import (
-    api,
+    app as claw_app,
+)
+from a13n_claw.service_app import (
     connectors,
     inbox,
     main_thread,
     project_cli,
     schedules,
-)
-from a13n_claw.service_app import (
-    app as claw_app,
+    supervisor,
 )
 from a13n_claw.service_app.models import InboxItem, Occurrence, Schedule
+from a13n_claw.service_app.routes import schedules as schedule_routes
 
 
 @pytest.fixture
@@ -231,6 +233,9 @@ def test_first_setup_and_native_runs(monkeypatch, tmp_path, model_server):
             ),
         )
 
+    # Drive periodic sweeps explicitly so background ticks do not race rollback or notify checks.
+    real_definition = claw_app.definition
+    monkeypatch.setattr(claw_app, "definition", lambda: replace(real_definition(), sweeps=()))
     monkeypatch.setattr(project_cli, "command", command)
     model_url, requests, reply, tool_results, unbound_tools = model_server
     origin = "https://claw.test"
@@ -526,7 +531,7 @@ def exercise_lifecycle(
         raise ServiceError("unavailable", "synthetic account refusal")
 
     with monkeypatch.context() as patch:
-        patch.setattr(api, "prepare_claw_admission", refused_admission)
+        patch.setattr(schedule_routes, "prepare_claw_admission", refused_admission)
         replay = post(f"{schedule_path}/trigger", {}, 200, headers=trigger_key)
         assert replay["id"] == occ["id"] and replay["run_id"] == occ["run_id"]
         post(f"{schedule_path}/trigger", {}, 503, headers={"Idempotency-Key": uuid4().hex})
@@ -864,7 +869,7 @@ def exercise_lifecycle(
     eventually(
         lambda: read(lark_path), lambda row: row["listener_status"] == "connected", timeout=4
     )
-    replica = client.portal.call(lambda: connectors.Listeners(runtime))
+    replica = client.portal.call(lambda: supervisor.Listeners(runtime))
     eventually(lambda: client.portal.call(subscribers), lambda count: count >= 2, timeout=4)
     duplicate = post(f"{path}/connectors", {**lark_body, "name": "Duplicate Lark"})
     duplicate_path = f"{path}/connectors/{duplicate['id']}"
