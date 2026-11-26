@@ -11,7 +11,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import egress
-from .models import APP_ID, Claw, Connector
+from .models import APP_ID, Claw, Connector, claw_context
 
 
 async def reserve_environment(
@@ -21,12 +21,14 @@ async def reserve_environment(
     scope: WorkspaceScope,
     template_id: str,
     name: str,
+    claw_id: str,
 ) -> str:
     return await app_projects.reserve_environment(
         session,
         runtime,
         scope.workspace_id,
         app_id=APP_ID,
+        app_context=claw_context(claw_id),
         principal_id=account.id,
         template_id=template_id,
         name=name[:128],
@@ -46,6 +48,7 @@ async def create_space(
         runtime,
         scope.workspace_id,
         app_id=APP_ID,
+        app_context=claw_context(claw_id),
         actor_id=actor.id,
         name=claw_id,
         description=f"Project memory for {name}",
@@ -129,7 +132,7 @@ async def rebind(
         environment_id, browser_id = result.environment_id, result.browser_id
     elif environment_template_id is not None:
         environment_id = await reserve_environment(
-            session, runtime, account, scope, environment_template_id, claw.name
+            session, runtime, account, scope, environment_template_id, claw.name, claw.id
         )
     if environment_changed:
         claw.cli_versions = None

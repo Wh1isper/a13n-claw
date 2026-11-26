@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from . import inbox, main_thread
-from .models import APP_ID, Claw, Occurrence, Schedule
+from .models import APP_ID, Claw, Occurrence, Schedule, claw_context
 
 if TYPE_CHECKING:
     from a13n_service.runs.runtime import Runtime
@@ -259,6 +259,7 @@ async def start_fresh(
         claw.workspace_id,
         app_id=APP_ID,
         principal_id=actor.id,
+        app_context=claw_context(claw.id),
         existing_session_id=claw.schedule_session_id,
         session_create=main_thread.project_session(claw, f"{claw.name} · Scheduled work"),
     )
@@ -516,7 +517,12 @@ async def sweep(runtime: Runtime, workspace_id: str, claw_id: str) -> None:
                     if account_id is None:
                         continue
                     admission = await app_threads.prepare_admission(
-                        session, runtime, workspace_id, account_id, app_id=APP_ID
+                        session,
+                        runtime,
+                        workspace_id,
+                        account_id,
+                        app_id=APP_ID,
+                        app_context=claw_context(claw_id),
                     )
                 claw = await inbox.lock_claw(session, workspace_id, claw_id)
                 row = await session.scalar(

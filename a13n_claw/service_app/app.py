@@ -5,6 +5,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from a13n_logging import get_logger
 from a13n_service.app_definitions import AppDefinition, OrganizationSweep, RunSealSubscription
 from a13n_service.app_plugins import Frontend
+from a13n_service.app_sdk.hooks import EnvironmentHookContext, EnvironmentLifecycleHook
 from a13n_service.infra.db import Storage, short_session, transaction
 from a13n_service.infra.errors import ServiceError
 from a13n_service.runs.runtime import Runtime
@@ -13,7 +14,7 @@ from a13n_service.tenancy.tables import WorkspaceRow
 from fastapi import FastAPI
 from sqlalchemy import select
 
-from . import api, connectors, inbox, lark_retry, main_thread, plugin, schedules
+from . import api, connectors, inbox, lark_retry, main_thread, plugin, project_cli, schedules
 from .models import APP_ID, Claw, Occurrence, Schedule, database
 
 logger = get_logger(__name__)
@@ -81,8 +82,38 @@ async def sweep(runtime: Runtime, organization_id: str) -> None:
         after = rows[-1].id
 
 
+async def on_environment_created(context: EnvironmentHookContext) -> None:
+    runtime = plugin.current_runtime()
+    claw_id = (context.app_context or {}).get("claw_id")
+    if runtime is None or context.owner_app_id != APP_ID or claw_id is None:
+        return
+    async with short_session(runtime.storage) as session:
+        claw = await session.scalar(
+            select(Claw).where(
+                Claw.id == claw_id,
+                Claw.workspace_id == context.workspace_id,
+                Claw.archived_at.is_(None),
+                Claw.environment_id == context.environment_id,
+            )
+        )
+        if claw is None or plugin.cli_is_current(claw):
+            return
+    outcome = await project_cli.provision(context.execution, update=False, install_timeout=18)
+    if not outcome.versions and outcome.failed:
+        return
+    async with transaction(runtime.storage) as session:
+        try:
+            claw = await inbox.lock_claw(session, context.workspace_id, claw_id)
+        except inbox.ClawNotFound:
+            return
+        if claw.environment_id == context.environment_id and not (
+            project_cli.CLIS.keys() <= (claw.cli_versions or {}).keys()
+        ):
+            claw.cli_versions = outcome.versions
+
+
 async def on_run_seal(runtime: Runtime, event: RunSealEvent) -> None:
-    if (claw_id := event.labels.get("claw")) is None:
+    if event.app_id != APP_ID or (claw_id := (event.app_context or {}).get("claw_id")) is None:
         return
     role = event.labels.get("claw_role")
     try:
@@ -134,5 +165,10 @@ def definition() -> AppDefinition:
         ),
         startup=startup,
         run_seals=(RunSealSubscription(run=on_run_seal),),
+        environment_hooks=(
+            EnvironmentLifecycleHook(
+                "after_create", on_environment_created, timeout=30.0, scope="app"
+            ),
+        ),
         sweeps=(OrganizationSweep("claw", every=15, timeout=60, run=sweep),),
     )

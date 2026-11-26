@@ -276,7 +276,7 @@ async def _process_generation(runtime, workspace_id: str, claw_id: str, generati
 
     from . import connectors
     from .feishu import LarkAdapter, LarkSettings
-    from .models import APP_ID, Claw, Connector, ConnectorEgress
+    from .models import APP_ID, Claw, Connector, ConnectorEgress, claw_context
 
     async with short_session(runtime.storage) as session:
         claw = await session.get(Claw, claw_id)
@@ -286,7 +286,12 @@ async def _process_generation(runtime, workspace_id: str, claw_id: str, generati
     now = datetime.now(UTC)
     async with transaction(runtime.storage) as session:
         await sdk_threads.prepare_admission(
-            session, runtime, workspace_id, account_id, app_id=APP_ID
+            session,
+            runtime,
+            workspace_id,
+            account_id,
+            app_id=APP_ID,
+            app_context=claw_context(claw_id),
         )
         claw = await session.scalar(
             select(Claw)
@@ -374,7 +379,12 @@ async def _process_generation(runtime, workspace_id: str, claw_id: str, generati
             refresh_at = acquired + timedelta(seconds=token_refresh_delay(lifetime))
         async with transaction(runtime.storage) as session:
             await sdk_threads.prepare_admission(
-                session, runtime, workspace_id, account_id, app_id=APP_ID
+                session,
+                runtime,
+                workspace_id,
+                account_id,
+                app_id=APP_ID,
+                app_context=claw_context(claw_id),
             )
             claw = await session.scalar(
                 select(Claw)
