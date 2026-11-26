@@ -19,7 +19,7 @@ from a13n_harness.usage import RunUsageSummary
 from a13n_logging import get_logger
 from a13n_service.app_sdk import threads as app_threads
 from a13n_service.infra.db import short_session, transaction
-from a13n_service.infra.errors import ServiceError, conflict
+from a13n_service.infra.errors import ServiceError
 from a13n_service.runs.dynamic_subagents import CapabilitySelection
 from a13n_service.runs.tables import RunRow
 from a13n_service.tenancy.authorize import (
@@ -41,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import connectors, egress, inbox, main_thread, project_cli, run_binding, schedules
 from .main_thread import PLUGIN_KEY
-from .models import APP_ID, Claw, Connector, ConnectorEgress, Occurrence, Schedule, claw_context
+from .models import APP_ID, Claw, Connector, ConnectorEgress, claw_context
 
 if TYPE_CHECKING:
     from a13n_service.runs.runtime import Runtime
@@ -266,12 +266,8 @@ async def claw_schedule(
         claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
         run, actor = await run_binding.fence(session, runtime, claw, bound)
         request_id = call_key(ctx)[:64]
-        if target == "main":
-            row = await schedules.create(
-                session, claw, body.model_copy(update={"target": target}), schedule_id=request_id
-            )
-            return schedules.ScheduleView.model_validate(row).model_dump(mode="json")
-        require_captured_authority(run, actor)
+        if target == "fresh":
+            require_captured_authority(run, actor)
         row = await schedules.create(
             session, claw, body.model_copy(update={"target": target}), schedule_id=request_id
         )
@@ -336,65 +332,32 @@ async def claw_schedule_trigger(ctx: RunContext[AgentContext], schedule_id: str)
     """Trigger a schedule now without moving its future rule."""
     async with scope(ctx, "main") as (runtime, bound):
         occurrence_id = call_key(ctx)
-        for _ in range(3):
-            preparing = False
-            try:
-                async with transaction(runtime.storage) as session:
-                    target = await session.scalar(
-                        select(Schedule.target).where(
-                            Schedule.claw_id == bound.claw.id, Schedule.id == schedule_id
-                        )
-                    )
-                    existing = await session.get(Occurrence, occurrence_id)
-                    admission = None
-                    if target == "fresh" and existing is None:
-                        preparing = True
-                        admission = await app_threads.prepare_admission(
-                            session,
-                            runtime,
-                            bound.claw.workspace_id,
-                            bound.claw.service_account_id,
-                            app_id=APP_ID,
-                            app_context=claw_context(bound.claw.id),
-                        )
-                        preparing = False
-                    claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
-                    run, actor = await run_binding.fence(session, runtime, claw, bound)
-                    schedule = await schedules.find_schedule(
-                        session, claw, schedule_id, include_deleted=True
-                    )
-                    existing = await session.get(Occurrence, occurrence_id)
-                    if schedule.target == "fresh" and admission is None and existing is None:
-                        continue
-                    if schedule.target == "fresh" and existing is None:
-                        require_captured_authority(run, actor)
-                    row = await schedules.trigger(
-                        session,
-                        claw,
-                        schedule_id,
-                        occurrence_id=occurrence_id,
-                        runtime=runtime,
-                        admission=admission,
-                    )
-                    return schedules.OccurrenceView.model_validate(row).model_dump(mode="json")
-            except ServiceError:
-                if not preparing:
-                    raise
-                async with transaction(runtime.storage) as session:
-                    claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
-                    await run_binding.fence(session, runtime, claw, bound)
-                    if await session.get(Occurrence, occurrence_id) is None:
-                        raise
-                    row = await schedules.trigger(
-                        session,
-                        claw,
-                        schedule_id,
-                        occurrence_id=occurrence_id,
-                        runtime=runtime,
-                        admission=None,
-                    )
-                    return schedules.OccurrenceView.model_validate(row).model_dump(mode="json")
-        raise conflict("schedule", schedule_id, "target_changed")
+
+        async def prepare(session):
+            return await app_threads.prepare_admission(
+                session,
+                runtime,
+                bound.claw.workspace_id,
+                bound.claw.service_account_id,
+                app_id=APP_ID,
+                app_context=claw_context(bound.claw.id),
+            )
+
+        async def lock(session):
+            claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
+            run, actor = await run_binding.fence(session, runtime, claw, bound)
+            return claw, lambda: require_captured_authority(run, actor)
+
+        result = await schedules.trigger_occurrence(
+            runtime,
+            bound.claw.workspace_id,
+            bound.claw.id,
+            schedule_id,
+            occurrence_id,
+            prepare=prepare,
+            lock=lock,
+        )
+        return result.model_dump(mode="json")
 
 
 @worker_tools.tool

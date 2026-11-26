@@ -5,7 +5,6 @@ from typing import Annotated, Literal
 
 from a13n_service.infra.cursors import keyset_page
 from a13n_service.infra.db import now, short_session, transaction
-from a13n_service.infra.errors import ServiceError, conflict
 from a13n_service.runs.requests import CurrentRuntime
 from a13n_service.tenancy.access import workspace_scope
 from a13n_service.tenancy.app_plugins import app_router
@@ -19,7 +18,6 @@ from ..models import (
     APP_ID,
     Delivery,
     Occurrence,
-    Schedule,
 )
 from .common import PageSize, ResourceId, get_claw, lock_active_claw, prepare_claw_admission
 
@@ -84,62 +82,26 @@ async def trigger_schedule(
     request_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
 ) -> schedules.OccurrenceView:
     occurrence_id = "ct_" + sha256(f"{claw_id}:{actor.id}:{request_key}".encode()).hexdigest()
-    for _ in range(3):
-        preparing = False
-        try:
-            async with transaction(runtime.storage) as session:
-                await workspace_scope(session, actor, workspace_id, "write")
-                target = await session.scalar(
-                    select(Schedule.target).where(
-                        Schedule.claw_id == claw_id, Schedule.id == schedule_id
-                    )
-                )
-                existing = await session.get(Occurrence, occurrence_id)
-                admission = None
-                if target == "fresh" and existing is None:
-                    preparing = True
-                    admission = await prepare_claw_admission(
-                        session, runtime, workspace_id, claw_id
-                    )
-                    preparing = False
-                claw = await lock_active_claw(session, workspace_id, claw_id)
-                schedule = await schedules.find_schedule(
-                    session, claw, schedule_id, include_deleted=True
-                )
-                existing = await session.get(Occurrence, occurrence_id)
-                if schedule.target == "fresh" and admission is None and existing is None:
-                    continue
-                occurrence = await schedules.trigger(
-                    session,
-                    claw,
-                    schedule_id,
-                    occurrence_id=occurrence_id,
-                    runtime=runtime,
-                    admission=admission,
-                )
-                result = schedules.OccurrenceView.model_validate(occurrence)
-                break
-        except ServiceError:
-            if not preparing:
-                raise
-            # Another caller may have committed the same occurrence while admission failed.
-            async with transaction(runtime.storage) as session:
-                await workspace_scope(session, actor, workspace_id, "write")
-                claw = await lock_active_claw(session, workspace_id, claw_id)
-                if await session.get(Occurrence, occurrence_id) is None:
-                    raise
-                occurrence = await schedules.trigger(
-                    session,
-                    claw,
-                    schedule_id,
-                    occurrence_id=occurrence_id,
-                    runtime=runtime,
-                    admission=None,
-                )
-                result = schedules.OccurrenceView.model_validate(occurrence)
-                break
-    else:
-        raise conflict("schedule", schedule_id, "target_changed")
+
+    async def before(session):
+        await workspace_scope(session, actor, workspace_id, "write")
+
+    async def prepare(session):
+        return await prepare_claw_admission(session, runtime, workspace_id, claw_id)
+
+    async def lock(session):
+        return await lock_active_claw(session, workspace_id, claw_id), None
+
+    result = await schedules.trigger_occurrence(
+        runtime,
+        workspace_id,
+        claw_id,
+        schedule_id,
+        occurrence_id,
+        before=before,
+        prepare=prepare,
+        lock=lock,
+    )
     if result.status == "unread":
         await main_thread.notify(runtime, workspace_id, claw_id)
     return result

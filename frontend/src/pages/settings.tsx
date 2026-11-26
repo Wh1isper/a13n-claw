@@ -1,75 +1,38 @@
 import {
   Button,
-  Checkbox,
   ChoiceField,
   Confirm,
-  DetailHeader,
-  DetailLayout,
-  DetailPage,
-  Empty,
   ErrorNotice,
-  ErrorPage,
   FormActions,
   FormField,
   FormSection,
   Input,
-  Loading,
   ListRow,
   ListRows,
-  Page,
-  Rail,
-  RailRow,
-  RailSection,
+  Loading,
   React,
   ReadOnlyField,
-  ResourceTable,
   SaveBar,
-  SearchPicker,
   Section,
-  Sections,
   SegmentedControl,
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
   Switch,
   Textarea,
-  useAccess,
-  useApp,
   useToast,
 } from "@a13n/console";
+import styles from "../app.module.css";
+import { useCopy } from "../copy";
 import {
-  appPath,
   clawPath,
-  url,
   useRead,
-  useProjectResources,
   useSelection,
   useWrite,
   type Claw,
-  type Collection,
-  type Connector,
-  type Occurrence,
   type Overview,
-  type ResourceKind,
-  type Schedule,
 } from "../data";
-import {
-  ClawLink,
-  ClawScope,
-  DateTime,
-  InputValue,
-  Pager,
-  ResourceLink,
-  Status,
-  ThreadLink,
-} from "../primitives";
-import { useCopy } from "../copy";
-import styles from "../app.module.css";
+import { ClawScope, InputValue, ResourceLink, Status } from "../primitives";
 import { Icon } from "../ui/icons";
 
-import { field, items, list, ResourcePicker } from "./form-common";
+import { field, ResourcePicker } from "./form-common";
 
 export function ConfigurationPage() {
   const { copy } = useCopy();

@@ -1,69 +1,12 @@
-import {
-  Button,
-  Checkbox,
-  ChoiceField,
-  Confirm,
-  DetailHeader,
-  DetailLayout,
-  DetailPage,
-  Empty,
-  ErrorNotice,
-  ErrorPage,
-  FormActions,
-  FormField,
-  FormSection,
-  Input,
-  Loading,
-  Page,
-  Rail,
-  RailRow,
-  RailSection,
-  React,
-  ResourceTable,
-  SaveBar,
-  SearchPicker,
-  Section,
-  Sections,
-  SegmentedControl,
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-  Switch,
-  Textarea,
-  useAccess,
-  useApp,
-  useToast,
-} from "@a13n/console";
-import {
-  appPath,
-  clawPath,
-  url,
-  useRead,
-  useProjectResources,
-  useSelection,
-  useWrite,
-  type Claw,
-  type Collection,
-  type Connector,
-  type Occurrence,
-  type Overview,
-  type ResourceKind,
-  type Schedule,
-} from "../data";
-import {
-  ClawLink,
-  ClawScope,
-  DateTime,
-  InputValue,
-  Pager,
-  ResourceLink,
-  Status,
-  ThreadLink,
-} from "../primitives";
-import { useCopy } from "../copy";
+import { Button, FormField, React, SearchPicker } from "@a13n/console";
 import styles from "../app.module.css";
+import { useCopy } from "../copy";
+import {
+  useProjectResources,
+  type Connector,
+  type ResourceKind,
+} from "../data";
+import { ResourceLink } from "../primitives";
 
 export const field = (form: FormData, name: string) =>
   String(form.get(name) ?? "").trim();

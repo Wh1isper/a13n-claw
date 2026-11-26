@@ -1,9 +1,9 @@
 import { bridgeVersion, type AppContribution } from "@a13n/console";
-import { Dashboard } from "./pages/overview";
-import { Deliveries } from "./pages/deliveries";
-import { ConfigurationPage } from "./pages/settings";
 import { ConnectorsPage } from "./pages/connectors";
+import { Deliveries } from "./pages/deliveries";
+import { Dashboard } from "./pages/overview";
 import { SchedulesPage } from "./pages/schedules";
+import { ConfigurationPage } from "./pages/settings";
 export { compactNumber } from "./pages/overview";
 
 export default {

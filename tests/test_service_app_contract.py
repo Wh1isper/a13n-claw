@@ -13,8 +13,8 @@ from pydantic_ai import RunContext
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition, ToolDenied
 
-from a13n_claw.service_app.api import ROUTERS
 from a13n_claw.service_app.plugin import ClawCapability
+from a13n_claw.service_app.routes import ROUTERS
 
 
 def test_app_openapi_contract():

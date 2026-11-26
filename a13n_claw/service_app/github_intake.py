@@ -73,8 +73,12 @@ async def reconfigure(session, connector_id: str, old: GitHubSettings, new: GitH
             )
 
 
-async def current(session, runtime: Runtime, intake: Intake) -> Connector | None:
-    if not await connectors.intake_enabled(session, intake.workspace_id, lock=True):
+async def current(
+    session, runtime: Runtime, intake: Intake, *, enabled_checked: bool = False
+) -> Connector | None:
+    if not enabled_checked and not await connectors.intake_enabled(
+        session, intake.workspace_id, lock=True
+    ):
         return None
     row = await session.get(Connector, intake.connector_id, populate_existing=True)
     if (
@@ -91,13 +95,13 @@ async def current(session, runtime: Runtime, intake: Intake) -> Connector | None
 
 async def checkpoint(runtime: Runtime, intake: Intake) -> tuple[datetime | None, str | None, bool]:
     async with transaction(runtime.storage) as session:
-        if await current(session, runtime, intake) is None:
+        if not await connectors.intake_enabled(session, intake.workspace_id, lock=True):
             return None, None, False
         try:
             await inbox.lock_claw(session, intake.workspace_id, intake.claw_id)
         except inbox.ClawNotFound:
             return None, None, False
-        if await current(session, runtime, intake) is None:
+        if await current(session, runtime, intake, enabled_checked=True) is None:
             return None, None, False
         state = await session.get(GitHubPollState, intake.connector_id, with_for_update=True)
         current_time = await now(session)
@@ -128,13 +132,14 @@ async def accept_scan(
 ) -> tuple[bool, list[str]]:
     deliveries: list[str] = []
     async with transaction(runtime.storage) as session:
-        if await current(session, runtime, intake) is None:
+        if not await connectors.intake_enabled(session, intake.workspace_id, lock=True):
             return False, []
         try:
             claw = await inbox.lock_claw(session, intake.workspace_id, intake.claw_id)
         except inbox.ClawNotFound:
             return False, []
-        if await current(session, runtime, intake) is None:
+        row = await current(session, runtime, intake, enabled_checked=True)
+        if row is None:
             return False, []
         state = await session.get(GitHubPollState, intake.connector_id, with_for_update=True)
         if state is None:
@@ -187,8 +192,7 @@ async def accept_scan(
         # A full Inbox needs a later rescan, not a busy loop or a lost cursor.
         deadline = await now(session) + timedelta(seconds=scan.poll_interval)
         state.next_poll_at = max(state.next_poll_at, deadline) if state.next_poll_at else deadline
-        row = await session.get(Connector, intake.connector_id)
-        if row is not None and deliveries:
+        if deliveries:
             row.last_event_at = await now(session)
     return complete, deliveries
 
@@ -264,13 +268,13 @@ async def feedback(runtime: Runtime, intake: Intake, client: httpx.AsyncClient) 
 
 async def record_interval(runtime: Runtime, intake: Intake, seconds: int) -> None:
     async with transaction(runtime.storage) as session:
-        if await current(session, runtime, intake) is None:
+        if not await connectors.intake_enabled(session, intake.workspace_id, lock=True):
             return
         try:
             await inbox.lock_claw(session, intake.workspace_id, intake.claw_id)
         except inbox.ClawNotFound:
             return
-        if await current(session, runtime, intake) is None:
+        if await current(session, runtime, intake, enabled_checked=True) is None:
             return
         state = await session.get(GitHubPollState, intake.connector_id, with_for_update=True)
         if state is not None:

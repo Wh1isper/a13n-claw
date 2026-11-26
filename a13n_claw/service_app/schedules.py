@@ -377,6 +377,72 @@ async def trigger(
     return occurrence
 
 
+async def trigger_occurrence(
+    runtime: Runtime,
+    workspace_id: str,
+    claw_id: str,
+    schedule_id: str,
+    occurrence_id: str,
+    *,
+    prepare,
+    lock,
+    before=None,
+) -> OccurrenceView:
+    """Trigger with caller-specific authority while preserving admission lock ordering."""
+    for _ in range(3):
+        preparing = False
+        try:
+            async with transaction(runtime.storage) as session:
+                if before is not None:
+                    await before(session)
+                target = await session.scalar(
+                    select(Schedule.target).where(
+                        Schedule.claw_id == claw_id, Schedule.id == schedule_id
+                    )
+                )
+                existing = await session.get(Occurrence, occurrence_id)
+                admission = None
+                if target == "fresh" and existing is None:
+                    preparing = True
+                    admission = await prepare(session)
+                    preparing = False
+                claw, authorize_fresh = await lock(session)
+                schedule = await find_schedule(session, claw, schedule_id, include_deleted=True)
+                existing = await session.get(Occurrence, occurrence_id)
+                if schedule.target == "fresh" and admission is None and existing is None:
+                    continue
+                if schedule.target == "fresh" and existing is None and authorize_fresh is not None:
+                    authorize_fresh()
+                row = await trigger(
+                    session,
+                    claw,
+                    schedule_id,
+                    occurrence_id=occurrence_id,
+                    runtime=runtime,
+                    admission=admission,
+                )
+                return OccurrenceView.model_validate(row)
+        except ServiceError:
+            if not preparing:
+                raise
+            async with transaction(runtime.storage) as session:
+                if before is not None:
+                    await before(session)
+                claw, _ = await lock(session)
+                if await session.get(Occurrence, occurrence_id) is None:
+                    raise
+                row = await trigger(
+                    session,
+                    claw,
+                    schedule_id,
+                    occurrence_id=occurrence_id,
+                    runtime=runtime,
+                    admission=None,
+                )
+                return OccurrenceView.model_validate(row)
+    raise conflict("schedule", schedule_id, "target_changed")
+
+
 async def reconcile_archived(runtime: Runtime, workspace_id: str, claw_id: str) -> None:
     """Settle terminal Fresh Runs after archive without firing or authorizing work."""
     async with transaction(runtime.storage) as session:

@@ -382,7 +382,7 @@ async def archive_claw(
         claw = await lock_active_claw(session, workspace_id, claw_id)
         await egress.invalidate_claw(session, claw.id)
         claw.archived_at = await now(session)
-    await connectors.lark_changed(runtime, scope.organization_id)
+    await connectors.connectors_changed(runtime, scope.organization_id)
 
 
 @router.post("/claws/{claw_id}/agent-revision/sync", name="claw_sync_agent_revision")
@@ -413,15 +413,6 @@ async def sync_agent_revision(
         return ClawView.model_validate(claw)
 
 
-def effective_settings(body: Settings, claw: Claw) -> Settings:
-    preserved = {
-        field: getattr(claw, field)
-        for field in ("worker_agents", "shell_review")
-        if field not in body.model_fields_set
-    }
-    return Settings.model_validate({**body.model_dump(), **preserved})
-
-
 @router.put("/claws/{claw_id}/settings", name="claw_update_settings")
 async def update_settings(
     claw_id: ResourceId,
@@ -434,7 +425,6 @@ async def update_settings(
         scope = await workspace_scope(session, actor, workspace_id, "admin")
         await prepare_claw_admission(session, runtime, workspace_id, claw_id)
         claw = await lock_active_claw(session, workspace_id, claw_id)
-        body = effective_settings(body, claw)
         worker_revisions = await prepare_worker_selections(session, runtime, actor, scope, body)
         if claw.shell_review != body.shell_review.model_dump():
             agent = await main_thread.current_agent(session, workspace_id, claw.agent_id)

@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from a13n_claw.service_app import connectors, main_thread
 from a13n_claw.service_app.github_poll import GitHubSettings
 from a13n_claw.service_app.github_webhook import normalize
-from a13n_claw.service_app.models import Claw, Connector
+from a13n_claw.service_app.models import Claw, Connector, InboxItem
 
 
 def payload(event):
@@ -73,6 +73,20 @@ def test_normalize(event):
         )
         is None
     )
+    invalid_number = payload(event)
+    subject = "issue" if event in ("issue_comment", "issues") else "pull_request"
+    invalid_number[subject]["number"] = True
+    assert normalize(event, invalid_number, settings) is None
+    invalid_id = payload(event)
+    object_key = {
+        "issue_comment": "comment",
+        "pull_request_review_comment": "comment",
+        "issues": "issue",
+        "pull_request": "pull_request",
+        "pull_request_review": "review",
+    }[event]
+    invalid_id[object_key]["id"] = True
+    assert normalize(event, invalid_id, settings) is None
     no_mention = payload(event)
     key = {
         "issue_comment": "comment",
@@ -215,6 +229,23 @@ def test_native_webhook(monkeypatch, tmp_path):
                 result = send(event, payload(event))
                 assert result.status_code == 201, result.text
                 assert result.json()["status"] == "accepted"
+
+                accepted_id = result.json()["item_id"]
+
+                async def item_source(item_id=accepted_id):
+                    async with transaction(client.app.state.runtime.storage) as session:
+                        item = await session.get_one(InboxItem, item_id)
+                        return item.source
+
+                source = client.portal.call(item_source)
+                assert source["github_event"] == event
+                assert source["comment_kind"] == (
+                    "issue"
+                    if event == "issue_comment"
+                    else "review"
+                    if event == "pull_request_review_comment"
+                    else None
+                )
                 duplicate = send(event, payload(event), delivery="two")
                 assert duplicate.status_code == 200 and duplicate.json()["status"] == "duplicate", (
                     duplicate.text

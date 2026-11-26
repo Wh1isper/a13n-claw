@@ -93,19 +93,10 @@ class ConnectorView(ConnectorInput):
     egress_failure: str | None = None
 
 
-async def connector_view(runtime: CurrentRuntime, row: Connector) -> ConnectorView:
+async def connector_view(
+    runtime: CurrentRuntime, row: Connector, generation: ConnectorEgress | None
+) -> ConnectorView:
     view = ConnectorView.model_validate(row)
-    async with short_session(runtime.storage) as session:
-        generation = await session.scalar(
-            select(ConnectorEgress)
-            .where(ConnectorEgress.connector_id == row.id, ConnectorEgress.state != "revoked")
-            .order_by(
-                ConnectorEgress.failure.is_not(None).desc(),
-                ConnectorEgress.created_at.desc(),
-                ConnectorEgress.id.desc(),
-            )
-            .limit(1)
-        )
     return view.model_copy(
         update={
             "credential_configured": row.credential is not None,
@@ -117,6 +108,31 @@ async def connector_view(runtime: CurrentRuntime, row: Connector) -> ConnectorVi
             else None,
         }
     )
+
+
+async def connector_generations(
+    session: AsyncSession, ids: list[str]
+) -> dict[str, ConnectorEgress]:
+    if not ids:
+        return {}
+    rows = await session.scalars(
+        select(ConnectorEgress)
+        .where(ConnectorEgress.connector_id.in_(ids), ConnectorEgress.state != "revoked")
+        .distinct(ConnectorEgress.connector_id)
+        .order_by(
+            ConnectorEgress.connector_id,
+            ConnectorEgress.failure.is_not(None).desc(),
+            ConnectorEgress.created_at.desc(),
+            ConnectorEgress.id.desc(),
+        )
+    )
+    return {row.connector_id: row for row in rows}
+
+
+async def load_connector_view(runtime: CurrentRuntime, row: Connector) -> ConnectorView:
+    async with short_session(runtime.storage) as session:
+        generations = await connector_generations(session, [row.id])
+    return await connector_view(runtime, row, generations.get(row.id))
 
 
 @router.get("/claws/{claw_id}/connectors", name="claw_list_connectors")
@@ -139,8 +155,9 @@ async def list_connectors(
             limit=limit,
             newest_first=False,
         )
+        generations = await connector_generations(session, [row.id for row in rows])
     return {
-        "items": [await connector_view(runtime, row) for row in rows],
+        "items": [await connector_view(runtime, row, generations.get(row.id)) for row in rows],
         "next_cursor": next_cursor,
     }
 
@@ -155,7 +172,7 @@ async def connector_detail(
     async with short_session(runtime.storage) as session:
         await get_claw(session, workspace_id, claw_id)
         row = await connectors.find(session, claw_id, connector_id)
-    return await connector_view(runtime, row)
+    return await load_connector_view(runtime, row)
 
 
 async def check_egress_primary(
@@ -223,8 +240,8 @@ async def create_connector(
         session.add(row)
         await session.flush()
         await egress.enqueue_generation(session, claw, row)
-    await connectors.lark_changed(runtime, scope.organization_id)
-    return await connector_view(runtime, row)
+    await connectors.connectors_changed(runtime, scope.organization_id)
+    return await load_connector_view(runtime, row)
 
 
 @router.put("/claws/{claw_id}/connectors/{connector_id}", name="claw_update_connector")
@@ -323,8 +340,8 @@ async def update_connector(
             )
         if egress_changed:
             await egress.enqueue_generation(session, claw, row)
-    await connectors.lark_changed(runtime, scope.organization_id)
-    return await connector_view(runtime, row)
+    await connectors.connectors_changed(runtime, scope.organization_id)
+    return await load_connector_view(runtime, row)
 
 
 @router.delete(
@@ -343,7 +360,7 @@ async def delete_connector(
         row = await connectors.find(session, claw_id, connector_id)
         await egress.invalidate_generations(session, row.id)
         await session.delete(row)
-    await connectors.lark_changed(runtime, scope.organization_id)
+    await connectors.connectors_changed(runtime, scope.organization_id)
 
 
 class ConnectorCheck(BaseModel):

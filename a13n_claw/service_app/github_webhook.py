@@ -59,8 +59,10 @@ def normalize(
         and 0 < len(sender) <= 200
         and isinstance(body, str)
         and isinstance(number, int)
+        and not isinstance(number, bool)
         and number > 0
         and isinstance(identity, int)
+        and not isinstance(identity, bool)
         and identity > 0
     ):
         return None
@@ -182,9 +184,10 @@ async def github_webhook(connector_id: str, request: Request, runtime: CurrentRu
             "channel": message.channel,
             "sender": message.sender,
             "event_id": key,
+            "github_event": event,
             "issue_number": message.github_issue_number,
             "comment_id": message.github_comment_id,
-            "comment_kind": message.github_comment_kind,
+            "comment_kind": message.github_comment_kind if message.github_comment_id else None,
             "delivery_id": request.headers.get("X-GitHub-Delivery"),
         }
         result = await inbox.admit(

@@ -17,9 +17,7 @@ from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition, ToolDenied
 
 from a13n_claw.service_app.main_thread import safe_revision_config
-from a13n_claw.service_app.models import Claw
 from a13n_claw.service_app.plugin import ClawCapability, ClawPlugin, Configuration
-from a13n_claw.service_app.routes.claws import Settings, effective_settings
 
 
 def test_safe_revision_denies_explicit_and_inherited_asks_and_review_fallbacks():
@@ -109,21 +107,6 @@ def test_claw_filters_and_denies_deferred_tools(role):
     asyncio.run(run())
 
 
-def test_legacy_settings_preserve_new_fields_and_explicit_values_replace_them():
-    claw = Claw(
-        worker_agents=[{"agent_id": "agent_123", "alias": "worker"}],
-        shell_review={"enabled": True, "model": "review-model", "risk_threshold": "low"},
-    )
-    legacy = effective_settings(Settings(name="renamed"), claw)
-    assert [item.alias for item in legacy.worker_agents] == ["worker"]
-    assert legacy.shell_review.enabled and legacy.shell_review.risk_threshold == "low"
-    explicit = effective_settings(
-        Settings(name="renamed", worker_agents=[], shell_review={"enabled": False}), claw
-    )
-    assert explicit.worker_agents == []
-    assert not explicit.shell_review.enabled
-
-
 def test_legacy_worker_tools_and_plaintext_reply_are_not_exposed():
     from a13n_claw.service_app.plugin import main_tools
 
@@ -134,7 +117,7 @@ def test_legacy_worker_tools_and_plaintext_reply_are_not_exposed():
         "claw_connector_reply",
         "claw_reply_connectors",
     }.isdisjoint(main_tools.tools)
-    assert not ClawCapability("worker").get_toolset().tools
+    assert not ClawCapability("guard").get_toolset().tools
     assert "claw_report" in ClawCapability("scheduled").get_toolset().tools
 
 

@@ -1,10 +1,7 @@
 import {
-  ChoiceField,
   Button,
+  ChoiceField,
   CollectionFooter,
-  SegmentedControl,
-  useNavigate,
-  useQuery,
   DetailHeader,
   DetailLayout,
   DetailPage,
@@ -18,18 +15,16 @@ import {
   React,
   ResourceTable,
   Section,
-  Sections,
+  SegmentedControl,
   Toolbar,
-  bridgeVersion,
-  useAccess,
   useApp,
-  type AppContribution,
-  type DetailTab,
+  useNavigate,
+  useQuery,
 } from "@a13n/console";
 import {
   appPath,
-  json,
   clawPath,
+  json,
   url,
   useRead,
   useSelection,
@@ -37,21 +32,18 @@ import {
   type Collection,
   type Delivery,
   type DeliveryDetail,
-  type Overview,
-  type Worker,
 } from "../data";
 import {
   ClawLink,
   ClawScope,
   DateTime,
   Pager,
-  ResourceLink,
   Status,
   ThreadLink,
 } from "../primitives";
 
-import { useCopy } from "../copy";
 import styles from "../app.module.css";
+import { useCopy } from "../copy";
 import { CopyButton } from "../ui/copy-button";
 import { Icon } from "../ui/icons";
 
@@ -64,8 +56,6 @@ function useSourceLabel() {
       worker: copy("Worker", "工作线程"),
       schedule: copy("Schedule", "排程"),
       input: copy("Headless input", "无界面输入"),
-      workspace: copy("Headless input", "无界面输入"),
-      console: copy("Headless input", "无界面输入"),
     })[source] ?? source;
 }
 
@@ -240,14 +230,7 @@ function DeliveriesBody({
             { signal },
           ),
         );
-        matches.push(
-          ...page.items.filter(
-            (row) =>
-              row.origin === origin ||
-              (origin === "input" &&
-                ["workspace", "console"].includes(row.origin)),
-          ),
-        );
+        matches.push(...page.items.filter((row) => row.origin === origin));
         cursor = page.next_cursor;
       } while (cursor);
       return matches;
