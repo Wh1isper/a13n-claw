@@ -2,6 +2,8 @@
 
 A Project is a Claw-owned entity that gives one Claw a persistent working context. Its Main and managed worker Threads share that context. Service Workspace is the administrative and authorization scope for the native resources the Project references.
 
+Claw-created resources and admitted Runs carry immutable App provenance identifying the owning Claw.
+
 ## Working Context
 
 A Project can be saved before execution resources are configured. Its runtime binding selects one concrete Service Environment and, optionally, one concrete Service Browser in the Workspace. An Environment template or Browser provider is a creation input, not a runtime binding. Before the Environment is bound and available for execution, incoming work remains in the Inbox and Claw does not launch Main or an idle heartbeat.

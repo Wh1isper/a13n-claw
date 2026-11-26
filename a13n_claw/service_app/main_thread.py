@@ -48,7 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import egress
 from .inbox import ClawNotFound, lock_claw
-from .models import APP_ID, Claw, Delivery, InboxItem
+from .models import APP_ID, Claw, Delivery, InboxItem, claw_context
 
 if TYPE_CHECKING:
     from a13n_service.runs.runtime import Runtime
@@ -407,7 +407,12 @@ async def notify(
             if account_id is None:
                 return
             admission = await app_threads.prepare_admission(
-                session, runtime, workspace_id, account_id, app_id=APP_ID
+                session,
+                runtime,
+                workspace_id,
+                account_id,
+                app_id=APP_ID,
+                app_context=claw_context(claw_id),
             )
             claw = await lock_claw(session, workspace_id, claw_id)
             workspace = await session.get_one(WorkspaceRow, workspace_id)

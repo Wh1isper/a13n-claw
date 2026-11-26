@@ -483,7 +483,12 @@ def exercise_retry(client, model_url, retry_entered, release_retry, scripted, mo
         try:
             async with transaction(runtime.storage) as session:
                 await app_threads.prepare_admission(
-                    session, runtime, ws, account["id"], app_id=APP_ID
+                    session,
+                    runtime,
+                    ws,
+                    account["id"],
+                    app_id=APP_ID,
+                    app_context={"claw_id": native_claw["id"]},
                 )
                 claw_row = await inbox.lock_claw(session, ws, native_claw["id"])
                 generation = ConnectorEgress(
@@ -577,7 +582,14 @@ def exercise_retry(client, model_url, retry_entered, release_retry, scripted, mo
         else:
             pytest.fail("Credential binding did not become ready")
         async with transaction(runtime.storage) as session:
-            await app_threads.prepare_admission(session, runtime, ws, account["id"], app_id=APP_ID)
+            await app_threads.prepare_admission(
+                session,
+                runtime,
+                ws,
+                account["id"],
+                app_id=APP_ID,
+                app_context={"claw_id": native_claw["id"]},
+            )
             claw_row = await inbox.lock_claw(session, ws, native_claw["id"])
             first = await session.get_one(ConnectorEgress, first_id)
             assert first.state == "ready" and first.credential_id
@@ -747,7 +759,14 @@ def exercise_retry(client, model_url, retry_entered, release_retry, scripted, mo
 
         # Fresh scheduled Threads use current Project mounts without connector credentials.
         async with transaction(runtime.storage) as session:
-            await app_threads.prepare_admission(session, runtime, ws, account["id"], app_id=APP_ID)
+            await app_threads.prepare_admission(
+                session,
+                runtime,
+                ws,
+                account["id"],
+                app_id=APP_ID,
+                app_context={"claw_id": native_claw["id"]},
+            )
             claw_row = await inbox.lock_claw(session, ws, native_claw["id"])
             current = await egress.initial_configuration(session, claw_row)
             assert current.credential_references[0].credential_id == tenant_credential
@@ -783,7 +802,12 @@ def exercise_retry(client, model_url, retry_entered, release_retry, scripted, mo
             try:
                 async with transaction(runtime.storage) as session:
                     await app_threads.prepare_admission(
-                        session, runtime, ws, account["id"], app_id=APP_ID
+                        session,
+                        runtime,
+                        ws,
+                        account["id"],
+                        app_id=APP_ID,
+                        app_context={"claw_id": native_claw["id"]},
                     )
                     claw_row = await inbox.lock_claw(session, ws, native_claw["id"])
                     for thread_id in (parent["thread_id"], child["thread_id"]):

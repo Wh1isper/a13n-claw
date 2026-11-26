@@ -430,6 +430,92 @@ def exercise_lifecycle(
     assert main["session_id"] == overview["claw"]["main_session_id"]
     assert main["status"] == "completed", main.get("failure")
     assert main["agent_revision_id"] == claw["agent_revision_id"]
+
+    async def exercise_environment_hook():
+        from a13n_claw.service_app.models import Claw
+
+        context = SimpleNamespace(
+            owner_app_id="a13n.claw",
+            app_context={"claw_id": claw["id"]},
+            environment_id=shared["id"],
+            workspace_id=ws,
+            execution=FixtureEnvironment(shared["id"]),
+        )
+        calls = []
+
+        async def install(_execution, *, update, install_timeout):
+            calls.append((update, install_timeout))
+            return project_cli.Maintenance({"gh": "fixture", "lark-cli": "fixture"}, False)
+
+        async with transaction(runtime.storage) as session:
+            (await session.get_one(Claw, claw["id"])).cli_versions = {}
+        with monkeypatch.context() as patch:
+            patch.setattr(project_cli, "provision", install)
+            await claw_app.on_environment_created(context)
+            async with short_session(runtime.storage) as session:
+                assert (await session.get_one(Claw, claw["id"])).cli_versions == {
+                    "gh": "fixture",
+                    "lark-cli": "fixture",
+                }
+            assert calls == [(False, 18)]
+            context.environment_id = "different"
+            await claw_app.on_environment_created(context)
+            context.owner_app_id = "other.app"
+            context.environment_id = shared["id"]
+            await claw_app.on_environment_created(context)
+            assert len(calls) == 1
+            context.owner_app_id = "a13n.claw"
+            async with transaction(runtime.storage) as session:
+                (await session.get_one(Claw, claw["id"])).cli_versions = {}
+
+            async def failed(_execution, *, update, install_timeout):
+                return project_cli.Maintenance({}, True, "fixture failure")
+
+            patch.setattr(project_cli, "provision", failed)
+            await claw_app.on_environment_created(context)
+            async with short_session(runtime.storage) as session:
+                assert not (await session.get_one(Claw, claw["id"])).cli_versions
+
+            async def rebound(_execution, *, update, install_timeout):
+                async with transaction(runtime.storage) as session:
+                    (await session.get_one(Claw, claw["id"])).environment_id = None
+                return project_cli.Maintenance({"gh": "wrong"}, False)
+
+            patch.setattr(project_cli, "provision", rebound)
+            await claw_app.on_environment_created(context)
+            async with transaction(runtime.storage) as session:
+                row = await session.get_one(Claw, claw["id"])
+                assert not row.cli_versions
+                row.environment_id = shared["id"]
+                row.archived_at = datetime.now(UTC)
+            await claw_app.on_environment_created(context)
+            async with transaction(runtime.storage) as session:
+                row = await session.get_one(Claw, claw["id"])
+                assert not row.cli_versions
+                row.archived_at = None
+        async with transaction(runtime.storage) as session:
+            (await session.get_one(Claw, claw["id"])).cli_versions = {
+                "gh": "2.105.0",
+                "lark-cli": "1.0.100",
+            }
+
+    client.portal.call(exercise_environment_hook)
+
+    async def provenance():
+        from a13n_service.resources.memories.tables import MemorySpaceRow
+        from a13n_service.runs.tables import SessionRow
+
+        async with short_session(runtime.storage) as session:
+            rows = (
+                await session.get_one(MemorySpaceRow, claw["memory_space_id"]),
+                await session.get_one(SessionRow, main["session_id"]),
+                await session.get_one(ThreadRow, main["thread_id"]),
+                await session.get_one(RunRow, main["id"]),
+            )
+            assert rows[-1].trigger_app_id == "a13n.claw"
+            return [(row.app_id, row.app_context) for row in rows]
+
+    assert client.portal.call(provenance) == [("a13n.claw", {"claw_id": claw["id"]})] * 4
     (schedule,) = read(f"{path}/schedules?target=fresh")["items"]
     assert schedule["name"] == "Fresh follow-up" and schedule["enabled"]
     schedule_path = f"{path}/schedules/{schedule['id']}"
@@ -654,6 +740,8 @@ def exercise_lifecycle(
                 )
             )
         event = SimpleNamespace(
+            app_id="a13n.claw",
+            app_context={"claw_id": claw["id"]},
             labels={"claw": claw["id"], "claw_role": "scheduled"},
             workspace_id=ws,
             principal_id=account["id"],
@@ -662,6 +750,11 @@ def exercise_lifecycle(
             session_id="sess_seal_test",
             status="completed",
         )
+        spoofed = SimpleNamespace(**{**vars(event), "app_id": "other.app"})
+        await claw_app.on_run_seal(runtime, spoofed)
+        async with short_session(runtime.storage) as session:
+            assert (await session.get_one(Occurrence, "occ_seal_test")).status == "processing"
+        event.labels["claw"] = "spoofed"
         await claw_app.on_run_seal(runtime, event)
         async with short_session(runtime.storage) as session:
             assert (await session.get_one(Occurrence, "occ_seal_test")).status == "completed"
@@ -1022,6 +1115,8 @@ def exercise_lifecycle(
 
     async def reconcile_after_archive():
         event = SimpleNamespace(
+            app_id="a13n.claw",
+            app_context={"claw_id": claw["id"]},
             labels={"claw": claw["id"], "claw_role": "scheduled"},
             workspace_id=ws,
             principal_id=account["id"],
@@ -1056,3 +1151,24 @@ def exercise_lifecycle(
     post(f"{path}/input", message, 404, headers=headers)
     assert read(f"/runs/{main['id']}")["id"] == main["id"]
     assert read(f"/environments/{replacement['id']}")["id"] == replacement["id"]
+
+
+def test_execution_command_shell_facet():
+    from a13n_harness.environment.models import EnvironmentError
+
+    async def run():
+        environment = FixtureEnvironment("env-fixture")
+        with pytest.raises(EnvironmentError) as error:
+            await project_cli.command(environment, "echo test")
+        assert error.value.code == "environment_unsupported"
+        observed = []
+
+        async def execute(request):
+            observed.append(request)
+            return "fixture-result"
+
+        environment.operations = EnvironmentOperations(shell=SimpleNamespace(exec=execute))
+        assert await project_cli.command(environment, "echo test") == "fixture-result"
+        assert len(observed) == 1
+
+    asyncio.run(run())

@@ -24,6 +24,12 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, query_express
 from .project_cli import UpdateState
 
 APP_ID = "a13n.claw"
+
+
+def claw_context(claw_id: str) -> dict[str, str]:
+    return {"claw_id": claw_id}
+
+
 database = AppDatabase(
     APP_ID,
     migrations="a13n_claw.service_app:migrations",

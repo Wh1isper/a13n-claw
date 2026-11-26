@@ -44,6 +44,7 @@ from .models import (
     InboxItem,
     Occurrence,
     Schedule,
+    claw_context,
 )
 
 router = app_router(APP_ID)
@@ -376,7 +377,12 @@ async def create_claw(
     async with transaction(runtime.storage) as session:
         scope = await workspace_scope(session, actor, workspace_id, "admin")
         await app_threads.prepare_admission(
-            session, runtime, workspace_id, body.service_account_id, app_id=APP_ID
+            session,
+            runtime,
+            workspace_id,
+            body.service_account_id,
+            app_id=APP_ID,
+            app_context=claw_context(claw_id),
         )
         account = await main_thread.automation_account(
             session, runtime, scope, body.service_account_id
@@ -389,7 +395,7 @@ async def create_claw(
         environment_id = body.environment_id
         if body.environment_template_id is not None:
             environment_id = await project.reserve_environment(
-                session, runtime, account, scope, body.environment_template_id, body.name
+                session, runtime, account, scope, body.environment_template_id, body.name, claw_id
             )
         worker_revisions = await prepare_worker_selections(session, runtime, actor, scope, body)
         revision_id = await main_thread.prepare_revision(
@@ -436,7 +442,7 @@ async def prepare_claw_admission(
     if account_id is None:
         raise not_found("claw", claw_id)
     return await app_threads.prepare_admission(
-        session, runtime, workspace_id, account_id, app_id=APP_ID
+        session, runtime, workspace_id, account_id, app_id=APP_ID, app_context=claw_context(claw_id)
     )
 
 

@@ -26,7 +26,7 @@ from sqlalchemy import select
 
 from . import inbox, main_thread
 from .feishu import LarkAdapter, LarkSettings
-from .models import APP_ID, Claw, Connector, Delivery, InboxItem, LarkRetryCard
+from .models import APP_ID, Claw, Connector, Delivery, InboxItem, LarkRetryCard, claw_context
 
 logger = get_logger(__name__)
 
@@ -235,7 +235,12 @@ async def retry(
         if account_id is None:
             return False
         admission = await app_threads.prepare_admission(
-            session, runtime, intake.workspace_id, account_id, app_id=APP_ID
+            session,
+            runtime,
+            intake.workspace_id,
+            account_id,
+            app_id=APP_ID,
+            app_context=claw_context(intake.claw_id),
         )
         await main_thread.automation_account(
             session,

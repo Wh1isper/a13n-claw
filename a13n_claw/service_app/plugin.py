@@ -41,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import connectors, egress, inbox, main_thread, project_cli, schedules, workers
 from .main_thread import PLUGIN_KEY
-from .models import APP_ID, Claw, Connector, ConnectorEgress, Occurrence, Schedule
+from .models import APP_ID, Claw, Connector, ConnectorEgress, Occurrence, Schedule, claw_context
 
 if TYPE_CHECKING:
     from a13n_service.runs.runtime import Runtime
@@ -74,6 +74,10 @@ If a human decision is needed, report the question instead of requesting a nativ
 class Configuration(BaseModel):
     model_config = ConfigDict(extra="forbid")
     role: Literal["main", "worker", "scheduled", "guard"]
+
+
+def current_runtime() -> Runtime | None:
+    return _runtime
 
 
 @asynccontextmanager
@@ -255,6 +259,7 @@ async def claw_schedule(
                 bound.claw.workspace_id,
                 bound.claw.service_account_id,
                 app_id=APP_ID,
+                app_context=claw_context(bound.claw.id),
             )
         claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)
         run, actor = await workers.fence(session, runtime, claw, bound)
@@ -348,6 +353,7 @@ async def claw_schedule_trigger(ctx: RunContext[AgentContext], schedule_id: str)
                             bound.claw.workspace_id,
                             bound.claw.service_account_id,
                             app_id=APP_ID,
+                            app_context=claw_context(bound.claw.id),
                         )
                         preparing = False
                     claw = await inbox.lock_claw(session, bound.claw.workspace_id, bound.claw.id)

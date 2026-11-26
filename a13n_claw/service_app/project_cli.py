@@ -1,11 +1,13 @@
 """Provision official CLIs in a leased Project Environment."""
 
+import asyncio
 import re
 from dataclasses import dataclass
 from shlex import join
 from typing import Literal
 
 import httpx
+from a13n_harness.environment import EnvironmentExecution
 from a13n_harness.environment.commands import (
     CommandEnvironment,
     CommandRequest,
@@ -49,38 +51,41 @@ class Maintenance:
 
 
 async def command(
-    environment: BoundEnvironment,
+    environment: BoundEnvironment | EnvironmentExecution,
     script: str,
     arguments: tuple[str, ...] = (),
     *,
     variables: dict[str, str] | None = None,
     timeout: int = 8,
 ):
-    return await environment.shell.exec_captured(
-        CommandRequest(
-            command=ShellCommand(
-                profile_id="default",
-                script=join(
-                    (
-                        "timeout",
-                        "-k",
-                        "2s",
-                        f"{timeout}s",
-                        "sh",
-                        "-c",
-                        script,
-                        "claw-cli",
-                        *arguments,
-                    )
-                ),
-            ),
-            environment=CommandEnvironment(set={**NOTIFIERS, **(variables or {})}),
-            output_policy=EnvironmentOutputPolicy(
-                max_inline_bytes=8192, max_output_bytes=8192, overflow="truncate"
+    request = CommandRequest(
+        command=ShellCommand(
+            profile_id="default",
+            script=join(
+                (
+                    "timeout",
+                    "-k",
+                    "2s",
+                    f"{timeout}s",
+                    "sh",
+                    "-c",
+                    script,
+                    "claw-cli",
+                    *arguments,
+                )
             ),
         ),
-        alias="workspace",
+        environment=CommandEnvironment(set={**NOTIFIERS, **(variables or {})}),
+        output_policy=EnvironmentOutputPolicy(
+            max_inline_bytes=8192, max_output_bytes=8192, overflow="truncate"
+        ),
     )
+    if isinstance(environment, EnvironmentExecution):
+        shell = environment.operations.shell
+        if shell is None:
+            raise EnvironmentError("Shell operations unavailable", code="environment_unsupported")
+        return await shell.exec(request)
+    return await environment.shell.exec_captured(request, alias="workspace")
 
 
 async def latest(client: httpx.AsyncClient, name: str, arch: str) -> tuple[str, str, str, str]:
@@ -110,7 +115,12 @@ async def latest(client: httpx.AsyncClient, name: str, arch: str) -> tuple[str, 
     raise ValueError("Release asset has no SHA256 digest")
 
 
-async def provision(environment: BoundEnvironment, *, update: bool = False) -> Maintenance:
+async def provision(
+    environment: BoundEnvironment | EnvironmentExecution,
+    *,
+    update: bool = False,
+    install_timeout: int = 65,
+) -> Maintenance:
     versions: dict[str, str] = {}
     for name in CLIS:
         result = await command(environment, RUN_CLI, (name, "--version"))
@@ -132,15 +142,19 @@ async def provision(environment: BoundEnvironment, *, update: bool = False) -> M
         )
     errors = []
     async with httpx.AsyncClient(timeout=8) as client:
-        for name in CLIS:
+
+        async def install(name: str) -> None:
             if name in versions and not update:
-                continue
+                return
             try:
                 version, url, digest, member = await latest(client, name, arch)
                 if versions.get(name) == version:
-                    continue
+                    return
                 result = await command(
-                    environment, INSTALL, (name, url, digest, member, version), timeout=65
+                    environment,
+                    INSTALL,
+                    (name, url, digest, member, version),
+                    timeout=install_timeout,
                 )
                 if result.status.exit_code == 0:
                     versions[name] = version
@@ -154,6 +168,8 @@ async def provision(environment: BoundEnvironment, *, update: bool = False) -> M
                 errors.append(f"{name}: official release asset or checksum unavailable")
             except EnvironmentError:
                 errors.append(f"{name}: Project command unavailable")
+
+        await asyncio.gather(*(install(name) for name in CLIS))
     return Maintenance(versions, bool(errors), "; ".join(errors) or None)
 
 

@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import httpx
 from a13n_logging import get_logger
+from a13n_service.app_sdk import is_app_enabled
 from a13n_service.infra.crypto import Envelope, SecretLocation
 from a13n_service.infra.db import now, short_session, transaction
 from a13n_service.infra.errors import ServiceError, disabled, not_found
@@ -534,8 +535,8 @@ class Listeners:
 
     async def _reconcile(self, organization_id: str) -> None:
         async with short_session(self.runtime.storage) as session:
-            settings = await session.scalar(
-                select(OrganizationRow.settings).where(OrganizationRow.id == organization_id)
+            enabled = await is_app_enabled(
+                session, self.runtime, APP_ID, organization_id=organization_id
             )
             rows = (
                 (
@@ -552,7 +553,7 @@ class Listeners:
                         )
                     )
                 ).all()
-                if settings is not None and APP_ID in policy(settings).enabled
+                if enabled
                 else ()
             )
         needed = {}
