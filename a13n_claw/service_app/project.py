@@ -35,6 +35,27 @@ async def reserve_environment(
     )
 
 
+async def reserve_browser(
+    session: AsyncSession,
+    runtime: Runtime,
+    account: Principal,
+    scope: WorkspaceScope,
+    provider_id: str,
+    name: str,
+    claw_id: str,
+) -> str:
+    return await app_projects.reserve_browser(
+        session,
+        runtime,
+        scope.workspace_id,
+        app_id=APP_ID,
+        app_context=claw_context(claw_id),
+        principal_id=account.id,
+        provider_id=provider_id,
+        name=name[:128],
+    )
+
+
 async def create_space(
     session: AsyncSession,
     runtime: Runtime,
@@ -72,12 +93,13 @@ async def rebind(
     browser_id: str | None,
     *,
     environment_template_id: str | None = None,
+    browser_provider_id: str | None = None,
 ) -> None:
     """Update the native shared tree atomically with the Claw Project."""
     environment_changed = (
         environment_template_id is not None or environment_id != claw.environment_id
     )
-    browser_changed = browser_id != claw.browser_id
+    browser_changed = browser_provider_id is not None or browser_id != claw.browser_id
     if not (environment_changed or browser_changed):
         return
     await app_projects.check_resources(
@@ -88,7 +110,7 @@ async def rebind(
         environment_id=environment_id
         if environment_changed and environment_template_id is None
         else None,
-        browser_id=browser_id if browser_changed else None,
+        browser_id=browser_id if browser_changed and browser_provider_id is None else None,
     )
     if environment_changed:
         await egress.revoke_for_rebind(session, runtime, claw)
@@ -96,6 +118,10 @@ async def rebind(
             update(Connector)
             .where(Connector.claw_id == claw.id, Connector.egress_primary.is_(True))
             .values(egress_primary=False)
+        )
+    if browser_provider_id is not None:
+        browser_id = await reserve_browser(
+            session, runtime, account, scope, browser_provider_id, claw.name, claw.id
         )
     if claw.main_thread_id is not None:
         kwargs: _ResourceChanges = {}

@@ -45,7 +45,13 @@ export interface ResourceChoice {
   name: string;
 }
 export type ResourceKind =
-  "agent" | "account" | "environment" | "template" | "browser" | "model";
+  | "agent"
+  | "account"
+  | "environment"
+  | "template"
+  | "browser"
+  | "browser_provider"
+  | "model";
 export interface Activity {
   current_run_id: string | null;
   last_run_id: string | null;

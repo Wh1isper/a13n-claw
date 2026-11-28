@@ -155,7 +155,11 @@ export const SaveBar = ({
     </button>
   </div>
 );
-export const Confirm = () => null;
+export const Confirm = ({ trigger, action, onSuccess }) => (
+  <button type="button" onClick={() => void action().then(onSuccess)}>
+    {trigger}
+  </button>
+);
 export const Switch = ({ checked, onCheckedChange, ...props }) => (
   <input
     {...props}

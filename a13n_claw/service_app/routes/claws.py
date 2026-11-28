@@ -13,6 +13,7 @@ from a13n_service.resources.agents.tables import AgentRevisionRow, AgentRow
 from a13n_service.resources.environment_instances.tables import EnvironmentRow
 from a13n_service.resources.environment_templates.tables import EnvironmentTemplateRow
 from a13n_service.resources.models.tables import ModelRow
+from a13n_service.resources.providers.tables import BrowserProviderRow
 from a13n_service.runs.browsers.tables import BrowserRow
 from a13n_service.runs.environments.schemas import EnvironmentFailure
 from a13n_service.runs.requests import CurrentRuntime
@@ -101,12 +102,15 @@ class CreateClaw(Settings):
     environment_id: ResourceId | None = None
     environment_template_id: ResourceId | None = None
     browser_id: ResourceId | None = None
+    browser_provider_id: ResourceId | None = None
     service_account_id: ResourceId
 
     @pydantic.model_validator(mode="after")
     def select_environment(self):
         if self.environment_id is not None and self.environment_template_id is not None:
             raise ValueError("Select an existing Environment or an Environment template, not both")
+        if self.browser_id is not None and self.browser_provider_id is not None:
+            raise ValueError("Select an existing Browser or a Browser provider, not both")
         return self
 
 
@@ -187,7 +191,9 @@ class ResourceChoices(BaseModel):
 
 @router.get("/project-resources/{kind}", name="claw_project_resources")
 async def project_resources(
-    kind: Literal["agent", "account", "environment", "template", "browser", "model"],
+    kind: Literal[
+        "agent", "account", "environment", "template", "browser", "browser_provider", "model"
+    ],
     workspace_id: WorkspaceId,
     actor: Actor,
     runtime: CurrentRuntime,
@@ -255,6 +261,13 @@ async def project_resources(
                 filters = (
                     BrowserRow.workspace_id == workspace_id,
                     BrowserRow.status.not_in(("deleting", "deleted", "lost")),
+                )
+            case "browser_provider":
+                table = BrowserProviderRow
+                identifier = BrowserProviderRow.id
+                filters = (
+                    BrowserProviderRow.workspace_id == workspace_id,
+                    BrowserProviderRow.enabled,
                 )
             case "model":
                 table = ModelRow
@@ -347,6 +360,11 @@ async def create_claw(
             environment_id = await project.reserve_environment(
                 session, runtime, account, scope, body.environment_template_id, body.name, claw_id
             )
+        browser_id = body.browser_id
+        if body.browser_provider_id is not None:
+            browser_id = await project.reserve_browser(
+                session, runtime, account, scope, body.browser_provider_id, body.name, claw_id
+            )
         worker_revisions = await prepare_worker_selections(session, runtime, actor, scope, body)
         revision_id = await main_thread.prepare_revision(
             session,
@@ -366,7 +384,15 @@ async def create_claw(
             worker_agent_revisions=worker_revisions,
             memory_space_id=space_id,
             environment_id=environment_id,
-            **body.model_dump(exclude={"environment_id", "environment_template_id"}),
+            browser_id=browser_id,
+            **body.model_dump(
+                exclude={
+                    "environment_id",
+                    "environment_template_id",
+                    "browser_id",
+                    "browser_provider_id",
+                }
+            ),
         )
         session.add(claw)
         await session.flush()
@@ -452,6 +478,7 @@ class ProjectBindings(BaseModel):
     environment_id: ResourceId | None = None
     environment_template_id: ResourceId | None = None
     browser_id: ResourceId | None = None
+    browser_provider_id: ResourceId | None = None
 
     @pydantic.model_validator(mode="after")
     def valid(self):
@@ -459,6 +486,8 @@ class ProjectBindings(BaseModel):
             raise ValueError("Select an Environment to replace the current one")
         if self.environment_id is not None and self.environment_template_id is not None:
             raise ValueError("Select an existing Environment or an Environment template, not both")
+        if self.browser_provider_id is not None and "browser_id" in self.model_fields_set:
+            raise ValueError("Select an existing Browser or a Browser provider, not both")
         return self
 
 
@@ -488,6 +517,7 @@ async def update_project(
             environment_id,
             browser_id,
             environment_template_id=body.environment_template_id,
+            browser_provider_id=body.browser_provider_id,
         )
         result = ClawView.model_validate(claw)
     if body.environment_id is not None or body.environment_template_id is not None:

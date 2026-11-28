@@ -25,8 +25,9 @@ from a13n_service.infra.db import short_session, transaction
 from a13n_service.infra.errors import ServiceError
 from a13n_service.migrations.scratch import scratch_database
 from a13n_service.providers import envd
+from a13n_service.runs.browsers.tables import BrowserRow
 from a13n_service.runs.environments import external
-from a13n_service.runs.tables import RunRow, ThreadRow
+from a13n_service.runs.tables import InboxEntryRow, RunRow, ThreadRow
 from a13n_service.settings import Database, Settings
 from fastapi.testclient import TestClient
 from sqlalchemy import select, update
@@ -316,6 +317,38 @@ def exercise_lifecycle(
         wrong_account = post(accounts, {"name": f"Wrong {role}", "role": role})
         refused = post(f"{base}/claws", {**config, "service_account_id": wrong_account["id"]}, 409)
         assert refused["error"]["details"]["reason"] == "claw_builder_required"
+    provider_body = {
+        "name": "Reserved test Browser provider",
+        "type": "browserbase",
+        "config": {"project_id": "test-project"},
+        "credential": {"api_key": "fixture-not-a-secret"},
+    }
+    provider = post("/browser-providers", provider_body)
+    disabled_provider = post(
+        "/browser-providers", {**provider_body, "name": "Disabled", "enabled": False}
+    )
+    provider_ids = {
+        item["id"] for item in read(f"{base}/project-resources/browser_provider")["items"]
+    }
+    assert provider["id"] in provider_ids and disabled_provider["id"] not in provider_ids
+    post(
+        f"{base}/claws",
+        {**config, "browser_id": "browser_existing", "browser_provider_id": provider["id"]},
+        400,
+    )
+    created_with_browser = post(f"{base}/claws", {**config, "browser_provider_id": provider["id"]})
+
+    async def browser_provenance(browser_id):
+        async with short_session(runtime.storage) as session:
+            browser = await session.get_one(BrowserRow, browser_id)
+            return browser.app_id, browser.app_context
+
+    assert client.portal.call(browser_provenance, created_with_browser["browser_id"]) == (
+        "a13n.claw",
+        {"claw_id": created_with_browser["id"]},
+    )
+    archived_created = client.delete(f"/api/v1{base}/claws/{created_with_browser['id']}")
+    assert archived_created.status_code == 204, archived_created.text
     claw = post(f"{base}/claws", config)
     assert claw["environment_id"] is None
     path = f"{base}/claws/{claw['id']}"
@@ -638,15 +671,67 @@ def exercise_lifecycle(
             == shared["id"]
         )
 
-    provider = post(
-        "/browser-providers",
-        {
-            "name": "Reserved test Browser provider",
-            "type": "browserbase",
-            "config": {"project_id": "test-project"},
-            "credential": {"api_key": "fixture-not-a-secret"},
-        },
+    # Provider reservations and thread updates share one transaction.
+    for supplied in (None, "browser_existing"):
+        invalid = client.patch(
+            update_url, json={"browser_id": supplied, "browser_provider_id": provider["id"]}
+        )
+        assert invalid.status_code == 400, invalid.text
+
+    async def browser_ids():
+        async with short_session(runtime.storage) as session:
+            return set((await session.scalars(select(BrowserRow.id))).all())
+
+    busy_id = "entry_" + uuid4().hex
+
+    async def set_busy(busy):
+        async with transaction(runtime.storage) as session:
+            if busy:
+                source = await session.get_one(RunRow, main["id"])
+                session.add(
+                    InboxEntryRow(
+                        id=busy_id,
+                        organization_id=org,
+                        workspace_id=ws,
+                        thread_id=main["thread_id"],
+                        kind="child_message",
+                        delivery="next_run",
+                        position=999999,
+                        principal_id=account["id"],
+                        authority=source.authority,
+                        payload={},
+                        size=0,
+                        options={},
+                        origin_run_id=main["id"],
+                        status="pending",
+                    )
+                )
+            else:
+                entry = await session.get_one(InboxEntryRow, busy_id)
+                entry.status = "withdrawn"
+                entry.finished_at = datetime.now(UTC)
+
+    before = client.portal.call(browser_ids)
+    client.portal.call(set_busy, True)
+    try:
+        busy = client.patch(
+            update_url, json={"environment_id": shared["id"], "browser_provider_id": provider["id"]}
+        )
+        assert busy.status_code == 409, busy.text
+        assert (
+            busy.json()["error"]["details"]["reason"] == "environment_rebind_requires_idle_threads"
+        )
+        assert client.portal.call(browser_ids) == before
+    finally:
+        client.portal.call(set_busy, False)
+    reserved = client.patch(update_url, json={"browser_provider_id": provider["id"]})
+    assert reserved.status_code == 200, reserved.text
+    reserved_id = reserved.json()["browser_id"]
+    assert client.portal.call(browser_provenance, reserved_id) == (
+        "a13n.claw",
+        {"claw_id": claw["id"]},
     )
+    assert read(f"/threads/{main['thread_id']}/browser")["browser_id"] == reserved_id
     browser = post("/browsers", {"name": "Project Browser", "provider_id": provider["id"]})
     assert browser["status"] == "reserved"
     attached = client.patch(update_url, json={"browser_id": browser["id"]})
