@@ -107,6 +107,7 @@ function ClawEditor({
   const [environment, setEnvironment] = React.useState("");
   const [source, setSource] = React.useState("environment");
   const [browser, setBrowser] = React.useState("");
+  const [browserSource, setBrowserSource] = React.useState("browser");
   const [models, setModels] = React.useState(
     (claw?.worker_models ?? []).map((model, key) => ({ ...model, key })),
   );
@@ -170,7 +171,9 @@ function ClawEditor({
             ? {
                 agent_id: agent,
                 service_account_id: account,
-                browser_id: browser || null,
+                ...(browserSource === "browser_provider" && browser
+                  ? { browser_provider_id: browser }
+                  : { browser_id: browser || null }),
                 ...(environment
                   ? {
                       [source === "template"
@@ -278,9 +281,35 @@ function ClawEditor({
             optional
             disabled={!account}
           />
+          <ChoiceField
+            label={copy("Browser source", "浏览器来源")}
+            value={browserSource}
+            onValueChange={(value) => {
+              setBrowserSource(value);
+              setBrowser("");
+            }}
+            options={[
+              {
+                value: "browser",
+                label: copy("Existing instance", "现有实例"),
+              },
+              {
+                value: "browser_provider",
+                label: copy("Create from a provider", "使用提供方创建"),
+              },
+            ]}
+          />
           <ResourcePicker
-            label={copy("Browser (optional)", "浏览器（可选）")}
-            kind="browser"
+            label={
+              browserSource === "browser_provider"
+                ? copy("Browser provider (optional)", "浏览器提供方（可选）")
+                : copy("Browser (optional)", "浏览器（可选）")
+            }
+            kind={
+              browserSource === "browser_provider"
+                ? "browser_provider"
+                : "browser"
+            }
             account={account}
             value={browser}
             onChange={setBrowser}
@@ -638,7 +667,9 @@ function ProjectResources({
           ? source === "template"
             ? "environment_template_id"
             : "environment_id"
-          : "browser_id"]: selection || null,
+          : source === "browser_provider"
+            ? "browser_provider_id"
+            : "browser_id"]: selection || null,
       },
     });
   const changed = () => {
@@ -717,7 +748,7 @@ function ProjectResources({
                         size="sm"
                         onClick={() => {
                           setEdit(kind);
-                          setSource("environment");
+                          setSource(env ? "environment" : "browser");
                           setSelection(env ? "" : (claw.browser_id ?? ""));
                           write.reset();
                         }}
@@ -777,11 +808,33 @@ function ProjectResources({
                 ]}
               />
             )}
+            {edit === "browser" && (
+              <ChoiceField
+                label={copy("Browser source", "浏览器来源")}
+                value={source}
+                onValueChange={(value) => {
+                  setSource(value);
+                  setSelection("");
+                }}
+                options={[
+                  {
+                    value: "browser",
+                    label: copy("Existing instance", "现有实例"),
+                  },
+                  {
+                    value: "browser_provider",
+                    label: copy("Create from a provider", "使用提供方创建"),
+                  },
+                ]}
+              />
+            )}
             <ResourcePicker
               label={copy("New binding", "新绑定")}
               kind={
                 edit === "browser"
-                  ? "browser"
+                  ? source === "browser_provider"
+                    ? "browser_provider"
+                    : "browser"
                   : source === "template"
                     ? "template"
                     : "environment"
@@ -789,14 +842,17 @@ function ProjectResources({
               account={claw.service_account_id}
               value={selection}
               onChange={setSelection}
-              optional={edit === "browser"}
+              optional={edit === "browser" && source === "browser"}
             />
             <div className={styles.actions}>
               <Button variant="ghost" onClick={() => setEdit(null)}>
                 {copy("Cancel", "取消")}
               </Button>
-              {(selection || (edit === "browser" && linked)) &&
-                (source === "template" || selection !== (linked ?? "")) &&
+              {(selection ||
+                (edit === "browser" && source === "browser" && linked)) &&
+                (source === "template" ||
+                  source === "browser_provider" ||
+                  selection !== (linked ?? "")) &&
                 (linked ? (
                   <Confirm
                     title={copy("Change Project binding?", "更改项目绑定？")}

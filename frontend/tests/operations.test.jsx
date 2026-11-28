@@ -671,3 +671,59 @@ test("GitHub webhook editor submits bot login and write-only secret", async () =
     }),
   );
 });
+
+test.each([
+  ["browser_provider", "provider-1", { browser_provider_id: "provider-1" }],
+  ["browser", "__none__", { browser_id: null }],
+])(
+  "Project Browser source %s submits the selected binding",
+  async (source, selection, expected) => {
+    const submissions = [];
+    const bound = {
+      ...claw,
+      browser_id: "browser-1",
+      service_account_id: "account-1",
+    };
+    const request = (path, init) => {
+      if (path === "/claws/alpha/project" && init?.method === "PATCH") {
+        submissions.push(JSON.parse(init.body));
+        return response(bound);
+      }
+      if (path.startsWith("/claws?")) return response(collection([bound]));
+      if (path === "/claws/alpha")
+        return response({
+          claw: bound,
+          unread: 0,
+          read: 0,
+          main: null,
+          project: { ...project, browser: "ready", browser_name: "Browser" },
+        });
+      if (path.startsWith("/project-resources/browser_provider"))
+        return response(collection([{ id: "provider-1", name: "Provider" }]));
+      if (path.startsWith("/project-resources/browser"))
+        return response(collection([{ id: "browser-1", name: "Browser" }]));
+      return defaultReply(path);
+    };
+    await mount(
+      "/workspace/test/settings/app.a13n.claw.settings?claw=alpha&section=project",
+      request,
+    );
+    const buttons = await screen.findAllByRole("button", {
+      name: "Change binding",
+    });
+    fireEvent.click(buttons[1]);
+    fireEvent.change(screen.getByRole("combobox", { name: "Browser source" }), {
+      target: { value: source },
+    });
+    if (source === "browser_provider")
+      await screen.findByRole("option", { name: "Provider" });
+    else await screen.findByRole("option", { name: "None" });
+    fireEvent.change(screen.getByRole("combobox", { name: "New binding" }), {
+      target: { value: selection },
+    });
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Change binding" }).at(-1),
+    );
+    await waitFor(() => expect(submissions).toEqual([expected]));
+  },
+);

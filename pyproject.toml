@@ -8,16 +8,16 @@ license-files = ["LICENSE"]
 authors = [{name = "Wh1isper"}]
 requires-python = ">=3.13"
 dependencies = [
-  "a13n-service>=0.6.0,<0.7.0",
-  "a13n-harness>=0.44.0,<1",
-  "a13n-envd-client>=0.8.3,<0.9",
+  "a13n-service>=0.7.0,<0.8.0",
+  "a13n-harness>=0.45.0,<1",
+  "a13n-envd-client>=0.8.4,<0.9",
   "a13n-logging>=0.2,<0.3",
   "alembic>=1.17.1,<2",
   "fastapi>=0.116,<1",
   "httpx>=0.28,<1",
   "lark-oapi>=1.8,<2",
   "pydantic>=2.12,<3",
-  "pydantic-ai-slim>=2.74,<3",
+  "pydantic-ai-slim>=2.76,<3",
   "redis>=8.1,<9",
   "sqlalchemy>=2.0.41,<2.1",
   "websockets>=15,<16",

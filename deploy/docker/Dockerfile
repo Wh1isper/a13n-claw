@@ -1,8 +1,8 @@
 # Inherit the selected Service runtime and health check.
-ARG SERVICE_IMAGE=ghcr.io/converge-ai-labs/a13n-service:0.6.0
+ARG SERVICE_IMAGE=ghcr.io/converge-ai-labs/a13n-service:0.7.0
 FROM ${SERVICE_IMAGE}
 ARG BUILD_VERSION=0.0.0
-ARG SERVICE_VERSION=0.6.0
+ARG SERVICE_VERSION=0.7.0
 ENV A13N_PLUGINS__BOOTSTRAP_ENABLED_APPS='["a13n.claw"]'
 LABEL org.opencontainers.image.title="a13n Claw" \
       org.opencontainers.image.source="https://github.com/Wh1isper/a13n-claw" \

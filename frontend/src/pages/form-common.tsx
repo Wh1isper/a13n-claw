@@ -23,6 +23,7 @@ const resourceCreation: Record<ResourceKind, string> = {
   environment: "environments/instances",
   template: "environments/new",
   browser: "browsers",
+  browser_provider: "browsers",
   model: "models",
 };
 

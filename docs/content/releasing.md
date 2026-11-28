@@ -45,7 +45,7 @@ git tag release/a13n-claw-vX.Y.Z
 git push origin release/a13n-claw-vX.Y.Z
 ```
 
-Claw and Service share a minor compatibility line with independent patch versions: for example, Claw `0.6.0` targets Service `>=0.6.0,<0.7.0`. PR CI and tagged releases use the locked Service patch and matching digest-pinned base image. Do not commit a version bump. Replace `X.Y.Z` with the new release version. The workflow builds the Console, injects that version, builds and verifies the wheel and sdist, publishes them to PyPI, and builds the GHCR image for Linux AMD64 and ARM64 from the wheel and locked runtime dependencies. It then creates a GitHub Release with generated notes and Python artifacts. A stable image publishes exact version and `latest`; an RC publishes only its exact `X.Y.Z-rc.N` tag.
+Claw and Service share a minor compatibility line with independent patch versions: for example, Claw `0.7.0` targets Service `>=0.7.0,<0.8.0`. PR CI and tagged releases use the locked Service patch and matching digest-pinned base image. Do not commit a version bump. Replace `X.Y.Z` with the new release version. The workflow builds the Console, injects that version, builds and verifies the wheel and sdist, publishes them to PyPI, and builds the GHCR image for Linux AMD64 and ARM64 from the wheel and locked runtime dependencies. It then creates a GitHub Release with generated notes and Python artifacts. A stable image publishes exact version and `latest`; an RC publishes only its exact `X.Y.Z-rc.N` tag.
 
 ## Verify and recover
 
